@@ -1,0 +1,25 @@
+## Async via Fibers
+
+Statistics from AMD Zen 3 5800x CPU
+
+### Motivation
+
+Using fibers addresses two major slowdowns of rust's default async implementation
+
+### Polling based, rather than callback based
+In order to resume a future N function calls deep, it has to be resumed from the root future. Each layer of function call introduces around 1-2ns of overhead in order to reach the future that can actually do work.
+
+### Memory
+Rust coroutines are stackless, and each new future needs memory in order to run. Async functions return sized futures, allowing the rust compiler to allocate all the memory it needs at the root future (effectively acting as a stackful coroutine), saving on allocation costs. However, recursive (and extern async functions, however a much rarer case) require a new memory allocation per level and don't receive pre-allocated benefits.
+
+Due to a [#99504](https://github.com/rust-lang/rust/issues/99504), memory is also copied for every nested future and incurs significant overhead.
+
+### Advantages of fibers
+
+Function calls (even async ones) do not incur any overhead over a normal function call in a synchronous context.
+
+### Drawbacks of fibers
+
+Switching fibers incurs a cost of ~3ns (14ns on an Apple M1 with only 8 FP regs preserved, possibly more on other cpus).
+
+Fibers, like threads, can only do one thing at a time. Branching out via `select` or `join` requires spawning a new fiber for each future to be awaited.
