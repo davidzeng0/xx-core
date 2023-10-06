@@ -1,3 +1,5 @@
+use enumflags2::make_bitflags;
+
 use super::{
 	os::{
 		mman::{map_memory, MemoryFlag, MemoryMap, MemoryProtection, MemoryType},
@@ -5,7 +7,6 @@ use super::{
 	},
 	sysdep::import_sysdeps
 };
-use enumflags2::make_bitflags;
 
 import_sysdeps!();
 
@@ -18,11 +19,7 @@ pub struct Fiber {
 
 impl Fiber {
 	pub fn main() -> Fiber {
-		Fiber {
-			context: Context::new(),
-
-			stack: MemoryMap::new()
-		}
+		Fiber { context: Context::new(), stack: MemoryMap::new() }
 	}
 
 	pub fn new() -> Fiber {
@@ -44,7 +41,9 @@ impl Fiber {
 	}
 
 	#[inline(always)]
-	pub unsafe fn start(&mut self, routine: &mut Fiber, f: extern "C" fn(*const ()), arg: *const ()) {
+	pub unsafe fn start(
+		&mut self, routine: &mut Fiber, f: extern "C" fn(*const ()), arg: *const ()
+	) {
 		start(&mut self.context, &mut routine.context, f, arg);
 	}
 

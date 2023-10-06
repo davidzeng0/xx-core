@@ -1,6 +1,7 @@
+use std::any::type_name;
+
 use ctor::ctor;
 use log::{set_boxed_logger, set_max_level, Level, LevelFilter, Log, Metadata, Record};
-use std::any::type_name;
 
 struct Logger;
 

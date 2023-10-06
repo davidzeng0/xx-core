@@ -2,15 +2,23 @@ use proc_macro::{Span, TokenStream};
 use quote::quote;
 use syn::*;
 
-pub type TransformCallback = fn(is_item_fn: bool, &mut Vec<Attribute>, &mut Signature, Option<&mut Block>) -> Result<()>;
+pub type TransformCallback =
+	fn(is_item_fn: bool, &mut Vec<Attribute>, &mut Signature, Option<&mut Block>) -> Result<()>;
 
 fn transform_item_func(func: &mut ItemFn, callback: TransformCallback) -> Result<TokenStream> {
-	callback(true, &mut func.attrs, &mut func.sig, Some(func.block.as_mut()))?;
+	callback(
+		true,
+		&mut func.attrs,
+		&mut func.sig,
+		Some(func.block.as_mut())
+	)?;
 
 	Ok(quote! { #func }.into())
 }
 
-fn transform_trait_func(func: &mut TraitItemFn, callback: TransformCallback) -> Result<TokenStream> {
+fn transform_trait_func(
+	func: &mut TraitItemFn, callback: TransformCallback
+) -> Result<TokenStream> {
 	callback(false, &mut func.attrs, &mut func.sig, func.default.as_mut())?;
 
 	Ok(quote! { #func }.into())
@@ -64,7 +72,10 @@ pub fn transform_fn(item: TokenStream, callback: TransformCallback) -> Result<To
 	}
 
 	Err(Error::new(
-		item.into_iter().next().map_or_else(Span::call_site, |t| t.span()).into(),
+		item.into_iter()
+			.next()
+			.map_or_else(Span::call_site, |t| t.span())
+			.into(),
 		"Expected a function, trait, or impl"
 	))
 }

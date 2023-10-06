@@ -1,8 +1,9 @@
+use std::{io::Result, mem::zeroed};
+
 use super::{
 	syscall::{syscall_int, to_pointer, SyscallNumber::*},
 	time::TimeVal
 };
-use std::{io::Result, mem::zeroed};
 
 pub enum Resource {
 	///Per-process CPU limit, in seconds.
@@ -55,8 +56,8 @@ pub enum Resource {
 	///Maximum realtime priority allowed for non-priviledged processes.
 	RtPrio,
 
-	/// Maximum CPU time in microseconds that a process scheduled under a real-time
-	/// scheduling policy may consume without making a blocking system
+	/// Maximum CPU time in microseconds that a process scheduled under a
+	/// real-time scheduling policy may consume without making a blocking system
 	/// call before being forcibly descheduled.
 	RtTime
 }
@@ -80,13 +81,13 @@ impl Limit {
 
 pub enum UsageWho {
 	/// The calling process. (renamed from Self)
-	Current = 0,
+	Current  = 0,
 
 	/// All of its terminated child processes.
 	Children = -1,
 
 	/// The calling thread.
-	Thread = 1
+	Thread   = 1
 }
 
 pub enum PriorityWhich {

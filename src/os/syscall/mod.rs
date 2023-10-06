@@ -23,11 +23,22 @@ macro_rules! syscall_raw {
 	};
 
 	($num: expr, $arg1: expr, $arg2: expr, $arg3: expr) => {
-		$crate::os::syscall::syscall3($num as isize, $arg1 as isize, $arg2 as isize, $arg3 as isize)
+		$crate::os::syscall::syscall3(
+			$num as isize,
+			$arg1 as isize,
+			$arg2 as isize,
+			$arg3 as isize
+		)
 	};
 
 	($num: expr, $arg1: expr, $arg2: expr, $arg3: expr, $arg4: expr) => {
-		$crate::os::syscall::syscall4($num as isize, $arg1 as isize, $arg2 as isize, $arg3 as isize, $arg4 as isize)
+		$crate::os::syscall::syscall4(
+			$num as isize,
+			$arg1 as isize,
+			$arg2 as isize,
+			$arg3 as isize,
+			$arg4 as isize
+		)
 	};
 
 	($num: expr, $arg1: expr, $arg2: expr, $arg3: expr, $arg4: expr, $arg5: expr) => {

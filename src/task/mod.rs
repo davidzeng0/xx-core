@@ -1,10 +1,13 @@
 use std::io::Result;
+
 pub use xx_core_macros::sync_task;
+pub mod block_on;
 pub mod closure;
 pub mod env;
 
-/// A pointer of a [`Request`] will be passed to a [`Task`] when [`Task::run`] is called
-/// When the [`Task`] completes, the [`Request`]'s callback will be executed with the result
+/// A pointer of a [`Request`] will be passed to a [`Task`] when [`Task::run`]
+/// is called When the [`Task`] completes, the [`Request`]'s callback will be
+/// executed with the result
 ///
 /// The pointer will be used as the key for [`Cancel::run`],
 /// which will cancel atleast one Task with the same key
@@ -24,6 +27,7 @@ impl<T> Request<T> {
 		Request { arg, callback }
 	}
 
+	#[inline(always)]
 	pub fn complete(handle: *const Request<T>, value: T) {
 		let handle = unsafe { &*handle };
 
@@ -61,8 +65,14 @@ unsafe impl Cancel for NoOpCancel {
 	}
 }
 
+#[must_use]
 pub enum Progress<Output, C: Cancel> {
+	/// The operation is pending
+	/// The callback on the request will be called when it is complete
 	Pending(C),
+
+	/// The operation completed synchronously
+	/// The callback on the request will not be called
 	Done(Output)
 }
 

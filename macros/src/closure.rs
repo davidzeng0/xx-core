@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
-use syn::{visit_mut::*, *, punctuated::Punctuated, spanned::Spanned};
 use quote::{quote, ToTokens};
+use syn::{punctuated::Punctuated, spanned::Spanned, visit_mut::*, *};
 
 struct ReplaceSelf;
 
@@ -33,7 +33,9 @@ pub fn make_tuple_type<T: ToTokens>(data: Vec<T>) -> TokenStream {
 	}
 }
 
-fn build_tuples(inputs: &Punctuated<FnArg, Token![,]>, map: fn(&FnArg) -> (Type, Pat, Pat)) -> (TokenStream, TokenStream, TokenStream) {
+fn build_tuples(
+	inputs: &Punctuated<FnArg, Token![,]>, map: fn(&FnArg) -> (Type, Pat, Pat)
+) -> (TokenStream, TokenStream, TokenStream) {
 	let data: Vec<(Type, Pat, Pat)> = inputs.iter().map(|arg| map(arg)).collect();
 
 	(
@@ -52,12 +54,9 @@ pub fn get_return_type(ret: &ReturnType) -> TokenStream {
 }
 
 pub fn into_closure(
-	attrs: &mut Vec<Attribute>,
-	sig: &mut Signature,
-	block: Option<&mut Block>,
+	attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
 	(args_types, args_destruct): (TokenStream, TokenStream),
-	(closure_type, additional_generics): (TokenStream, Vec<Type>),
-	no_generic_return_type: bool
+	(closure_type, additional_generics): (TokenStream, Vec<Type>), no_generic_return_type: bool
 ) -> Result<TokenStream> {
 	let return_type = get_return_type(&sig.output);
 
@@ -67,11 +66,7 @@ pub fn into_closure(
 
 			RemoveRefMut {}.visit_pat_mut(&mut constr);
 
-			(
-				pat.ty.as_ref().clone(),
-				constr,
-				pat.pat.as_ref().clone()
-			)
+			(pat.ty.as_ref().clone(), constr, pat.pat.as_ref().clone())
 		}
 
 		FnArg::Receiver(rec) => {
@@ -97,10 +92,10 @@ pub fn into_closure(
 
 	let mut closure_type_generics = Punctuated::<Type, Token![,]>::new();
 
-	closure_type_generics.push(parse_quote!{ #types });
+	closure_type_generics.push(parse_quote! { #types });
 
 	if !no_generic_return_type {
-		closure_type_generics.push(parse_quote!{ #return_type });
+		closure_type_generics.push(parse_quote! { #return_type });
 	}
 
 	additional_generics.into_iter().for_each(|ty| {

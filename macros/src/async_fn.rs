@@ -1,7 +1,8 @@
-use crate::{closure::into_closure, transform::transform_fn};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{spanned::Spanned, visit_mut::*, *};
+
+use crate::{closure::into_closure, transform::transform_fn};
 
 struct ReplaceAwait;
 
@@ -22,7 +23,9 @@ impl VisitMut for ReplaceAwait {
 	}
 }
 
-fn transform_func(is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>) -> Result<()> {
+fn transform_func(
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+) -> Result<()> {
 	if sig.asyncness.take().is_none() {
 		if !is_item_fn {
 			return Ok(());

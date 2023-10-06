@@ -1,54 +1,56 @@
-use super::{
-	syscall::{syscall_int, to_pointer, SyscallNumber::*},
-	time::TimeSpec
-};
-use enumflags2::{bitflags, BitFlags};
 use std::{
 	io::Result,
 	mem::{size_of, zeroed},
 	os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd}
 };
 
+use enumflags2::{bitflags, BitFlags};
+
+use super::{
+	syscall::{syscall_int, to_pointer, SyscallNumber::*},
+	time::TimeSpec
+};
+
 #[bitflags]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SetupFlag {
-	IoPoll = 1 << 0,
-	SubmissionQueuePolling = 1 << 1,
+	IoPoll                  = 1 << 0,
+	SubmissionQueuePolling  = 1 << 1,
 	SubmissionQueueAffinity = 1 << 2,
-	CompletionRingSize = 1 << 3,
-	Clamp = 1 << 4,
-	AttachWq = 1 << 5,
-	RingDisabled = 1 << 6,
-	SubmitAll = 1 << 7,
-	CoopTaskrun = 1 << 8,
-	TaskRun = 1 << 9,
-	SubmissionEntryWide = 1 << 10,
-	CompletionEntryWide = 1 << 11,
-	SingleIssuer = 1 << 12,
-	DeferTaskrun = 1 << 13,
-	NoMmap = 1 << 14,
-	RegisteredFdOnly = 1 << 15
+	CompletionRingSize      = 1 << 3,
+	Clamp                   = 1 << 4,
+	AttachWq                = 1 << 5,
+	RingDisabled            = 1 << 6,
+	SubmitAll               = 1 << 7,
+	CoopTaskrun             = 1 << 8,
+	TaskRun                 = 1 << 9,
+	SubmissionEntryWide     = 1 << 10,
+	CompletionEntryWide     = 1 << 11,
+	SingleIssuer            = 1 << 12,
+	DeferTaskrun            = 1 << 13,
+	NoMmap                  = 1 << 14,
+	RegisteredFdOnly        = 1 << 15
 }
 
 #[bitflags]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Feature {
-	SingleMmap = 1 << 0,
-	NoDrop = 1 << 1,
-	SubmitStable = 1 << 2,
-	RwCurPos = 1 << 3,
+	SingleMmap     = 1 << 0,
+	NoDrop         = 1 << 1,
+	SubmitStable   = 1 << 2,
+	RwCurPos       = 1 << 3,
 	CurPersonality = 1 << 4,
-	FastPoll = 1 << 5,
-	Poll32Bits = 1 << 6,
+	FastPoll       = 1 << 5,
+	Poll32Bits     = 1 << 6,
 	SqPollNonFixed = 1 << 7,
-	ExtArg = 1 << 8,
-	NativeWorkers = 1 << 9,
-	RsrcTags = 1 << 10,
-	CqeSkip = 1 << 11,
-	LinkedFile = 1 << 12,
-	RegRegRing = 1 << 13
+	ExtArg         = 1 << 8,
+	NativeWorkers  = 1 << 9,
+	RsrcTags       = 1 << 10,
+	CqeSkip        = 1 << 11,
+	LinkedFile     = 1 << 12,
+	RegRegRing     = 1 << 13
 }
 
 #[repr(C)]
@@ -87,12 +89,12 @@ impl Parameters {
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SubmissionEntryFlag {
-	FixedFile = 1 << 0,
-	IoDrain = 1 << 1,
-	IoLink = 1 << 2,
-	IoHardLink = 1 << 3,
-	Async = 1 << 4,
-	BufferSelect = 1 << 5,
+	FixedFile      = 1 << 0,
+	IoDrain        = 1 << 1,
+	IoLink         = 1 << 2,
+	IoHardLink     = 1 << 3,
+	Async          = 1 << 4,
+	BufferSelect   = 1 << 5,
 	CqeSkipSuccess = 1 << 6
 }
 
@@ -161,13 +163,13 @@ pub enum FileSyncFlags {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TimeoutFlags {
-	Abs = 1 << 0,
-	Update = 1 << 1,
-	BootTime = 1 << 2,
-	RealTime = 1 << 3,
+	Abs               = 1 << 0,
+	Update            = 1 << 1,
+	BootTime          = 1 << 2,
+	RealTime          = 1 << 3,
 	LinkTimeoutUpdate = 1 << 4,
-	ExpireIsSuccess = 1 << 5,
-	Multishot = 1 << 6
+	ExpireIsSuccess   = 1 << 5,
+	Multishot         = 1 << 6
 }
 
 #[bitflags]
@@ -181,19 +183,19 @@ pub enum SpliceFlag {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PollAddFlag {
-	Multi = 1 << 0,
-	UpdateEvents = 1 << 1,
+	Multi          = 1 << 0,
+	UpdateEvents   = 1 << 1,
 	UpdateUserData = 1 << 2,
-	AddLevel = 1 << 3
+	AddLevel       = 1 << 3
 }
 
 #[bitflags]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum AsyncCancelFlag {
-	All = 1 << 0,
-	Fd = 1 << 1,
-	Any = 1 << 2,
+	All     = 1 << 0,
+	Fd      = 1 << 1,
+	Any     = 1 << 2,
 	FdFixed = 1 << 3
 }
 
@@ -201,9 +203,9 @@ pub enum AsyncCancelFlag {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RecvSendFlag {
-	PollFirst = 1 << 0,
-	RecvMultishot = 1 << 1,
-	FixedBuf = 1 << 2,
+	PollFirst               = 1 << 0,
+	RecvMultishot           = 1 << 1,
+	FixedBuf                = 1 << 2,
 	SendZeroCopyReportUsage = 1 << 3
 }
 
@@ -233,7 +235,7 @@ pub enum MsgRingOp {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MsgRingFlag {
-	CqeSkip = 1 << 0,
+	CqeSkip   = 1 << 0,
 	FlagsPass = 1 << 1
 }
 
@@ -305,16 +307,16 @@ pub struct CompletionEntry {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CompletionEntryFlag {
-	Buffer = 1 << 0,
-	More = 1 << 1,
+	Buffer         = 1 << 0,
+	More           = 1 << 1,
 	SocketReadable = 1 << 2,
-	Notification = 1 << 3
+	Notification   = 1 << 3
 }
 
 pub enum MmapOffsets {
-	SubmissionRing = 0x0,
-	CompletionRing = 0x8000000,
-	SubmissionEntries = 0x10000000,
+	SubmissionRing     = 0x0,
+	CompletionRing     = 0x8000000,
+	SubmissionEntries  = 0x10000000,
 	ProvideBuffersRing = 0x80000000
 }
 
@@ -336,8 +338,8 @@ pub struct SubmissionRingOffsets {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SubmissionRingFlag {
 	SqNeedWakeup = 1 << 0,
-	CqOverflow = 1 << 1,
-	TaskRun = 1 << 2
+	CqOverflow   = 1 << 1,
+	TaskRun      = 1 << 2
 }
 
 #[repr(C)]
@@ -364,10 +366,10 @@ pub enum CompletionRingFlag {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EnterFlag {
-	GetEvents = 1 << 0,
-	SqWakeup = 1 << 1,
-	SqWait = 1 << 2,
-	ExtArg = 1 << 3,
+	GetEvents      = 1 << 0,
+	SqWakeup       = 1 << 1,
+	SqWait         = 1 << 2,
+	ExtArg         = 1 << 3,
 	RegisteredRing = 1 << 4
 }
 
@@ -571,24 +573,46 @@ pub enum SocketCmd {
 
 pub const SIGSET_SIZE: usize = 8; /* _NSIG / 8 */
 
-pub fn io_uring_enter(fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: usize) -> Result<i32> {
+pub fn io_uring_enter(
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: usize
+) -> Result<i32> {
 	io_uring_enter2(fd, submit, min_complete, flags, sigset, SIGSET_SIZE)
 }
 
-pub fn io_uring_enter2(fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: usize, sigset_size: usize) -> Result<i32> {
-	let submitted = syscall_int!(IoUringEnter, fd.as_raw_fd(), submit, min_complete, flags, sigset, sigset_size)?;
+pub fn io_uring_enter2(
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: usize,
+	sigset_size: usize
+) -> Result<i32> {
+	let submitted = syscall_int!(
+		IoUringEnter,
+		fd.as_raw_fd(),
+		submit,
+		min_complete,
+		flags,
+		sigset,
+		sigset_size
+	)?;
 
 	Ok(submitted as i32)
 }
 
-pub fn io_uring_enter_timeout(fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: u32, ts: &TimeSpec) -> Result<i32> {
+pub fn io_uring_enter_timeout(
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: u32, ts: &TimeSpec
+) -> Result<i32> {
 	let mut args = GetEventsArg::new();
 
 	args.sig_mask_size = SIGSET_SIZE as u32;
 	args.ts = to_pointer(ts) as u64;
 	flags |= EnterFlag::ExtArg as u32;
 
-	io_uring_enter2(fd, submit, min_complete, flags, to_pointer(&args), size_of::<GetEventsArg>())
+	io_uring_enter2(
+		fd,
+		submit,
+		min_complete,
+		flags,
+		to_pointer(&args),
+		size_of::<GetEventsArg>()
+	)
 }
 
 pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd> {
@@ -597,6 +621,9 @@ pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd> 
 	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
 }
 
-pub fn io_uring_register(fd: BorrowedFd<'_>, opcode: u32, arg: usize, arg_count: u32) -> Result<i32> {
-	syscall_int!(IoUringRegister, fd.as_raw_fd(), opcode, arg, arg_count).map(|result| result as i32)
+pub fn io_uring_register(
+	fd: BorrowedFd<'_>, opcode: u32, arg: usize, arg_count: u32
+) -> Result<i32> {
+	syscall_int!(IoUringRegister, fd.as_raw_fd(), opcode, arg, arg_count)
+		.map(|result| result as i32)
 }

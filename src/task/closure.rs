@@ -3,7 +3,8 @@ use std::io::Result;
 use super::{Cancel, Progress, Request, Task};
 use crate::closure::Closure;
 
-pub type TaskClosure<Capture, Output, Cancel> = Closure<Capture, *const Request<Output>, Progress<Output, Cancel>>;
+pub type TaskClosure<Capture, Output, Cancel> =
+	Closure<Capture, *const Request<Output>, Progress<Output, Cancel>>;
 
 unsafe impl<Capture: Sized, Output, C: Cancel> Task<Output, C> for TaskClosure<Capture, Output, C> {
 	#[inline(always)]

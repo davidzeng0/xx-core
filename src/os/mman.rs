@@ -1,24 +1,26 @@
-use super::syscall::{syscall_int, syscall_pointer, SyscallNumber::*};
-use enumflags2::bitflags;
 use std::{
 	io::Result,
 	os::fd::{AsRawFd, BorrowedFd}
 };
 
+use enumflags2::bitflags;
+
+use super::syscall::{syscall_int, syscall_pointer, SyscallNumber::*};
+
 #[bitflags]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MemoryProtection {
-	Read = 1 << 0,
-	Write = 1 << 1,
-	Exec = 1 << 2,
+	Read      = 1 << 0,
+	Write     = 1 << 1,
+	Exec      = 1 << 2,
 	GrowsDown = 0x01000000,
-	GrowsUp = 0x02000000
+	GrowsUp   = 0x02000000
 }
 
 pub enum MemoryType {
-	Shared = 1,
-	Private = 2,
+	Shared         = 1,
+	Private        = 2,
 	SharedValidate = 3
 }
 
@@ -26,18 +28,18 @@ pub enum MemoryType {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MemoryFlag {
-	Fixed = 1 << 4,
-	Anonymous = 1 << 5,
-	GrowsDown = 1 << 8,
-	DenyWrite = 1 << 11,
-	Executable = 1 << 12,
-	Locked = 1 << 13,
-	NoReserve = 1 << 14,
-	Populate = 1 << 15,
-	NonBlock = 1 << 16,
-	Stack = 1 << 17,
-	HugeTLB = 1 << 18,
-	Sync = 1 << 19,
+	Fixed          = 1 << 4,
+	Anonymous      = 1 << 5,
+	GrowsDown      = 1 << 8,
+	DenyWrite      = 1 << 11,
+	Executable     = 1 << 12,
+	Locked         = 1 << 13,
+	NoReserve      = 1 << 14,
+	Populate       = 1 << 15,
+	NonBlock       = 1 << 16,
+	Stack          = 1 << 17,
+	HugeTLB        = 1 << 18,
+	Sync           = 1 << 19,
 	FixedNoReplace = 1 << 20
 }
 
@@ -45,9 +47,9 @@ pub enum MemoryFlag {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MemorySyncFlag {
-	Async = 1 << 0,
+	Async      = 1 << 0,
 	Invalidate = 1 << 1,
-	Sync = 1 << 2
+	Sync       = 1 << 2
 }
 
 pub enum MemoryAdvice {
@@ -80,7 +82,7 @@ pub enum MemoryAdvice {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MemoryLockFlag {
 	Current = 1 << 0,
-	Future = 1 << 1,
+	Future  = 1 << 1,
 	OnFault = 1 << 2
 }
 
@@ -88,8 +90,8 @@ pub enum MemoryLockFlag {
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MemoryRemapFlag {
-	MayMove = 1 << 0,
-	Fixed = 1 << 1,
+	MayMove   = 1 << 0,
+	Fixed     = 1 << 1,
 	DontUnmap = 1 << 2
 }
 
@@ -98,12 +100,23 @@ pub struct MemoryMap {
 	pub length: usize
 }
 
-pub fn mmap(addr: usize, length: usize, prot: u32, flags: u32, fd: i32, off: isize) -> Result<usize> {
+pub fn mmap(
+	addr: usize, length: usize, prot: u32, flags: u32, fd: i32, off: isize
+) -> Result<usize> {
 	syscall_pointer!(Mmap, addr, length, prot, flags, fd, off)
 }
 
-pub fn map_memory(addr: usize, length: usize, prot: u32, flags: u32, fd: Option<BorrowedFd<'_>>, off: isize) -> Result<MemoryMap> {
-	let addr = mmap(addr, length, prot, flags, fd.map(|fd| fd.as_raw_fd()).unwrap_or(-1), off)?;
+pub fn map_memory(
+	addr: usize, length: usize, prot: u32, flags: u32, fd: Option<BorrowedFd<'_>>, off: isize
+) -> Result<MemoryMap> {
+	let addr = mmap(
+		addr,
+		length,
+		prot,
+		flags,
+		fd.map(|fd| fd.as_raw_fd()).unwrap_or(-1),
+		off
+	)?;
 
 	Ok(MemoryMap { addr, length })
 }
@@ -156,7 +169,9 @@ pub fn munlock_all() -> Result<()> {
 	Ok(())
 }
 
-pub fn mremap(addr: usize, old_length: usize, new_length: usize, flags: u32, new_address: usize) -> Result<usize> {
+pub fn mremap(
+	addr: usize, old_length: usize, new_length: usize, flags: u32, new_address: usize
+) -> Result<usize> {
 	syscall_pointer!(Mremap, addr, old_length, new_length, flags, new_address)
 }
 

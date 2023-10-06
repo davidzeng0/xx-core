@@ -1,14 +1,15 @@
-use std::{mem::ManuallyDrop, io::Result, ops::DerefMut};
+use std::{io::Result, mem::ManuallyDrop, ops::DerefMut};
 
 use xx_core_macros::sync_task;
+
+use super::{env::AsyncContext, executor::Executor, task::AsyncTask, worker::Worker};
 use crate::task::{env::Handle, Progress, Request};
-use super::{worker::Worker, executor::Executor, env::AsyncContext, task::AsyncTask};
 
 mod xx_core {
 	pub use crate::*;
 }
 
-struct SpawnData<F, Output, Context: AsyncContext>{
+struct SpawnData<F, Output, Context: AsyncContext> {
 	request: *const Request<Output>,
 	worker: ManuallyDrop<Worker>,
 	entry: F,
@@ -22,7 +23,9 @@ extern "C" fn worker_start<
 	F: Fn(Handle<Worker>) -> (Context, Task),
 	Task: AsyncTask<Context, Output>,
 	Output
->(arg: *const ()) {
+>(
+	arg: *const ()
+) {
 	let data = unsafe { &mut *(arg as *mut SpawnData<F, Output, Context>) };
 	let mut worker = unsafe { ManuallyDrop::take(&mut data.worker) };
 	let request = data.request;
@@ -57,7 +60,9 @@ pub fn spawn<
 	F: Fn(Handle<Worker>) -> (Context, Task),
 	Task: AsyncTask<Context, Output>,
 	Output
->(mut executor: Handle<Executor>, entry: F) {
+>(
+	mut executor: Handle<Executor>, entry: F
+) -> Output {
 	fn cancel(mut context: Handle<Context>) -> Result<()> {
 		context.interrupt()
 	}
