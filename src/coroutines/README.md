@@ -38,7 +38,7 @@ async fn async_main() {
 	let a = 2;
 	let b = 3;
 
-	let c = async_add(2, 3).await;
+	let c = async_add(a, b).await;
 
 	println!("{} + {} = {}", a, b, c);
 }
