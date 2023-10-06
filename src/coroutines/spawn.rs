@@ -3,7 +3,10 @@ use std::{io::Result, mem::ManuallyDrop, ops::DerefMut};
 use xx_core_macros::sync_task;
 
 use super::{env::AsyncContext, executor::Executor, task::AsyncTask, worker::Worker};
-use crate::task::{env::Handle, Progress, Request};
+use crate::{
+	fiber::Start,
+	task::{env::Handle, Progress, Request}
+};
 
 mod xx_core {
 	pub use crate::*;
@@ -28,10 +31,11 @@ extern "C" fn worker_start<
 ) {
 	let data = unsafe { &mut *(arg as *mut SpawnData<F, Output, Context>) };
 	let mut worker = unsafe { ManuallyDrop::take(&mut data.worker) };
+
 	let request = data.request;
+	let mut is_async = false;
 
 	let (mut context, task) = (data.entry)((&mut worker).into());
-	let mut is_async = false;
 
 	data.is_async = &mut is_async;
 	data.context = (&mut context).into();
@@ -45,10 +49,8 @@ extern "C" fn worker_start<
 	}
 
 	unsafe {
-		worker.suspend();
+		worker.exit();
 	}
-
-	panic!("Fiber resumed after completing")
 }
 
 /// Spawn a new fiber. The result of the fiber will be returned as a [`Task`]
@@ -67,22 +69,24 @@ pub fn spawn<
 		context.interrupt()
 	}
 
-	let worker = ManuallyDrop::new(Worker::new(executor));
 	let mut data = SpawnData {
 		request,
-		worker,
+		worker: ManuallyDrop::new(Worker::main()),
 		entry,
 		context: unsafe { Handle::new_empty() },
 		result: None,
 		is_async: 0 as *mut _
 	};
 
+	let start = Start {
+		start: worker_start::<Context, F, Task, Output>,
+		arg: &mut data as *mut _ as *const ()
+	};
+
+	data.worker = ManuallyDrop::new(Worker::new(executor, start));
+
 	unsafe {
-		executor.start(
-			data.worker.deref_mut().into(),
-			worker_start::<Context, F, Task, Output>,
-			&mut data as *mut _ as *const ()
-		);
+		executor.start(data.worker.deref_mut().into());
 	}
 
 	if data.result.is_some() {

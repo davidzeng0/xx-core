@@ -1,6 +1,6 @@
 use super::executor::Executor;
 use crate::{
-	fiber::Fiber,
+	fiber::{Fiber, Start},
 	task::env::{Global, Handle}
 };
 
@@ -18,8 +18,8 @@ impl Worker {
 		}
 	}
 
-	pub fn new(executor: Handle<Executor>) -> Worker {
-		Worker { executor, fiber: Fiber::new() }
+	pub fn new(executor: Handle<Executor>, start: Start) -> Worker {
+		Worker { executor, fiber: Fiber::new(start) }
 	}
 
 	#[inline(always)]
@@ -32,6 +32,10 @@ impl Worker {
 		&mut self.fiber
 	}
 
+	pub(crate) unsafe fn into_inner(self) -> Fiber {
+		self.fiber
+	}
+
 	#[inline(always)]
 	pub unsafe fn suspend(&mut self) {
 		self.executor.clone().suspend(self.into());
@@ -40,6 +44,10 @@ impl Worker {
 	#[inline(always)]
 	pub unsafe fn resume(&mut self) {
 		self.executor.clone().switch_to(self.into());
+	}
+
+	pub unsafe fn exit(self) {
+		self.executor.clone().exit(self);
 	}
 }
 

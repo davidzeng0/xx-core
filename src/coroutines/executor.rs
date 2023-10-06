@@ -20,7 +20,7 @@ impl Executor {
 	pub unsafe fn suspend(&mut self, mut worker: Handle<Worker>) {
 		self.current = (&mut self.main).into();
 
-		worker.inner().resume(self.current.inner());
+		worker.inner().switch(self.current.inner());
 	}
 
 	/// Switch from whichever `current` worker is running to the new `worker`
@@ -30,17 +30,21 @@ impl Executor {
 
 		self.current = worker;
 
-		previous.inner().resume(worker.inner());
+		previous.inner().switch(worker.inner());
 	}
 
-	pub(crate) unsafe fn start(
-		&mut self, mut worker: Handle<Worker>, start: extern "C" fn(*const ()), arg: *const ()
-	) {
+	pub(crate) unsafe fn start(&mut self, mut worker: Handle<Worker>) {
 		if self.current.is_null() {
 			self.current = (&mut self.main).into();
 		}
 
-		self.current.inner().start(worker.inner(), start, arg);
+		self.current.inner().switch(worker.inner());
+	}
+
+	pub(crate) unsafe fn exit(&mut self, worker: Worker) {
+		self.current = (&mut self.main).into();
+
+		worker.into_inner().exit(self.current.inner());
 	}
 }
 
