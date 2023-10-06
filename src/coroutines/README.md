@@ -23,3 +23,34 @@ Function calls (even async ones) do not incur any overhead over a normal functio
 Switching fibers incurs a cost of ~3ns (14ns on an Apple M1 with only 8 FP regs preserved, possibly more on other cpus).
 
 Fibers, like threads, can only do one thing at a time. Branching out via `select` or `join` requires spawning a new fiber for each future to be awaited.
+
+## Example
+
+```rust
+#[async_fn]
+async fn async_add(a: i32, b: i32) -> i32 {
+	a + b
+}
+
+#[async_fn]
+#[inline(never)]
+async fn async_main() {
+	let a = 2;
+	let b = 3;
+
+	let c = async_add(2, 3).await;
+
+	println!("{} + {} = {}", a, b, c);
+}
+```
+
+Taking a look at the disassembly for `async_main`, the call to `async_add` is entirely inlined
+```x86asm
+                            ; function async_main
+movl   $0x2, 0x8(%rsp)      ; a
+movl   $0x3, 0xc(%rsp)      ; b
+movl   $0x5, 0x4(%rsp)      ; c
+leaq   0x8(%rsp), %rax
+movq   %rax, 0x80(%rsp)
+leaq   0x45147(%rip), %rax  ; core::fmt::num::imp::<impl core::fmt::Display for i32>::fmt at num.rs:283
+```
