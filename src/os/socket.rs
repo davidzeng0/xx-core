@@ -252,16 +252,16 @@ pub enum MessageFlag {
 
 #[repr(C)]
 pub struct MessageHeader {
-	address: *const (),
-	address_len: u32,
+	pub address: *const (),
+	pub address_len: u32,
 
-	iov: *mut IoVec,
-	iov_len: usize,
+	pub iov: *mut IoVec,
+	pub iov_len: usize,
 
-	control: *const (),
-	control_len: usize,
+	pub control: *const (),
+	pub control_len: usize,
 
-	flags: u32
+	pub flags: u32
 }
 
 pub fn socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd> {

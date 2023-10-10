@@ -66,8 +66,8 @@ pub enum CtlOp {
 
 #[repr(C, packed)]
 pub struct EpollEvent {
-	events: u32,
-	data: u64
+	pub events: u32,
+	pub data: u64
 }
 
 pub fn create(size: i32) -> Result<OwnedFd> {
