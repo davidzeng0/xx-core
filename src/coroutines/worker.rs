@@ -7,33 +7,46 @@ use crate::{
 /// A worker thread capable of running async operations via fibers
 pub struct Worker {
 	executor: Handle<Executor>,
+	from: Handle<Worker>,
 	fiber: Fiber
 }
 
 impl Worker {
-	pub fn main() -> Worker {
-		Worker {
-			executor: unsafe { Handle::new_empty() },
+	pub fn main() -> Self {
+		Self {
+			executor: unsafe { Handle::new_null() },
+			from: unsafe { Handle::new_null() },
 			fiber: Fiber::main()
 		}
 	}
 
-	pub fn new(executor: Handle<Executor>, start: Start) -> Worker {
-		Worker { executor, fiber: Fiber::new(start) }
+	pub fn new(executor: Handle<Executor>, start: Start) -> Self {
+		Self {
+			executor,
+			from: unsafe { Handle::new_null() },
+			fiber: Fiber::new(start)
+		}
 	}
 
-	#[inline(always)]
-	pub fn executor(&mut self) -> Handle<Executor> {
-		self.executor
+	pub(crate) fn from(&self) -> Handle<Worker> {
+		self.from
 	}
 
-	#[inline(always)]
-	pub(crate) unsafe fn inner(&mut self) -> &mut Fiber {
+	pub(crate) fn set_resume_to(&mut self, from: Handle<Worker>) {
+		self.from = from;
+	}
+
+	pub(crate) fn inner(&mut self) -> &mut Fiber {
 		&mut self.fiber
 	}
 
-	pub(crate) unsafe fn into_inner(self) -> Fiber {
+	pub(crate) fn into_inner(self) -> Fiber {
 		self.fiber
+	}
+
+	#[inline(always)]
+	pub unsafe fn resume(&mut self) {
+		self.executor.clone().resume(self.into());
 	}
 
 	#[inline(always)]
@@ -41,14 +54,13 @@ impl Worker {
 		self.executor.clone().suspend(self.into());
 	}
 
-	#[inline(always)]
-	pub unsafe fn resume(&mut self) {
-		self.executor.clone().switch_to(self.into());
-	}
-
 	pub unsafe fn exit(self) {
 		self.executor.clone().exit(self);
 	}
 }
 
-impl Global for Worker {}
+impl Global for Worker {
+	unsafe fn pinned(&mut self) {
+		self.executor.clone().worker_pinned(self.into());
+	}
+}

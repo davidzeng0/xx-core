@@ -13,14 +13,16 @@ pub struct BlockOn<Context: AsyncContext, T: Task<Output, C>, C: Cancel, Output>
 }
 
 impl<Context: AsyncContext, T: Task<Output, C>, C: Cancel, Output> BlockOn<Context, T, C, Output> {
-	pub fn new(task: T) -> BlockOn<Context, T, C, Output> {
-		BlockOn { task, phantom: PhantomData }
+	#[inline(always)]
+	pub const fn new(task: T) -> Self {
+		Self { task, phantom: PhantomData }
 	}
 }
 
 impl<Context: AsyncContext, T: Task<Output, C>, C: Cancel, Output> AsyncTask<Context, Output>
 	for BlockOn<Context, T, C, Output>
 {
+	#[inline(always)]
 	fn run(self, mut context: Handle<Context>) -> Output {
 		context.block_on(self.task)
 	}

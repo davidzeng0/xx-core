@@ -1,26 +1,37 @@
 use std::ops::{Deref, DerefMut};
 
+use crate::pointer::MutPtr;
+
 /// A type that implements [`Global`] declares it
 /// as a type which can be infinitely (and simultaneously)
 /// mutably borrowed
-pub trait Global {}
+pub trait Global {
+	/// Called when the type implementing Global gets pinned
+	unsafe fn pinned(&mut self) {}
+}
 
 /// Contains a `Type: Global` and pins its address on the heap
-pub struct Cell<T: Global> {
+pub struct Boxed<T: Global> {
 	data: Box<T>
 }
 
-impl<T: Global> Cell<T> {
+impl<T: Global> Boxed<T> {
 	pub fn new(data: T) -> Self {
-		Cell { data: Box::new(data) }
+		let mut data = Box::new(data);
+
+		unsafe {
+			data.as_mut().pinned();
+		}
+
+		Self { data }
 	}
 
-	pub fn get_shared_ref(&mut self) -> Handle<T> {
+	pub fn get_handle(&mut self) -> Handle<T> {
 		self.data.as_mut().into()
 	}
 }
 
-impl<T: Global> Deref for Cell<T> {
+impl<T: Global> Deref for Boxed<T> {
 	type Target = T;
 
 	fn deref(&self) -> &T {
@@ -28,7 +39,7 @@ impl<T: Global> Deref for Cell<T> {
 	}
 }
 
-impl<T: Global> DerefMut for Cell<T> {
+impl<T: Global> DerefMut for Boxed<T> {
 	fn deref_mut(&mut self) -> &mut T {
 		&mut self.data
 	}
@@ -38,54 +49,54 @@ impl<T: Global> DerefMut for Cell<T> {
 /// passed around and cloned infinitely
 #[derive(PartialEq, Eq)]
 pub struct Handle<T: Global + ?Sized> {
-	value: *mut T
+	ptr: MutPtr<T>
 }
 
 impl<T: Global + Sized> Handle<T> {
-	pub unsafe fn new_empty() -> Self {
-		Self { value: 0 as *mut T }
+	pub unsafe fn new_null() -> Self {
+		Self { ptr: MutPtr::<T>::null() }
 	}
 
 	pub fn is_null(&self) -> bool {
-		self.value == std::ptr::null_mut()
+		self.ptr.is_null()
 	}
 }
 
 impl<T: Global + ?Sized> Handle<T> {
-	pub fn as_ptr(&mut self) -> *mut T {
-		self.value
+	pub fn as_raw_ptr(&mut self) -> *const () {
+		self.ptr.as_raw_ptr()
 	}
 
-	pub fn as_raw_ptr(&mut self) -> *mut () {
-		self.value as *mut ()
+	pub fn as_raw_ptr_mut(&mut self) -> *mut () {
+		self.ptr.as_raw_ptr_mut()
 	}
 
 	pub fn as_ref(&self) -> &T {
-		unsafe { &*self.value }
+		self.ptr.as_ref()
 	}
 
-	pub fn get_mut(&mut self) -> &mut T {
-		unsafe { &mut *self.value }
+	pub fn as_ref_mut(&mut self) -> &mut T {
+		self.ptr.as_ref_mut()
 	}
 }
 
 impl<T: Global + ?Sized> Clone for Handle<T> {
 	fn clone(&self) -> Self {
-		Self { value: self.value }
+		Self { ptr: self.ptr }
 	}
 }
 
 impl<T: Global + ?Sized> Copy for Handle<T> {}
 
-impl<T: Global + ?Sized> From<*mut T> for Handle<T> {
-	fn from(value: *mut T) -> Self {
-		Self { value }
+impl<T: Global + ?Sized> From<MutPtr<T>> for Handle<T> {
+	fn from(ptr: MutPtr<T>) -> Self {
+		Self { ptr }
 	}
 }
 
 impl<T: Global + ?Sized> From<&mut T> for Handle<T> {
 	fn from(value: &mut T) -> Self {
-		Self::from(value as *mut T)
+		Self { ptr: MutPtr::from(value) }
 	}
 }
 
@@ -99,6 +110,17 @@ impl<T: Global + ?Sized> Deref for Handle<T> {
 
 impl<T: Global + ?Sized> DerefMut for Handle<T> {
 	fn deref_mut(&mut self) -> &mut T {
-		self.get_mut()
+		self.as_ref_mut()
 	}
+}
+
+#[macro_export]
+macro_rules! pin_local_mut {
+	($var: ident) => {
+		let mut $var = $var;
+
+		unsafe {
+			$crate::task::env::Global::pinned(&mut $var);
+		}
+	};
 }

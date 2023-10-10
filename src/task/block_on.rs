@@ -1,13 +1,12 @@
-use std::mem::MaybeUninit;
+use super::{Cancel, Progress, Request, RequestPtr, Task};
+use crate::pointer::{ConstPtr, MutPtr};
 
-use super::{Cancel, Progress, Request, Task};
+type ResumeArg<Resume, Output> = (Resume, Option<Output>);
 
-type ResumeArg<Resume, Output> = (Resume, Output);
+fn block_resume<Resume: FnMut(), Output>(_: RequestPtr<Output>, arg: *const (), value: Output) {
+	let mut arg: MutPtr<ResumeArg<Resume, Output>> = ConstPtr::from(arg).cast();
 
-fn block_resume<Resume: FnMut(), Output>(arg: *const (), value: Output) {
-	let arg = unsafe { &mut *(arg as *mut ResumeArg<Resume, Output>) };
-
-	arg.1 = value;
+	arg.1 = Some(value);
 	(arg.0)();
 }
 
@@ -15,21 +14,21 @@ fn block_resume<Resume: FnMut(), Output>(arg: *const (), value: Output) {
 pub fn block_on<Block: FnMut(C), Resume: FnMut(), T: Task<Output, C>, C: Cancel, Output>(
 	mut block: Block, resume: Resume, task: T
 ) -> Output {
-	let mut arg: ResumeArg<Resume, Output> = (resume, unsafe {
-		MaybeUninit::<Output>::uninit().assume_init()
-	});
+	let mut arg: ResumeArg<Resume, Output> = (resume, None);
 
 	unsafe {
 		let request = Request::new(
-			&mut arg as *mut _ as *const (),
+			MutPtr::from(&mut arg).as_raw_ptr(),
 			block_resume::<Resume, Output>
 		);
 
-		match task.run(&request) {
+		match task.run(ConstPtr::from(&request)) {
 			Progress::Done(value) => return value,
 			Progress::Pending(cancel) => block(cancel)
 		};
 	};
 
 	arg.1
+		.take()
+		.expect("Task did not finish after blocking call ended")
 }

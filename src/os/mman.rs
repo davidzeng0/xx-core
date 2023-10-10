@@ -176,8 +176,8 @@ pub fn mremap(
 }
 
 impl MemoryMap {
-	pub fn new() -> MemoryMap {
-		MemoryMap { addr: 0, length: 0 }
+	pub fn new() -> Self {
+		Self { addr: 0, length: 0 }
 	}
 
 	pub fn protect(&mut self, prot: u32) -> Result<()> {

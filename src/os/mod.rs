@@ -1,7 +1,16 @@
+pub mod epoll;
 pub mod error;
+pub mod fcntl;
+pub mod inet;
 pub mod io_uring;
+pub mod iovec;
 pub mod mman;
+pub mod openat;
+pub mod openat2;
+pub mod poll;
 pub mod resource;
+pub mod socket;
+pub mod stat;
 pub mod syscall;
 pub mod time;
 pub mod unistd;

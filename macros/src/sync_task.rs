@@ -1,19 +1,19 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::*;
+use syn::{visit_mut::VisitMut, *};
 
 use crate::{
-	closure::{get_return_type, into_closure, make_tuple_type},
+	closure::{get_return_type, into_basic_closure, into_closure, make_tuple_type, ReplaceSelf},
 	transform::transform_fn
 };
 
 fn transform_func(
 	_: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
 ) -> Result<()> {
-	attrs.push(parse_quote!( #[must_use = "Task does nothing until you `.run` it"] ));
+	attrs.push(parse_quote!( #[must_use] ));
 
 	let return_type = get_return_type(&sig.output);
-	let mut default_cancel_capture = vec![quote! { *const xx_core::task::Request<#return_type> }];
+	let mut default_cancel_capture = vec![quote! { xx_core::task::RequestPtr<#return_type> }];
 
 	if sig.inputs.iter().any(|arg| match arg {
 		FnArg::Receiver(_) => true,
@@ -33,16 +33,17 @@ fn transform_func(
 			if let Stmt::Item(Item::Fn(func)) = stmt {
 				if func.sig.ident == "cancel" {
 					func.sig.inputs.push(parse_quote! {
-						request: *const xx_core::task::Request<#return_type>
+						request: xx_core::task::RequestPtr<#return_type>
 					});
 
 					cancel_closure_type = into_closure(
 						&mut func.attrs,
 						&mut func.sig,
 						Some(&mut func.block),
-						(quote! { () }, quote! { () }),
-						(quote! { xx_core::task::closure::CancelClosure }, vec![]),
-						true
+						vec![quote! { () }],
+						vec![quote! { () }],
+						quote! { xx_core::task::closure::CancelClosure },
+						|capture| quote! { xx_core::task::closure::CancelClosure<#capture> }
 					)?;
 
 					let inputs = func.sig.inputs.clone();
@@ -52,6 +53,8 @@ fn transform_func(
 					*stmt = parse_quote! {
 						let cancel = | #inputs | #output #block;
 					};
+
+					ReplaceSelf {}.visit_stmt_mut(stmt);
 				}
 			}
 		}
@@ -65,22 +68,19 @@ fn transform_func(
 		-> xx_core::task::Progress<#return_type, #cancel_closure_type>
 	};
 
-	into_closure(
+	into_basic_closure(
 		attrs,
 		sig,
 		block,
-		(
-			quote! { *const xx_core::task::Request<#return_type> },
-			quote! { request }
-		),
-		(
-			quote! { xx_core::task::closure::TaskClosure },
-			vec![
-				parse_quote! { #return_type },
-				parse_quote! { #cancel_closure_type },
-			]
-		),
-		true
+		vec![quote! { request }],
+		vec![quote! { xx_core::task::RequestPtr<#return_type> }],
+		|_| quote! { xx_core::task::Progress<#return_type, #cancel_closure_type> },
+		Some(|_| {
+			(
+				quote! { xx_core::task::Task<#return_type, #cancel_closure_type> },
+				quote! { xx_core::task::closure::TaskClosureWrap }
+			)
+		})
 	)?;
 
 	Ok(())
@@ -89,8 +89,8 @@ fn transform_func(
 /// ### Input
 /// ```
 /// #[sync_task]
-/// fn add(&mut self, a: i32, b: i32) -> i32 {
-/// 	fn cancel(&mut self, extra: i32) -> Result<()> {
+/// fn add<'a>(&'a mut self, a: i32, b: i32) -> i32 {
+/// 	fn cancel(self: &'a mut Self, extra: i32) -> Result<()> {
 /// 		self.cancel_async_add(extra, request)?;
 ///
 /// 		Ok(())
@@ -108,22 +108,22 @@ fn transform_func(
 ///
 /// ### Output
 /// ```
-/// fn add(&mut self, a: i32, b: i32) ->
+/// fn add<'a>(&'a mut self, a: i32, b: i32) ->
 /// 	TaskClosure<
-/// 		(&mut Self, i32, i32),
+/// 		(&'a mut Self, i32, i32),
 /// 		Progress<i32,
-/// 			CancelClosure<(&mut Self, extra: i32, *const Request<i32>)>
+/// 			CancelClosure<(&'a mut Self, extra: i32, RequestPtr<i32>)>
 /// 		>
 /// 	> {
 /// 	let run = |
-/// 		(__self, a, b): (&mut Self, i32, i32),
-/// 		request: *const Request<i32>
+/// 		(__self, a, b): (&'a mut Self, i32, i32),
+/// 		request: RequestPtr<i32>
 /// 	| -> Progress<i32, CancelClosure<...>> {
 /// 		let cancel = |
-/// 			&mut self, extra: i32
+/// 			self: &'a mut Self, extra: i32
 /// 		| {
 /// 			let run = |
-/// 				(__self, extra, request): (&mut Self, i32, *const Request<i32>)
+/// 				(__self, extra, request): (&'a mut Self, i32, RequestPtr<i32>)
 /// 			| -> Result<()> {
 /// 				self.cancel_async_add(extra, request)?;
 ///

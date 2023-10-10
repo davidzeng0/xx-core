@@ -1,21 +1,23 @@
 use std::io::Result;
 
-use super::{Cancel, Progress, Request, Task};
-use crate::closure::Closure;
+use super::{Cancel, Progress, RequestPtr, Task};
+use crate::closure::{Closure, ClosureWrap};
 
-pub type TaskClosure<Capture, Output, Cancel> =
-	Closure<Capture, *const Request<Output>, Progress<Output, Cancel>>;
+pub type TaskClosureWrap<Inner, Output, Cancel> =
+	ClosureWrap<Inner, RequestPtr<Output>, Progress<Output, Cancel>>;
 
-unsafe impl<Capture: Sized, Output, C: Cancel> Task<Output, C> for TaskClosure<Capture, Output, C> {
+unsafe impl<Inner: FnOnce(RequestPtr<Output>) -> Progress<Output, C>, Output, C: Cancel>
+	Task<Output, C> for TaskClosureWrap<Inner, Output, C>
+{
 	#[inline(always)]
-	unsafe fn run(self, request: *const Request<Output>) -> Progress<Output, C> {
+	unsafe fn run(self, request: RequestPtr<Output>) -> Progress<Output, C> {
 		self.call(request)
 	}
 }
 
 pub type CancelClosure<Capture> = Closure<Capture, (), Result<()>>;
 
-unsafe impl<Capture: Sized> Cancel for CancelClosure<Capture> {
+unsafe impl<Capture> Cancel for CancelClosure<Capture> {
 	#[inline(always)]
 	unsafe fn run(self) -> Result<()> {
 		self.call(())

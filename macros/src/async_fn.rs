@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{spanned::Spanned, visit_mut::*, *};
 
-use crate::{closure::into_closure, transform::transform_fn};
+use crate::{closure::into_basic_closure, transform::transform_fn};
 
 struct ReplaceAwait;
 
@@ -13,7 +13,7 @@ impl VisitMut for ReplaceAwait {
 		if let Expr::Await(inner) = expr {
 			let base = inner.base.as_ref();
 			let mut call: ExprCall = parse_quote! {
-				xx_core::coroutines::env::AsyncContext::run(__xx_async_internal_context.clone().get_mut(), #base)
+				xx_core::coroutines::env::AsyncContext::run(__xx_async_internal_context.clone().as_ref_mut(), #base)
 			};
 
 			call.attrs = inner.attrs.clone();
@@ -46,16 +46,19 @@ fn transform_func(
 		None
 	};
 
-	into_closure(
+	into_basic_closure(
 		attrs,
 		sig,
 		block,
-		(
-			quote! { xx_core::task::env::Handle<xx_async_runtime::Context> },
-			quote! { mut __xx_async_internal_context }
-		),
-		(quote! { xx_async_runtime::AsyncClosure }, vec![]),
-		false
+		vec![quote! { mut __xx_async_internal_context }],
+		vec![quote! { xx_core::task::env::Handle<xx_async_runtime::Context> }],
+		|rt| rt,
+		Some(|rt| {
+			(
+				quote! { xx_core::coroutines::task::AsyncTask<xx_async_runtime::Context, #rt> },
+				quote! { xx_core::coroutines::closure::AsyncClosure }
+			)
+		})
 	)?;
 
 	Ok(())

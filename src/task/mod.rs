@@ -1,12 +1,18 @@
 use std::io::Result;
 
 pub use xx_core_macros::sync_task;
+
+use crate::pointer::ConstPtr;
 pub mod block_on;
 pub mod closure;
 pub mod env;
 
+pub type RequestPtr<T> = ConstPtr<Request<T>>;
+
 /// A pointer of a [`Request`] will be passed to a [`Task`] when [`Task::run`]
-/// is called When the [`Task`] completes, the [`Request`]'s callback will be
+/// is called
+///
+/// When the [`Task`] completes, the [`Request`]'s callback will be
 /// executed with the result
 ///
 /// The pointer will be used as the key for [`Cancel::run`],
@@ -18,26 +24,28 @@ pub mod env;
 /// The lifetime of the request must last until the callback is executed
 pub struct Request<T> {
 	/// The user data to be passed back.
-	arg: *const (),
-	callback: fn(*const (), T)
+	pub arg: *const (),
+	pub callback: fn(ConstPtr<Self>, *const (), T)
 }
 
 impl<T> Request<T> {
-	pub unsafe fn new(arg: *const (), callback: fn(*const (), T)) -> Request<T> {
-		Request { arg, callback }
+	pub const unsafe fn new(arg: *const (), callback: fn(ConstPtr<Self>, *const (), T)) -> Self {
+		Self { arg, callback }
+	}
+
+	pub fn set_arg(&mut self, arg: *const ()) {
+		self.arg = arg;
 	}
 
 	#[inline(always)]
-	pub fn complete(handle: *const Request<T>, value: T) {
-		let handle = unsafe { &*handle };
-
-		(handle.callback)(handle.arg, value);
+	pub fn complete(request: ConstPtr<Self>, value: T) {
+		(request.callback)(request, request.arg, value);
 	}
 }
 
 /// A cancel token, allowing the user to cancel a running task
 pub unsafe trait Cancel {
-	/// Attempt to cancel the task
+	/// Cancelling is on a best-effort basis
 	///
 	/// If the cancellation fails, the user should
 	/// ignore the error and pray that the task
@@ -49,17 +57,20 @@ pub unsafe trait Cancel {
 	///
 	/// Even if the cancel operation returns an Ok(),
 	/// that does not necessarily mean a cancel was successful,
-	/// for reasons such as task already completed or out of memory
+	/// because cancellations may be asynchronous
 	///
-	/// It is not safe to release the [`Request`] associated
-	/// with the task until the callback is ran, even if
-	/// an attempted cancellation is in progress
+	/// After cancelling, you must wait for the callback
+	/// to be called before releasing the [`Request`]
+	///
+	/// It is possible that the callback is
+	/// immediately executed in the call to cancel
 	unsafe fn run(self) -> Result<()>;
 }
 
 pub struct NoOpCancel;
 
 unsafe impl Cancel for NoOpCancel {
+	#[inline(always)]
 	unsafe fn run(self) -> Result<()> {
 		Ok(())
 	}
@@ -77,5 +88,11 @@ pub enum Progress<Output, C: Cancel> {
 }
 
 pub unsafe trait Task<Output, C: Cancel = NoOpCancel> {
-	unsafe fn run(self, request: *const Request<Output>) -> Progress<Output, C>;
+	/// Run the task
+	///
+	/// The user is responsible for ensuring any pointers/references passed
+	/// to the task stays alive until the callback is called.
+	///
+	/// Which pointers need to stay valid will depend on the implementation
+	unsafe fn run(self, request: RequestPtr<Output>) -> Progress<Output, C>;
 }

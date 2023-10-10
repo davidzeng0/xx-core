@@ -1,19 +1,19 @@
-.global xx_core_fiber_start
-xx_core_fiber_start:
+.global xx_core_fiber_x64_start
+xx_core_fiber_x64_start:
 	mov rdx, [rsp - 0x10]
 	mov rdi, [rsp - 0x08]
 	push qword ptr 0
 	jmp rdx
 
-.global xx_core_fiber_intercept
-xx_core_fiber_intercept:
+.global xx_core_fiber_x64_intercept
+xx_core_fiber_x64_intercept:
 	mov rdx, [rsp - 0x18]
 	mov rdi, [rsp - 0x10]
 	sub rsp, 8
 	jmp rdx
 
-.global xx_core_fiber_switch
-xx_core_fiber_switch:
+.global xx_core_fiber_x64_switch
+xx_core_fiber_x64_switch:
 	mov rdx, [rsp]
 	add rsp, 8
 

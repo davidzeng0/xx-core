@@ -1,9 +1,10 @@
 use std::{io::Result, mem::zeroed};
 
 use super::{
-	syscall::{syscall_int, to_pointer, SyscallNumber::*},
+	syscall::{syscall_int, SyscallNumber::*},
 	time::TimeVal
 };
+use crate::pointer::{ConstPtr, MutPtr};
 
 pub enum Resource {
 	///Per-process CPU limit, in seconds.
@@ -69,13 +70,13 @@ pub enum Constant {
 
 #[repr(C)]
 pub struct Limit {
-	current: u64,
-	maximum: u64
+	pub current: u64,
+	pub maximum: u64
 }
 
 impl Limit {
-	fn new() -> Limit {
-		Limit { current: 0, maximum: 0 }
+	fn new() -> Self {
+		Self { current: 0, maximum: 0 }
 	}
 }
 
@@ -129,13 +130,13 @@ impl Usage {
 pub fn get_rlimit(resource: Resource) -> Result<Limit> {
 	let mut limit = Limit::new();
 
-	syscall_int!(Getrlimit, resource, to_pointer(&mut limit))?;
+	syscall_int!(Getrlimit, resource, MutPtr::from(&mut limit).as_raw_int())?;
 
 	Ok(limit)
 }
 
 pub fn set_rlimit(resource: Resource, limit: &Limit) -> Result<()> {
-	syscall_int!(Setrlimit, resource, to_pointer(limit))?;
+	syscall_int!(Setrlimit, resource, ConstPtr::from(limit).as_raw_int())?;
 
 	Ok(())
 }
@@ -147,8 +148,8 @@ pub fn p_rlimit(pid: Option<i32>, resource: Resource, new_limit: Option<&Limit>)
 		Prlimit64,
 		pid.unwrap_or(0),
 		resource,
-		new_limit.map_or(0, |rlimit| { to_pointer(rlimit) }),
-		to_pointer(&mut limit)
+		new_limit.map_or(0, |rlimit| { ConstPtr::from(rlimit).as_raw_int() }),
+		MutPtr::from(&mut limit).as_raw_int()
 	)?;
 
 	Ok(limit)
@@ -161,7 +162,7 @@ pub fn get_limit(resource: Resource) -> Result<u64> {
 pub fn get_rusage(who: UsageWho) -> Result<Usage> {
 	let mut usage = Usage::new();
 
-	syscall_int!(Getrusage, who, to_pointer(&mut usage))?;
+	syscall_int!(Getrusage, who, MutPtr::from(&mut usage).as_raw_int())?;
 
 	Ok(usage)
 }

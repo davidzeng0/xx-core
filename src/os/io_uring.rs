@@ -7,9 +7,10 @@ use std::{
 use enumflags2::{bitflags, BitFlags};
 
 use super::{
-	syscall::{syscall_int, to_pointer, SyscallNumber::*},
+	syscall::{syscall_int, SyscallNumber::*},
 	time::TimeSpec
 };
+use crate::pointer::{ConstPtr, MutPtr};
 
 #[bitflags]
 #[repr(u32)]
@@ -62,13 +63,13 @@ pub struct Parameters {
 	pub sq_thread_idle: u32,
 	pub features: u32,
 	pub wq_fd: u32,
-	resv: [u32; 3],
+	pub resv: [u32; 3],
 	pub sq_off: SubmissionRingOffsets,
 	pub cq_off: CompletinRingOffsets
 }
 
 impl Parameters {
-	pub fn new() -> Parameters {
+	pub fn new() -> Self {
 		unsafe { zeroed() }
 	}
 
@@ -124,7 +125,7 @@ pub enum OpCode {
 	FilesUpdate,
 	Statx,
 	Read,
-	WRite,
+	Write,
 	FileAdvise,
 	MemoryAdvise,
 	Send,
@@ -243,7 +244,7 @@ pub enum MsgRingFlag {
 #[derive(Default, Copy, Clone)]
 pub struct CmdOp {
 	pub op: u32,
-	pad: [u32; 1]
+	pub pad: [u32; 1]
 }
 
 #[repr(C)]
@@ -259,7 +260,7 @@ pub union Wide {
 #[derive(Default, Copy, Clone)]
 pub struct AddrLen {
 	pub len: u16,
-	pad: [u16; 1]
+	pub pad: [u16; 1]
 }
 
 #[repr(C)]
@@ -286,11 +287,11 @@ pub struct SubmissionEntry {
 	pub personality: u16,
 	pub file: File,
 	pub addr3: Wide,
-	pad: [u64; 1]
+	pub pad: [u64; 1]
 }
 
 impl SubmissionEntry {
-	pub fn new() -> SubmissionEntry {
+	pub fn new() -> Self {
 		unsafe { zeroed() }
 	}
 }
@@ -351,7 +352,7 @@ pub struct CompletinRingOffsets {
 	pub overflow: u32,
 	pub cqes: u32,
 	pub flags: u32,
-	resv: [u32; 1],
+	pub resv: [u32; 1],
 	pub user_addr: u64
 }
 
@@ -420,7 +421,7 @@ pub enum WqCategory {
 #[deprecated]
 pub struct FilesUpdate {
 	pub offset: u32,
-	resv: [u32; 1],
+	pub resv: [u32; 1],
 	pub fds: u64
 }
 
@@ -435,7 +436,7 @@ pub enum RsrcFlag {
 pub struct RsrcRegister {
 	pub count: u32,
 	pub flags: u32,
-	resv: [u64; 1],
+	pub resv: [u64; 1],
 	pub data: u64,
 	pub tags: u64
 }
@@ -443,18 +444,18 @@ pub struct RsrcRegister {
 #[repr(C)]
 pub struct RsrcUpdate {
 	pub offset: u32,
-	resv: [u32; 1],
+	pub resv: [u32; 1],
 	pub data: u64
 }
 
 #[repr(C)]
 pub struct RsrcUpdate2 {
 	pub offset: u32,
-	resv: [u32; 1],
+	pub resv: [u32; 1],
 	pub data: u64,
 	pub tags: u64,
 	pub count: u32,
-	resv2: [u32; 1]
+	pub resv2: [u32; 1]
 }
 
 pub const REGISTER_FILES_SKIP: i32 = -2;
@@ -469,17 +470,17 @@ pub enum ProbeOpFlags {
 #[repr(C)]
 pub struct ProbeOp {
 	pub op: u8,
-	resv: [u8; 1],
+	pub resv: [u8; 1],
 	pub flags: u16,
-	resv2: [u32; 1]
+	pub resv2: [u32; 1]
 }
 
 #[repr(C)]
 pub struct Probe {
 	pub last_op: u8,
 	pub length: u8,
-	resv: [u16; 1],
-	resv2: [u32; 3],
+	pub resv: [u16; 1],
+	pub resv2: [u32; 3],
 	pub ops: [ProbeOp]
 }
 
@@ -494,8 +495,8 @@ pub enum RestrictionOpCode {
 pub struct Restriction {
 	pub opcode: u16,
 	pub union: u8,
-	resv: [u8; 1],
-	resv2: [u32; 3]
+	pub resv: [u8; 1],
+	pub resv2: [u32; 3]
 }
 
 #[repr(C)]
@@ -503,12 +504,12 @@ pub struct Buf {
 	pub addr: u64,
 	pub len: u32,
 	pub bid: u16,
-	resv: [u16; 1]
+	pub resv: [u16; 1]
 }
 
 #[repr(C)]
 pub struct BufRing {
-	resv: [u16; 7],
+	pub resv: [u16; 7],
 	pub tail: u16
 }
 
@@ -525,19 +526,19 @@ pub struct BufReg {
 	pub ring_entries: u32,
 	pub bgid: u16,
 	pub flags: u16,
-	resv: [u64; 3]
+	pub resv: [u64; 3]
 }
 
 #[repr(C)]
 pub struct GetEventsArg {
 	pub sig_mask: u64,
 	pub sig_mask_size: u32,
-	pad: [u32; 0],
+	pub pad: [u32; 0],
 	pub ts: u64
 }
 
 impl GetEventsArg {
-	pub fn new() -> GetEventsArg {
+	pub fn new() -> Self {
 		unsafe { zeroed() }
 	}
 }
@@ -548,14 +549,14 @@ pub struct SyncCancelReg {
 	pub fd: i32,
 	pub flags: u32,
 	pub timeout: TimeSpec,
-	pad: [u64; 4]
+	pub pad: [u64; 4]
 }
 
 #[repr(C)]
 pub struct FileIndexRange {
 	pub off: u32,
 	pub len: u32,
-	resv: [u64; 1]
+	pub resv: [u64; 1]
 }
 
 #[repr(C)]
@@ -597,12 +598,18 @@ pub fn io_uring_enter2(
 }
 
 pub fn io_uring_enter_timeout(
-	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: u32, ts: &TimeSpec
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: u32, timeout: u64
 ) -> Result<i32> {
 	let mut args = GetEventsArg::new();
 
+	let ts = TimeSpec {
+		/* io_uring does not enforce nanos < 1e9 */
+		nanos: timeout as i64,
+		sec: 0
+	};
+
 	args.sig_mask_size = SIGSET_SIZE as u32;
-	args.ts = to_pointer(ts) as u64;
+	args.ts = ConstPtr::from(&ts).as_raw_int() as u64;
 	flags |= EnterFlag::ExtArg as u32;
 
 	io_uring_enter2(
@@ -610,13 +617,13 @@ pub fn io_uring_enter_timeout(
 		submit,
 		min_complete,
 		flags,
-		to_pointer(&args),
+		MutPtr::from(&mut args).as_raw_int(),
 		size_of::<GetEventsArg>()
 	)
 }
 
 pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd> {
-	let fd = syscall_int!(IoUringSetup, entries, to_pointer(params))?;
+	let fd = syscall_int!(IoUringSetup, entries, MutPtr::from(params).as_raw_int())?;
 
 	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
 }

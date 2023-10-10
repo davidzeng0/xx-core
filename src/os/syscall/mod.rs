@@ -4,10 +4,6 @@ import_sysdeps!();
 
 pub use platform::*;
 
-pub fn to_pointer<T>(t: &T) -> usize {
-	t as *const T as usize
-}
-
 #[macro_export]
 macro_rules! syscall_raw {
 	($num: expr) => {
