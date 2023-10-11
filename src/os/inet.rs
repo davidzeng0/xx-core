@@ -155,8 +155,10 @@ impl From<SocketAddr> for Address {
 	}
 }
 
-impl From<AddressStorage> for Option<Address> {
-	fn from(value: AddressStorage) -> Self {
+impl TryFrom<AddressStorage> for Address {
+	type Error = ();
+
+	fn try_from(value: AddressStorage) -> Result<Self, ()> {
 		const INET: u16 = AddressFamily::INet as u16;
 		const INET6: u16 = AddressFamily::INet6 as u16;
 
@@ -171,7 +173,7 @@ impl From<AddressStorage> for Option<Address> {
 					addr
 				};
 
-				Some(Address::V4(addr))
+				Ok(Address::V4(addr))
 			}
 
 			INET6 => {
@@ -184,23 +186,21 @@ impl From<AddressStorage> for Option<Address> {
 					addr
 				};
 
-				Some(Address::V6(addr))
+				Ok(Address::V6(addr))
 			}
 
-			_ => None
+			_ => Err(())
 		}
 	}
 }
 
-impl From<AddressStorage> for Option<SocketAddr> {
-	fn from(value: AddressStorage) -> Self {
-		let addr = Option::<Address>::from(value);
+impl TryFrom<AddressStorage> for SocketAddr {
+	type Error = ();
 
-		if addr.is_none() {
-			return None;
-		}
+	fn try_from(value: AddressStorage) -> Result<Self, ()> {
+		let addr: Address = value.try_into()?;
 
-		let (addr, port) = match addr.unwrap() {
+		let (addr, port) = match addr {
 			Address::V4(addr) => (
 				IpAddr::V4(Ipv4Addr::new(
 					addr.addr[0],
@@ -226,6 +226,6 @@ impl From<AddressStorage> for Option<SocketAddr> {
 			)
 		};
 
-		Some(SocketAddr::new(addr, port))
+		Ok(SocketAddr::new(addr, port))
 	}
 }
