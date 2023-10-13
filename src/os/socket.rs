@@ -8,7 +8,8 @@ use enumflags2::bitflags;
 
 use super::{
 	iovec::IoVec,
-	syscall::{syscall_int, SyscallNumber::*}
+	syscall::{syscall_int, SyscallNumber::*},
+	tcp::TcpOption
 };
 use crate::pointer::{ConstPtr, MutPtr};
 
@@ -184,6 +185,7 @@ impl SocketType {
 #[repr(u32)]
 pub enum SocketLevel {
 	Socket = 1,
+	Tcp    = 6,
 	Raw    = 255,
 	DecNet = 261,
 	X25,
@@ -212,7 +214,81 @@ pub enum SocketLevel {
 
 #[repr(u32)]
 pub enum SocketOption {
-	ReuseAddr = 2
+	Debug = 1,
+	ReuseAddr,
+	Type,
+	Error,
+	DontRoute,
+	Broadcast,
+	SendBufSize,
+	RecvBufSize,
+	KeepAlive,
+	OutOfBandInline,
+	NoCheck,
+	Priority,
+	Linger,
+	BSDCompat,
+	ReusePort,
+	PassCred,
+	PeerCred,
+	RecvLowWatermark,
+	SendLowWatermark,
+	RecvTimeoutOld,
+	SendTimeoutOld,
+	SecurityAuthentication,
+	SecurityEncryptionTransport,
+	SecurityEncryptionNetwork,
+	BindToDevice,
+	AttachFilter,
+	DetachFilter,
+	PeerName,
+	TimestampOld,
+	AcceptConn,
+	PeerSec,
+	SendBufSizeForce,
+	RecvBufSizeForce,
+	PassSec,
+	TimestampNanosecondsOld,
+	Mark,
+	TimestampingOld,
+	Protocol,
+	Domain,
+	RxqOverflow,
+	WifiStatus,
+	PeekOff,
+	NoFcs,
+	LockFilter,
+	SelectErrorQueue,
+	BusyPoll,
+	MaxPacingRate,
+	BPFExtensions,
+	IncomingCpu,
+	AttachBPF,
+	AttachReusePortCBPF,
+	AttachReusePortEBPF,
+	CnxAdvice,
+	TimestampingOptStats,
+	MemInfo,
+	IncomingNapiId,
+	Cookie,
+	TimestampingPacketInfo,
+	PeerGroups,
+	ZeroCopy,
+	TxtTime,
+	BindToIfIndex,
+	TimestampNew,
+	TimestampNanosecondsNew,
+	TimestampingNew,
+	RecvTimeoutNew,
+	SendTimeoutNew,
+	DetachReusePortBPF,
+	PreferBusyPoll,
+	BusyPollBudget,
+	NetNsCookie,
+	BufLock,
+	ReserveMem,
+	TxRehash,
+	RecvMark
 }
 
 #[repr(u32)]
@@ -442,6 +518,63 @@ pub fn set_reuse_addr(socket: BorrowedFd<'_>, enable: bool) -> Result<()> {
 		SocketOption::ReuseAddr as i32,
 		&enable
 	)?;
+
+	Ok(())
+}
+
+pub fn set_recvbuf_size(socket: BorrowedFd<'_>, size: i32) -> Result<()> {
+	setsockopt(
+		socket,
+		SocketLevel::Socket as i32,
+		SocketOption::RecvBufSize as i32,
+		&size
+	)?;
+
+	Ok(())
+}
+
+pub fn set_sendbuf_size(socket: BorrowedFd<'_>, size: i32) -> Result<()> {
+	setsockopt(
+		socket,
+		SocketLevel::Socket as i32,
+		SocketOption::SendBufSize as i32,
+		&size
+	)?;
+
+	Ok(())
+}
+
+pub fn set_tcp_nodelay(socket: BorrowedFd<'_>, enable: bool) -> Result<()> {
+	let enable = enable as i32;
+
+	setsockopt(
+		socket,
+		SocketLevel::Tcp as i32,
+		TcpOption::NoDelay as i32,
+		&enable
+	)?;
+
+	Ok(())
+}
+
+pub fn set_tcp_keepalive(socket: BorrowedFd<'_>, enable: bool, idle: i32) -> Result<()> {
+	let val = enable as i32;
+
+	setsockopt(
+		socket,
+		SocketLevel::Socket as i32,
+		SocketOption::KeepAlive as i32,
+		&val
+	)?;
+
+	if enable {
+		setsockopt(
+			socket,
+			SocketLevel::Tcp as i32,
+			TcpOption::KeepIdle as i32,
+			&idle
+		)?;
+	}
 
 	Ok(())
 }

@@ -12,5 +12,6 @@ pub mod resource;
 pub mod socket;
 pub mod stat;
 pub mod syscall;
+pub mod tcp;
 pub mod time;
 pub mod unistd;

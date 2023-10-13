@@ -75,8 +75,8 @@ impl<T: Global + ?Sized> Handle<T> {
 		self.ptr.as_ref()
 	}
 
-	pub fn as_ref_mut(&mut self) -> &mut T {
-		self.ptr.as_ref_mut()
+	pub fn as_mut(&mut self) -> &mut T {
+		self.ptr.as_mut()
 	}
 }
 
@@ -110,7 +110,7 @@ impl<T: Global + ?Sized> Deref for Handle<T> {
 
 impl<T: Global + ?Sized> DerefMut for Handle<T> {
 	fn deref_mut(&mut self) -> &mut T {
-		self.as_ref_mut()
+		self.as_mut()
 	}
 }
 

@@ -1,4 +1,7 @@
-use std::any::type_name;
+use std::{
+	any::type_name,
+	io::{stderr, Write}
+};
 
 use ctor::ctor;
 use log::{set_boxed_logger, set_max_level, Level, LevelFilter, Log, Metadata, Record};
@@ -30,12 +33,13 @@ impl Log for Logger {
 			Level::Warn => ansi_color!(3),
 			Level::Info => ansi_color!(122),
 			Level::Debug => ansi_color!(14),
-			Level::Trace => ansi_color!(244)
+			Level::Trace => ansi_color!(224)
 		};
 
 		let target = record.target();
+		let line = format!("{}[{}] {}{}\n", color, target, ansi_color!(), record.args());
 
-		eprintln!("{}[{}] {}{}", color, target, ansi_color!(), record.args());
+		let _ = stderr().write_all(line.as_bytes());
 	}
 
 	fn flush(&self) {}
@@ -56,7 +60,11 @@ fn get_struct_addr<T>(val: &T) -> String {
 }
 
 pub fn format_target<T>(val: &T) -> String {
-	format!("{} @ {}", get_struct_name(val), get_struct_addr(val))
+	format!(
+		" @ {} : {: >10} ",
+		get_struct_addr(val),
+		get_struct_name(val)
+	)
 }
 
 #[macro_export]

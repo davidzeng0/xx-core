@@ -7,12 +7,9 @@ use crate::{
 	fiber::Start,
 	pin_local_mut,
 	pointer::{ConstPtr, MutPtr},
-	task::{env::Handle, Progress, Request, RequestPtr, Task}
+	task::{env::Handle, Progress, Request, RequestPtr, Task},
+	trace, xx_core
 };
-
-mod xx_core {
-	pub use crate::*;
-}
 
 struct SpawnWorker<
 	Context: AsyncContext,
@@ -49,6 +46,8 @@ impl<
 		data.is_async = MutPtr::from(&mut is_async);
 		data.context = (&mut context).into();
 
+		trace!(target: &worker, "++ Spawned");
+
 		let result = context.run(task);
 
 		if is_async {
@@ -56,6 +55,8 @@ impl<
 		} else {
 			data.result = Some(result);
 		}
+
+		trace!(target: &worker, "-- Exited");
 
 		unsafe {
 			worker.exit();
@@ -88,7 +89,7 @@ impl<
 		if data.result.is_some() {
 			Progress::Done(data.result.take().unwrap())
 		} else {
-			*data.is_async.as_ref_mut() = true;
+			*data.is_async.as_mut() = true;
 
 			Progress::Pending(cancel(data.context, request))
 		}

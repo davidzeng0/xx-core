@@ -11,10 +11,6 @@ pub type ConstPtr<T> = Pointer<T, false>;
 pub type MutPtr<T> = Pointer<T, true>;
 
 impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
-	pub fn as_ref<'a>(&self) -> &'a T {
-		unsafe { &*self.ptr }
-	}
-
 	pub fn as_ptr(&self) -> *const T {
 		self.ptr
 	}
@@ -40,7 +36,13 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 	}
 
 	pub fn into_ref<'a>(self) -> &'a T {
-		self.as_ref()
+		unsafe { &*self.ptr }
+	}
+}
+
+impl<T: ?Sized, const MUTABLE: bool> AsRef<T> for Pointer<T, MUTABLE> {
+	fn as_ref(&self) -> &T {
+		unsafe { &*self.ptr }
 	}
 }
 
@@ -51,10 +53,6 @@ impl<T, const MUTABLE: bool> Pointer<T, MUTABLE> {
 }
 
 impl<T: ?Sized> MutPtr<T> {
-	pub fn as_ref_mut<'a>(&self) -> &'a mut T {
-		unsafe { &mut *self.as_ptr_mut() }
-	}
-
 	pub fn as_ptr_mut(&self) -> *mut T {
 		self.ptr as *mut _
 	}
@@ -67,8 +65,14 @@ impl<T: ?Sized> MutPtr<T> {
 		self.as_ptr_mut()
 	}
 
-	pub fn into_ref_mut<'a>(self) -> &'a mut T {
-		self.as_ref_mut()
+	pub fn into_mut<'a>(self) -> &'a mut T {
+		unsafe { &mut *self.as_ptr_mut() }
+	}
+}
+
+impl<T: ?Sized> AsMut<T> for MutPtr<T> {
+	fn as_mut(&mut self) -> &mut T {
+		unsafe { &mut *self.as_ptr_mut() }
 	}
 }
 
@@ -90,7 +94,7 @@ impl<T: ?Sized, const MUTABLE: bool> Deref for Pointer<T, MUTABLE> {
 
 impl<T: ?Sized> DerefMut for MutPtr<T> {
 	fn deref_mut(&mut self) -> &mut T {
-		self.as_ref_mut()
+		self.as_mut()
 	}
 }
 

@@ -13,7 +13,7 @@ impl VisitMut for ReplaceAwait {
 		if let Expr::Await(inner) = expr {
 			let base = inner.base.as_ref();
 			let mut call: ExprCall = parse_quote! {
-				xx_core::coroutines::env::AsyncContext::run(__xx_async_internal_context.clone().as_ref_mut(), #base)
+				xx_core::coroutines::env::AsyncContext::run(__xx_internal_async_context.clone().as_mut(), #base)
 			};
 
 			call.attrs = inner.attrs.clone();
@@ -23,8 +23,9 @@ impl VisitMut for ReplaceAwait {
 	}
 }
 
-fn transform_func(
-	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+fn transform_with_type(
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
+	context_type: proc_macro2::TokenStream, make_closure: bool
 ) -> Result<()> {
 	if sig.asyncness.take().is_none() {
 		if !is_item_fn {
@@ -46,20 +47,63 @@ fn transform_func(
 		None
 	};
 
-	into_basic_closure(
+	if make_closure {
+		into_basic_closure(
+			attrs,
+			sig,
+			block,
+			vec![quote! { mut __xx_internal_async_context }],
+			vec![quote! { xx_core::task::env::Handle<#context_type> }],
+			|rt| rt,
+			Some(|rt| {
+				(
+					quote! { xx_core::coroutines::task::AsyncTask<#context_type, #rt> },
+					quote! { xx_core::coroutines::closure::AsyncClosure }
+				)
+			})
+		)?;
+	} else {
+		let mutability = if block.is_some() {
+			quote! { mut }
+		} else {
+			quote! {}
+		};
+
+		sig.inputs.push(
+			parse_quote! { #mutability __xx_internal_async_context: xx_core::task::env::Handle<#context_type> }
+		);
+	}
+
+	Ok(())
+}
+
+fn transform_generic(
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+) -> Result<()> {
+	transform_with_type(is_item_fn, attrs, sig, block, quote! { Context }, true)?;
+
+	Ok(())
+}
+
+fn transform_typed(
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+) -> Result<()> {
+	transform_with_type(
+		is_item_fn,
 		attrs,
 		sig,
 		block,
-		vec![quote! { mut __xx_async_internal_context }],
-		vec![quote! { xx_core::task::env::Handle<xx_async_runtime::Context> }],
-		|rt| rt,
-		Some(|rt| {
-			(
-				quote! { xx_core::coroutines::task::AsyncTask<xx_async_runtime::Context, #rt> },
-				quote! { xx_core::coroutines::closure::AsyncClosure }
-			)
-		})
+		quote! { xx_async_runtime::Context },
+		true
 	)?;
+
+	Ok(())
+}
+
+fn transform_generic_no_closure(
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+) -> Result<()> {
+	transform_with_type(is_item_fn, attrs, sig, block, quote! { Context }, false)?;
 
 	Ok(())
 }
@@ -87,7 +131,21 @@ fn transform_func(
 /// }
 /// ```
 pub fn async_fn(_: TokenStream, item: TokenStream) -> TokenStream {
-	match transform_fn(item, transform_func) {
+	match transform_fn(item, transform_generic) {
+		Ok(ts) => ts,
+		Err(err) => err.to_compile_error().into()
+	}
+}
+
+pub fn async_fn_typed(_: TokenStream, item: TokenStream) -> TokenStream {
+	match transform_fn(item, transform_typed) {
+		Ok(ts) => ts,
+		Err(err) => err.to_compile_error().into()
+	}
+}
+
+pub fn async_fn_no_closure(_: TokenStream, item: TokenStream) -> TokenStream {
+	match transform_fn(item, transform_generic_no_closure) {
 		Ok(ts) => ts,
 		Err(err) => err.to_compile_error().into()
 	}
