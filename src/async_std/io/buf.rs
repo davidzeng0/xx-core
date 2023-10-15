@@ -26,7 +26,10 @@ pub struct BufReader<Context: AsyncContext, R: Read<Context>> {
 impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 	fn discard(&mut self) {
 		self.pos = 0;
-		self.buf.resize(0, 0);
+
+		unsafe {
+			self.buf.set_len(0);
+		}
 	}
 
 	fn read_into(&mut self, buf: &mut [u8]) -> Result<usize> {
@@ -151,7 +154,7 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 			},
 			Ok(None) => (),
 			Ok(Some(_)) => {
-				if !buf.ends_with('\n') {
+				if buf.ends_with('\n') {
 					buf.pop();
 
 					if buf.ends_with('\r') {

@@ -133,7 +133,7 @@ impl<Context: AsyncContext, Inner: Read<Context>> Stream<Context, Inner> {
 					break;
 				}
 
-				buf.extend_from_slice(&probe[..read]);
+				buf.extend_from_slice(&probe[0..read]);
 			}
 		}
 
