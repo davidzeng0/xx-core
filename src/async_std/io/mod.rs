@@ -154,7 +154,7 @@ impl<Context: AsyncContext, Inner: Write<Context>> Stream<Context, Inner> {
 		self.inner.write(buf, get_context().await)
 	}
 
-	pub async fn write_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+	pub async fn write_exact(&mut self, buf: &[u8]) -> Result<usize> {
 		let mut offset = 0;
 
 		while offset < buf.len() {

@@ -9,4 +9,8 @@ pub trait AsyncContext: Global + Sized {
 	fn block_on<T: Task<Output, C>, C: Cancel, Output>(&mut self, task: T) -> Output;
 
 	fn interrupt(&mut self) -> Result<()>;
+
+	fn interrupted(&self) -> bool;
+
+	fn clear_interrupt(&mut self);
 }

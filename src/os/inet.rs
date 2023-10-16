@@ -1,6 +1,6 @@
 use std::{
 	mem::zeroed,
-	net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+	net::{IpAddr, SocketAddr},
 	ptr::copy
 };
 
@@ -8,7 +8,7 @@ use super::socket::AddressFamily;
 use crate::pointer::ConstPtr;
 
 #[repr(u32)]
-pub enum IPProtocol {
+pub enum IpProtocol {
 	/// Dummy protocol for TCP.
 	Ip       = 1,
 
@@ -112,7 +112,7 @@ pub struct AddressV6 {
 	pub common: AddressCommon,
 	pub port: u16,
 	pub flow_info: u32,
-	pub addr: [u16; 8],
+	pub addr: [u8; 16],
 	pub scope_id: u32
 }
 
@@ -148,7 +148,7 @@ impl From<SocketAddr> for Address {
 				common: AddressCommon { family: AddressFamily::INet6 as u16 },
 				port: addr.port().to_be(),
 				flow_info: addr.flowinfo(),
-				addr: addr.ip().segments(),
+				addr: addr.ip().octets(),
 				scope_id: addr.scope_id()
 			})
 		}
@@ -201,29 +201,9 @@ impl TryFrom<AddressStorage> for SocketAddr {
 		let addr: Address = value.try_into()?;
 
 		let (addr, port) = match addr {
-			Address::V4(addr) => (
-				IpAddr::V4(Ipv4Addr::new(
-					addr.addr[0],
-					addr.addr[1],
-					addr.addr[2],
-					addr.addr[3]
-				)),
-				addr.port.to_le()
-			),
+			Address::V4(addr) => (IpAddr::V4(addr.addr.into()), addr.port.to_le()),
 
-			Address::V6(addr) => (
-				IpAddr::V6(Ipv6Addr::new(
-					addr.addr[0],
-					addr.addr[1],
-					addr.addr[2],
-					addr.addr[3],
-					addr.addr[4],
-					addr.addr[5],
-					addr.addr[6],
-					addr.addr[7]
-				)),
-				addr.port.to_le()
-			)
+			Address::V6(addr) => (IpAddr::V6(addr.addr.into()), addr.port.to_le())
 		};
 
 		Ok(SocketAddr::new(addr, port))
