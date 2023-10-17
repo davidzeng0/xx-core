@@ -1,6 +1,7 @@
 pub mod async_std;
 pub mod closure;
 pub mod coroutines;
+pub mod error;
 pub mod fiber;
 pub mod log;
 pub mod os;

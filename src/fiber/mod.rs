@@ -47,7 +47,7 @@ impl Start {
 /// B exits to A, A gets intercepted
 ///
 /// A called a non-inline switch to B, meaning any lower addresss stack space in
-/// A 	is not in use
+/// A is not in use
 ///
 /// and A's intercept can be written on the stack
 #[repr(C)]

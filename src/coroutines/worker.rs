@@ -28,6 +28,7 @@ impl Worker {
 		}
 	}
 
+	/// The worker that `self` will resume to when suspending
 	pub(crate) fn from(&self) -> Handle<Worker> {
 		self.from
 	}

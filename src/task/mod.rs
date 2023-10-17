@@ -1,8 +1,6 @@
-use std::io::Result;
-
 pub use xx_core_macros::sync_task;
 
-use crate::pointer::ConstPtr;
+use crate::{error::Result, pointer::ConstPtr};
 pub mod block_on;
 pub mod closure;
 pub mod env;

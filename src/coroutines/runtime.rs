@@ -1,7 +1,6 @@
-use std::io::{Error, ErrorKind, Result};
-
 use super::{async_fn, env::AsyncContext};
 use crate::{
+	error::{Error, Result},
 	task::{env::Handle, Cancel, Task},
 	xx_core
 };
@@ -26,7 +25,7 @@ pub async fn is_interrupted<Context: AsyncContext>() -> bool {
 #[async_fn]
 pub async fn check_interrupt<Context: AsyncContext>() -> Result<()> {
 	if get_context().await.interrupted() {
-		Err(Error::new(ErrorKind::Interrupted, "Operation canceled"))
+		Err(Error::interrupted())
 	} else {
 		Ok(())
 	}
@@ -47,8 +46,35 @@ pub async fn take_interrupt<Context: AsyncContext>() -> bool {
 #[async_fn]
 pub async fn check_interrupt_take<Context: AsyncContext>() -> Result<()> {
 	if take_interrupt().await {
-		Err(Error::new(ErrorKind::Interrupted, "Operation canceled"))
+		Err(Error::interrupted())
 	} else {
 		Ok(())
 	}
+}
+
+pub struct InterruptGuard<Context: AsyncContext> {
+	context: Handle<Context>
+}
+
+impl<Context: AsyncContext> InterruptGuard<Context> {
+	fn new(mut context: Handle<Context>) -> Self {
+		context.interrupt_guard(1);
+
+		Self { context }
+	}
+}
+
+impl<Context: AsyncContext> Drop for InterruptGuard<Context> {
+	fn drop(&mut self) {
+		self.context.interrupt_guard(-1);
+	}
+}
+
+/// Creates an interrupt guard
+///
+/// While this guard is held, any attempt to interrupt
+/// the current context will be ignored
+#[async_fn]
+pub async fn interrupt_guard<Context: AsyncContext>() -> InterruptGuard<Context> {
+	InterruptGuard::new(get_context().await)
 }

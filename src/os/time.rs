@@ -1,6 +1,5 @@
-use std::io::Result;
-
 use super::error::result_from_libc;
+use crate::error::Result;
 
 #[repr(C)]
 pub struct TimeVal {

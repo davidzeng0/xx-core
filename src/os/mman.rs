@@ -1,11 +1,9 @@
-use std::{
-	io::Result,
-	os::fd::{AsRawFd, BorrowedFd}
-};
+use std::os::fd::{AsRawFd, BorrowedFd};
 
 use enumflags2::bitflags;
 
 use super::syscall::{syscall_int, syscall_pointer, SyscallNumber::*};
+use crate::error::Result;
 
 #[bitflags]
 #[repr(u32)]

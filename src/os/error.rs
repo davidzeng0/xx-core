@@ -1,11 +1,577 @@
-use std::io::{Error, Result};
+use std::io;
+
+use crate::error::{Error, ErrorKind, Result};
+
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ErrorCodes {
+	/// Unknown error
+	Unknown = -1,
+
+	/// Success
+	Ok      = 0,
+
+	/// Operation not permitted
+	Perm,
+
+	/// No such file or directory
+	NoEnt,
+
+	/// No such process
+	Srch,
+
+	/// Interrupted system call
+	Intr,
+
+	/// I/O error
+	Io,
+
+	/// No such device or address
+	Nxio,
+
+	/// Argument list too long
+	TooBig,
+
+	/// Exec format error
+	NoExec,
+
+	/// Bad file number
+	BadF,
+
+	/// No child processes
+	Child,
+
+	/// Try again
+	Again,
+
+	/// Out of memory
+	NoMem,
+
+	/// Permission denied
+	Acces,
+
+	/// Bad address
+	Fault,
+
+	/// Block device required
+	NotBlk,
+
+	/// Device or resource busy
+	Busy,
+
+	/// File exists
+	Exist,
+
+	/// Cross-device link
+	XDev,
+
+	/// No such device
+	NoDev,
+
+	/// Not a directory
+	NotDir,
+
+	/// Is a directory
+	IsDir,
+
+	/// Invalid argument
+	Inval,
+
+	/// File table overflow
+	NFile,
+
+	/// Too many open files
+	MFile,
+
+	/// Not a typewriter
+	NotTy,
+
+	/// Text file busy
+	TxtBsy,
+
+	/// File too large
+	FBig,
+
+	/// No space left on device
+	NoSpc,
+
+	/// Illegal seek
+	SPipe,
+
+	/// Read-only file system
+	Rofs,
+
+	/// Too many links
+	MLink,
+
+	/// Broken pipe
+	Pipe,
+
+	/// Math argument out of domain of func
+	Dom,
+
+	/// Math result not representable
+	Range,
+
+	/// Dead lock
+	Deadlock,
+
+	/// File name too long
+	NameTooLong,
+
+	/// No record locks available
+	NoLck,
+
+	/// Invalid system call number
+	NoSys,
+
+	/// Directory not empty
+	NotEmpty,
+
+	/// Too many symbolic links encountered
+	Loop,
+
+	/// No message of desired type
+	Nomsg   = 42,
+
+	/// Identifier removed
+	Idrm,
+
+	/// Channel number out of range
+	Chrng,
+
+	/// Level 2 not synchronized
+	L2nsync,
+
+	/// Level 3 halted
+	L3hlt,
+
+	/// Level 3 reset
+	L3rst,
+
+	/// Link number out of range
+	Lnrng,
+
+	/// Protocol driver not attached
+	Unatch,
+
+	/// No CSI structure available
+	Nocsi,
+
+	/// Level 2 halted
+	L2hlt,
+
+	/// Invalid exchange
+	Bade,
+
+	/// Invalid request descriptor
+	Badr,
+
+	/// Exchange full
+	Xfull,
+
+	/// No anode
+	Noano,
+
+	/// Invalid request code
+	Badrqc,
+
+	/// Invalid slot
+	Badslt,
+
+	/// Bad font file format
+	BFont   = 59,
+
+	/// Device not a stream
+	NoStr,
+
+	/// No data available
+	NoData,
+
+	/// Timer expired
+	Time,
+
+	/// Out of streams resources
+	NoSr,
+
+	/// Machine is not on the network
+	NoNet,
+
+	/// Package not installed
+	NoPkg,
+
+	/// Object is remote
+	Remote,
+
+	/// Link has been severed
+	NoLink,
+
+	/// Advertise error
+	Adv,
+
+	/// Srmount error
+	Srmnt,
+
+	/// Communication error on send
+	Comm,
+
+	/// Protocol error
+	Proto,
+
+	/// Multihop attempted
+	Multihop,
+
+	/// RFS specific error
+	Dotdot,
+
+	/// Not a data message
+	BadMsg,
+
+	/// Value too large for defined data type
+	Overflow,
+
+	/// Name not unique on network
+	NotUniq,
+
+	/// File descriptor in bad state
+	BadFd,
+
+	/// Remote address changed
+	RemChg,
+
+	/// Can not access a needed shared library
+	LibAcc,
+
+	/// Accessing a corrupted shared library
+	LibBad,
+
+	/// .lib section in a.out corrupted
+	LibScn,
+
+	/// Attempting to link in too many shared libraries
+	LibMax,
+
+	/// Cannot exec a shared library directly
+	LibExec,
+
+	/// Illegal byte sequence
+	IlSeq,
+
+	/// Interrupted system call should be restarted
+	Restart,
+
+	/// Streams pipe error
+	StrPipe,
+
+	/// Too many users
+	Users,
+
+	/// Socket operation on non-socket
+	NotSock,
+
+	/// Destination address required
+	DestAddrReq,
+
+	/// Message too long
+	MsgSize,
+
+	/// Protocol wrong type for socket
+	Prototype,
+
+	/// Protocol not available
+	NoProtoOpt,
+
+	/// Protocol not supported
+	ProtoNoSupport,
+
+	/// Socket type not supported
+	SocktNoSupport,
+
+	/// Operation not supported on transport endpoint
+	OpNotSupp,
+
+	/// Protocol family not supported
+	PfNoSupport,
+
+	/// Address family not supported by protocol
+	AfNoSupport,
+
+	/// Address already in use
+	AddrInUse,
+
+	/// Cannot assign requested address
+	AddrNotAvail,
+
+	/// Network is down
+	NetDown,
+
+	/// Network is unreachable
+	NetUnreach,
+
+	/// Network dropped connection because of reset
+	NetReset,
+
+	/// Software caused connection abort
+	ConnAborted,
+
+	/// Connection reset by peer
+	ConnReset,
+
+	/// No buffer space available
+	NoBufs,
+
+	/// Transport endpoint is already connected
+	IsConn,
+
+	/// Transport endpoint is not connected
+	NotConn,
+
+	/// Cannot send after transport endpoint shutdown
+	Shutdown,
+
+	/// Too many references: cannot splice
+	TooManyRefs,
+
+	/// Connection timed out
+	TimedOut,
+
+	/// Connection refused
+	ConnRefused,
+
+	/// Host is down
+	HostDown,
+
+	/// No route to host
+	HostUnreach,
+
+	/// Operation already in progress
+	Already,
+
+	/// Operation now in progress
+	InProgress,
+
+	/// Stale file handle
+	Stale,
+
+	/// Structure needs cleaning
+	UClean,
+
+	/// Not a XENIX named type file
+	NotNam,
+
+	/// No XENIX semaphores available
+	NAvail,
+
+	/// Is a named type file
+	IsNam,
+
+	/// Remote I/O error
+	RemoteIo,
+
+	/// Quota exceeded
+	DQuot,
+
+	/// No medium found
+	NoMedium,
+
+	/// Wrong medium type
+	MediumType,
+
+	/// Operation Canceled
+	Canceled,
+
+	/// Required key not available
+	NoKey,
+
+	/// Key has expired
+	KeyExpired,
+
+	/// Key has been revoked
+	KeyRevoked,
+
+	/// Key was rejected by service
+	KeyRejected,
+
+	/// Owner died
+	OwnerDead,
+
+	/// State not recoverable
+	NotRecoverable,
+
+	/// Operation not possible due to RF-kill
+	RfKill,
+
+	/// Memory page has hardware error
+	HwPoison
+}
+
+#[allow(non_upper_case_globals)]
+impl ErrorCodes {
+	pub const DeadLk: ErrorCodes = ErrorCodes::Deadlock;
+	pub const WouldBlock: ErrorCodes = ErrorCodes::Again;
+
+	pub fn from_raw_os_error(value: i32) -> Self {
+		Self::try_from(value).unwrap_or(Self::Unknown)
+	}
+
+	pub fn kind(&self) -> ErrorKind {
+		match self {
+			ErrorCodes::Canceled => ErrorKind::Interrupted,
+			_ => io::Error::from_raw_os_error(*self as i32).kind()
+		}
+	}
+
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			Self::Unknown => "Unknown error",
+			Self::Ok => "OK",
+			Self::Perm => "Operation not permitted",
+			Self::NoEnt => "No such file or directory",
+			Self::Srch => "No such process",
+			Self::Intr => "Interrupted system call",
+			Self::Io => "Input/output error",
+			Self::Nxio => "No such device or address",
+			Self::TooBig => "Argument list too long",
+			Self::NoExec => "Exec format error",
+			Self::BadF => "Bad file descriptor",
+			Self::Child => "No child processes",
+			Self::Deadlock => "Resource deadlock avoided",
+			Self::NoMem => "Cannot allocate memory",
+			Self::Acces => "Permission denied",
+			Self::Fault => "Bad address",
+			Self::NotBlk => "Block device required",
+			Self::Busy => "Device or resource busy",
+			Self::Exist => "File exists",
+			Self::XDev => "Invalid cross-device link",
+			Self::NoDev => "No such device",
+			Self::NotDir => "Not a directory",
+			Self::IsDir => "Is a directory",
+			Self::Inval => "Invalid argument",
+			Self::MFile => "Too many open files",
+			Self::NFile => "Too many open files in system",
+			Self::NotTy => "Inappropriate ioctl for device",
+			Self::TxtBsy => "Text file busy",
+			Self::FBig => "File too large",
+			Self::NoSpc => "No space left on device",
+			Self::SPipe => "Illegal seek",
+			Self::Rofs => "Read-only file system",
+			Self::MLink => "Too many links",
+			Self::Pipe => "Broken pipe",
+			Self::Dom => "Numerical argument out of domain",
+			Self::Range => "Numerical result out of range",
+			Self::Again => "Resource temporarily unavailable",
+			Self::InProgress => "Operation now in progress",
+			Self::Already => "Operation already in progress",
+			Self::NotSock => "Socket operation on non-socket",
+			Self::MsgSize => "Message too long",
+			Self::Prototype => "Protocol wrong type for socket",
+			Self::NoProtoOpt => "Protocol not available",
+			Self::ProtoNoSupport => "Protocol not supported",
+			Self::SocktNoSupport => "Socket type not supported",
+			Self::OpNotSupp => "Operation not supported",
+			Self::PfNoSupport => "Protocol family not supported",
+			Self::AfNoSupport => "Address family not supported by protocol",
+			Self::AddrInUse => "Address already in use",
+			Self::AddrNotAvail => "Cannot assign requested address",
+			Self::NetDown => "Network is down",
+			Self::NetUnreach => "Network is unreachable",
+			Self::NetReset => "Network dropped connection on reset",
+			Self::ConnAborted => "Software caused connection abort",
+			Self::ConnReset => "Connection reset by peer",
+			Self::NoBufs => "No buffer space available",
+			Self::IsConn => "Transport endpoint is already connected",
+			Self::NotConn => "Transport endpoint is not connected",
+			Self::DestAddrReq => "Destination address required",
+			Self::Shutdown => "Cannot send after transport endpoint shutdown",
+			Self::TooManyRefs => "Too many references: cannot splice",
+			Self::TimedOut => "Connection timed out",
+			Self::ConnRefused => "Connection refused",
+			Self::Loop => "Too many levels of symbolic links",
+			Self::NameTooLong => "File name too long",
+			Self::HostDown => "Host is down",
+			Self::HostUnreach => "No route to host",
+			Self::NotEmpty => "Directory not empty",
+			Self::Users => "Too many users",
+			Self::DQuot => "Disk quota exceeded",
+			Self::Stale => "Stale file handle",
+			Self::Remote => "Object is remote",
+			Self::NoLck => "No locks available",
+			Self::NoSys => "Not implemented",
+			Self::IlSeq => "Invalid or incomplete multibyte or wide character",
+			Self::BadMsg => "Bad message",
+			Self::Idrm => "Identifier removed",
+			Self::Multihop => "Multihop attempted",
+			Self::NoData => "No data available",
+			Self::NoLink => "Link has been severed",
+			Self::Nomsg => "No message of desired type",
+			Self::NoSr => "Out of streams resources",
+			Self::NoStr => "Device not a stream",
+			Self::Overflow => "Value too large for defined data type",
+			Self::Proto => "Protocol error",
+			Self::Time => "Timer expired",
+			Self::Canceled => "Operation canceled",
+			Self::OwnerDead => "Owner died",
+			Self::NotRecoverable => "State not recoverable",
+			Self::Restart => "Interrupted system call should be restarted",
+			Self::Chrng => "Channel number out of range",
+			Self::L2nsync => "Level 2 not synchronized",
+			Self::L3hlt => "Level 3 halted",
+			Self::L3rst => "Level 3 reset",
+			Self::Lnrng => "Link number out of range",
+			Self::Unatch => "Protocol driver not attached",
+			Self::Nocsi => "No CSI structure available",
+			Self::L2hlt => "Level 2 halted",
+			Self::Bade => "Invalid exchange",
+			Self::Badr => "Invalid request descriptor",
+			Self::Xfull => "Exchange full",
+			Self::Noano => "No anode",
+			Self::Badrqc => "Invalid request code",
+			Self::Badslt => "Invalid slot",
+			Self::BFont => "Bad font file format",
+			Self::NoNet => "Machine is not on the network",
+			Self::NoPkg => "Package not installed",
+			Self::Adv => "Advertise error",
+			Self::Srmnt => "Srmount error",
+			Self::Comm => "Communication error on send",
+			Self::Dotdot => "RFS specific error",
+			Self::NotUniq => "Name not unique on network",
+			Self::BadFd => "File descriptor in bad state",
+			Self::RemChg => "Remote address changed",
+			Self::LibAcc => "Can not access a needed shared library",
+			Self::LibBad => "Accessing a corrupted shared library",
+			Self::LibScn => ".lib section in a.out corrupted",
+			Self::LibMax => "Attempting to link in too many shared libraries",
+			Self::LibExec => "Cannot exec a shared library directly",
+			Self::StrPipe => "Streams pipe error",
+			Self::UClean => "Structure needs cleaning",
+			Self::NotNam => "Not a XENIX named type file",
+			Self::NAvail => "No XENIX semaphores available",
+			Self::IsNam => "Is a named type file",
+			Self::RemoteIo => "Remote I/O error",
+			Self::NoMedium => "No medium found",
+			Self::MediumType => "Wrong medium type",
+			Self::NoKey => "Required key not available",
+			Self::KeyExpired => "Key has expired",
+			Self::KeyRevoked => "Key has been revoked",
+			Self::KeyRejected => "Key was rejected by service",
+			Self::RfKill => "Operation not possible due to RF-kill",
+			Self::HwPoison => "Memory page has hardware error"
+		}
+	}
+}
+
+impl From<i32> for ErrorCodes {
+	fn from(value: i32) -> Self {
+		Self::from_raw_os_error(value)
+	}
+}
 
 pub fn result_from_libc(result: isize) -> Result<isize> {
 	if result >= 0 {
 		return Ok(result);
 	}
 
-	Err(Error::last_os_error())
+	Err(io::Error::last_os_error().into())
 }
 
 pub fn result_from_int(result: isize) -> Result<isize> {
@@ -24,406 +590,4 @@ pub fn result_from_ptr(result: isize) -> Result<usize> {
 	}
 
 	Err(Error::from_raw_os_error(result as i32))
-}
-
-#[repr(i32)]
-pub enum ErrorCodes {
-	/// Operation not permitted
-	Perm           = 1,
-
-	/// No such file or directory
-	NoEnt          = 2,
-
-	/// No such process
-	Srch           = 3,
-
-	/// Interrupted system call
-	Intr           = 4,
-
-	/// I/O error
-	Io             = 5,
-
-	/// No such device or address
-	Nxio           = 6,
-
-	/// Argument list too long
-	TooBig         = 7,
-
-	/// Exec format error
-	NoExec         = 8,
-
-	/// Bad file number
-	BadF           = 9,
-
-	/// No child processes
-	Child          = 10,
-
-	/// Try again
-	Again          = 11,
-
-	/// Out of memory
-	NoMem          = 12,
-
-	/// Permission denied
-	Acces          = 13,
-
-	/// Bad address
-	Fault          = 14,
-
-	/// Block device required
-	NotBlk         = 15,
-
-	/// Device or resource busy
-	Busy           = 16,
-
-	/// File exists
-	Exist          = 17,
-
-	/// Cross-device link
-	XDev           = 18,
-
-	/// No such device
-	NoDev          = 19,
-
-	/// Not a directory
-	NotDir         = 20,
-
-	/// Is a directory
-	IsDir          = 21,
-
-	/// Invalid argument
-	Inval          = 22,
-
-	/// File table overflow
-	NFile          = 23,
-
-	/// Too many open files
-	MFile          = 24,
-
-	/// Not a typewriter
-	NotTy          = 25,
-
-	/// Text file busy
-	TxtBsy         = 26,
-
-	/// File too large
-	FBig           = 27,
-
-	/// No space left on device
-	NoSpc          = 28,
-
-	/// Illegal seek
-	SPipe          = 29,
-
-	/// Read-only file system
-	Rofs           = 30,
-
-	/// Too many links
-	MLink          = 31,
-
-	/// Broken pipe
-	Pipe           = 32,
-
-	/// Math argument out of domain of func
-	Dom            = 33,
-
-	/// Math result not representable
-	Range          = 34,
-
-	/// File name too long
-	NameTooLong    = 36,
-
-	/// No record locks available
-	NoLck          = 37,
-
-	/// Invalid system call number
-	NoSys          = 38,
-
-	/// Directory not empty
-	NotEmpty       = 39,
-
-	/// Too many symbolic links encountered
-	Loop           = 40,
-
-	/// No message of desired type
-	Nomsg          = 42,
-
-	/// Identifier removed
-	Idrm           = 43,
-
-	/// Channel number out of range
-	Chrng          = 44,
-
-	/// Level 2 not synchronized
-	L2nsync        = 45,
-
-	/// Level 3 halted
-	L3hlt          = 46,
-
-	/// Level 3 reset
-	L3rst          = 47,
-
-	/// Link number out of range
-	Lnrng          = 48,
-
-	/// Protocol driver not attached
-	Unatch         = 49,
-
-	/// No CSI structure available
-	Nocsi          = 50,
-
-	/// Level 2 halted
-	L2hlt          = 51,
-
-	/// Invalid exchange
-	Bade           = 52,
-
-	/// Invalid request descriptor
-	Badr           = 53,
-
-	/// Exchange full
-	Xfull          = 54,
-
-	/// No anode
-	Noano          = 55,
-
-	/// Invalid request code
-	Badrqc         = 56,
-
-	/// Invalid slot
-	Badslt         = 57,
-
-	/// Dead lock
-	Deadlock       = 35,
-
-	/// Bad font file format
-	BFont          = 59,
-
-	/// Device not a stream
-	NoStr          = 60,
-
-	/// No data available
-	NoData         = 61,
-
-	/// Timer expired
-	Time           = 62,
-
-	/// Out of streams resources
-	NoSr           = 63,
-
-	/// Machine is not on the network
-	NoNet          = 64,
-
-	/// Package not installed
-	NoPkg          = 65,
-
-	/// Object is remote
-	Remote         = 66,
-
-	/// Link has been severed
-	NoLink         = 67,
-
-	/// Advertise error
-	Adv            = 68,
-
-	/// Srmount error
-	Srmnt          = 69,
-
-	/// Communication error on send
-	Comm           = 70,
-
-	/// Protocol error
-	Proto          = 71,
-
-	/// Multihop attempted
-	Multihop       = 72,
-
-	/// RFS specific error
-	Dotdot         = 73,
-
-	/// Not a data message
-	BadMsg         = 74,
-
-	/// Value too large for defined data type
-	Overflow       = 75,
-
-	/// Name not unique on network
-	NotUniq        = 76,
-
-	/// File descriptor in bad state
-	BadFd          = 77,
-
-	/// Remote address changed
-	RemChg         = 78,
-
-	/// Can not access a needed shared library
-	LibAcc         = 79,
-
-	/// Accessing a corrupted shared library
-	LibBad         = 80,
-
-	/// .lib section in a.out corrupted
-	LibScn         = 81,
-
-	/// Attempting to link in too many shared libraries
-	LibMax         = 82,
-
-	/// Cannot exec a shared library directly
-	LibExec        = 83,
-
-	/// Illegal byte sequence
-	IlSeq          = 84,
-
-	/// Interrupted system call should be restarted
-	Restart        = 85,
-
-	/// Streams pipe error
-	StrPipe        = 86,
-
-	/// Too many users
-	Users          = 87,
-
-	/// Socket operation on non-socket
-	NotSock        = 88,
-
-	/// Destination address required
-	DestAddrReq    = 89,
-
-	/// Message too long
-	MsgSize        = 90,
-
-	/// Protocol wrong type for socket
-	Prototype      = 91,
-
-	/// Protocol not available
-	NoProtoOpt     = 92,
-
-	/// Protocol not supported
-	ProtoNoSupport = 93,
-
-	/// Socket type not supported
-	SocktNoSupport = 94,
-
-	/// Operation not supported on transport endpoint
-	OpNotSupp      = 95,
-
-	/// Protocol family not supported
-	PfNoSupport    = 96,
-
-	/// Address family not supported by protocol
-	AfNoSupport    = 97,
-
-	/// Address already in use
-	AddrInUse      = 98,
-
-	/// Cannot assign requested address
-	AddrNotAvail   = 99,
-
-	/// Network is down
-	NetDown        = 100,
-
-	/// Network is unreachable
-	NetUnreach     = 101,
-
-	/// Network dropped connection because of reset
-	NetReset       = 102,
-
-	/// Software caused connection abort
-	ConnAborted    = 103,
-
-	/// Connection reset by peer
-	ConnReset      = 104,
-
-	/// No buffer space available
-	NoBufs         = 105,
-
-	/// Transport endpoint is already connected
-	IsConn         = 106,
-
-	/// Transport endpoint is not connected
-	NotConn        = 107,
-
-	/// Cannot send after transport endpoint shutdown
-	Shutdown       = 108,
-
-	/// Too many references: cannot splice
-	TooManyRefs    = 109,
-
-	/// Connection timed out
-	TimedOut       = 110,
-
-	/// Connection refused
-	ConnRefused    = 111,
-
-	/// Host is down
-	HostDown       = 112,
-
-	/// No route to host
-	HostUnreach    = 113,
-
-	/// Operation already in progress
-	Already        = 114,
-
-	/// Operation now in progress
-	InProgress     = 115,
-
-	/// Stale file handle
-	Stale          = 116,
-
-	/// Structure needs cleaning
-	UClean         = 117,
-
-	/// Not a XENIX named type file
-	NotNam         = 118,
-
-	/// No XENIX semaphores available
-	NAvail         = 119,
-
-	/// Is a named type file
-	IsNam          = 120,
-
-	/// Remote I/O error
-	RemoteIo       = 121,
-
-	/// Quota exceeded
-	DQuot          = 122,
-
-	/// No medium found
-	NoMedium       = 123,
-
-	/// Wrong medium type
-	MediumType     = 124,
-
-	/// Operation Canceled
-	Canceled       = 125,
-
-	/// Required key not available
-	NoKey          = 126,
-
-	/// Key has expired
-	KeyExpired     = 127,
-
-	/// Key has been revoked
-	KeyRevoked     = 128,
-
-	/// Key was rejected by service
-	KeyRejected    = 129,
-
-	/// Owner died
-	OwnerDead      = 130,
-
-	/// State not recoverable
-	NotRecoverable = 131,
-
-	/// Operation not possible due to RF-kill
-	RfKill         = 132,
-
-	/// Memory page has hardware error
-	HwPoison       = 133
-}
-
-#[allow(non_upper_case_globals)]
-impl ErrorCodes {
-	pub const DeadLk: ErrorCodes = ErrorCodes::Deadlock;
-	pub const WouldBlock: ErrorCodes = ErrorCodes::Again;
 }

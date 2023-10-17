@@ -1,9 +1,8 @@
-use std::io::Result;
-
 use xx_core_macros::sync_task;
 
 use super::{env::AsyncContext, executor::Executor, task::AsyncTask, worker::Worker};
 use crate::{
+	error::Result,
 	fiber::Start,
 	pin_local_mut,
 	pointer::{ConstPtr, MutPtr},

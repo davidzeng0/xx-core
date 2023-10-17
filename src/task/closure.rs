@@ -1,7 +1,8 @@
-use std::io::Result;
-
 use super::{Cancel, Progress, RequestPtr, Task};
-use crate::closure::{Closure, ClosureWrap};
+use crate::{
+	closure::{Closure, ClosureWrap},
+	error::Result
+};
 
 pub type TaskClosureWrap<Inner, Output, Cancel> =
 	ClosureWrap<Inner, RequestPtr<Output>, Progress<Output, Cancel>>;

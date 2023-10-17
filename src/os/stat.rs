@@ -1,3 +1,5 @@
+use std::mem::zeroed;
+
 use enumflags2::bitflags;
 
 #[bitflags]
@@ -63,4 +65,10 @@ pub struct Statx {
 	pub direct_io_offset_align: u32,
 
 	pub resv1: [u64; 12]
+}
+
+impl Statx {
+	pub fn new() -> Self {
+		unsafe { zeroed() }
+	}
 }

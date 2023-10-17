@@ -1,10 +1,13 @@
-use std::{io::Result, mem::zeroed};
+use std::mem::zeroed;
 
 use super::{
 	syscall::{syscall_int, SyscallNumber::*},
 	time::TimeVal
 };
-use crate::pointer::{ConstPtr, MutPtr};
+use crate::{
+	error::Result,
+	pointer::{ConstPtr, MutPtr}
+};
 
 pub enum Resource {
 	///Per-process CPU limit, in seconds.

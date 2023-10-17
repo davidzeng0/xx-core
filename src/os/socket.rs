@@ -1,5 +1,4 @@
 use std::{
-	io::Result,
 	mem::size_of,
 	os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd}
 };
@@ -11,7 +10,10 @@ use super::{
 	syscall::{syscall_int, SyscallNumber::*},
 	tcp::TcpOption
 };
-use crate::pointer::{ConstPtr, MutPtr};
+use crate::{
+	error::Result,
+	pointer::{ConstPtr, MutPtr}
+};
 
 #[repr(u32)]
 pub enum ProtocolFamily {

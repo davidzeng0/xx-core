@@ -1,7 +1,4 @@
-use std::{
-	io::Result,
-	os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd}
-};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 
 use enumflags2::bitflags;
 
@@ -9,7 +6,7 @@ use super::{
 	poll::PollFlag,
 	syscall::{syscall_int, SyscallNumber::*}
 };
-use crate::pointer::MutPtr;
+use crate::{error::Result, pointer::MutPtr};
 
 #[bitflags]
 #[repr(u32)]

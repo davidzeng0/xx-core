@@ -36,10 +36,16 @@ impl Log for Logger {
 			Level::Trace => ansi_color!(224)
 		};
 
-		let target = record.target();
-		let line = format!("{}[{}] {}{}\n", color, target, ansi_color!(), record.args());
+		let content = format!("{}", record.args());
+		let lines = content.lines();
 
-		let _ = stderr().write_all(line.as_bytes());
+		let target = record.target();
+
+		for line in lines {
+			let line = format!("{}[ {: >32} ] {}{}\n", color, target, ansi_color!(), line);
+
+			let _ = stderr().write_all(line.as_bytes());
+		}
 	}
 
 	fn flush(&self) {}
@@ -55,13 +61,13 @@ fn get_struct_name<T>(_: &T) -> &str {
 	type_name::<T>().split("::").last().unwrap()
 }
 
-fn get_struct_addr<T>(val: &T) -> String {
-	format!("{:p}", val as *const T)
+fn get_struct_addr<T>(val: &T) -> usize {
+	val as *const _ as usize
 }
 
 pub fn format_target<T>(val: &T) -> String {
 	format!(
-		" @ {} : {: >10} ",
+		"@ {:0>16x} : {: >11}",
 		get_struct_addr(val),
 		get_struct_name(val)
 	)

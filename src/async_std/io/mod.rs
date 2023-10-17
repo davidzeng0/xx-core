@@ -1,11 +1,16 @@
 use std::{
-	io::{Result, SeekFrom},
+	io::SeekFrom,
 	marker::PhantomData,
 	ops::{Deref, DerefMut}
 };
 
 use crate::{
-	coroutines::{async_fn, async_trait_fn, env::AsyncContext, runtime::get_context},
+	coroutines::{
+		async_fn, async_trait_fn,
+		env::AsyncContext,
+		runtime::{check_interrupt, get_context, is_interrupted}
+	},
+	error::Result,
 	xx_core
 };
 
@@ -17,13 +22,20 @@ use super::{AsyncIterator, Iterator};
 
 #[async_trait_fn]
 pub trait Read<Context: AsyncContext> {
+	/// Read into `buf`, returning the amount of bytes read
+	///
+	/// Returning zero strictly means EOF
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 }
 
 #[async_trait_fn]
 pub trait Write<Context: AsyncContext> {
+	/// Write from `buf`, returning the amount of bytes read
+	///
+	/// Returning zero strictly means EOF
 	async fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
+	/// Flush buffered data
 	async fn flush(&mut self) -> Result<()>;
 }
 
@@ -31,12 +43,13 @@ pub trait Write<Context: AsyncContext> {
 pub trait Seek<Context: AsyncContext> {
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64>;
 
-	/// Whether or not stream length can be calculated without doing anything
-	/// expensive
+	/// Whether or not stream length can be calculated without an
+	/// expensive I/O operation
 	fn stream_len_fast(&self) -> bool {
 		false
 	}
 
+	/// Get the length of the stream in bytes
 	async fn stream_len(&mut self) -> Result<u64> {
 		let old_pos = self.stream_position(get_context().await)?;
 		let len = self.seek(SeekFrom::End(0), get_context().await)?;
@@ -48,12 +61,13 @@ pub trait Seek<Context: AsyncContext> {
 		Ok(len)
 	}
 
-	/// Whether or not stream position can be calculated without doing anything
-	/// expensive
+	/// Whether or not stream length can be calculated without an
+	/// expensive I/O operation
 	fn stream_position_fast(&self) -> bool {
 		false
 	}
 
+	/// Get the position in the stream in bytes
 	async fn stream_position(&mut self) -> Result<u64> {
 		self.seek(SeekFrom::Current(0), get_context().await)
 	}
@@ -85,26 +99,40 @@ impl<Context: AsyncContext, Inner: Read<Context>> Stream<Context, Inner> {
 		self.inner.read(buf, get_context().await)
 	}
 
+	/// Read until the buffer is filled, an I/O error, an interrupt, or an EOF
+	///
+	/// On interrupted, returns the number of bytes read if it is not zero
 	pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
-		let mut offset = 0;
+		let mut read = 0;
 
-		while offset < buf.len() {
-			let read = self.read(&mut buf[offset..]).await?;
+		while read < buf.len() && !is_interrupted().await {
+			match self.read(&mut buf[read..]).await {
+				Ok(0) => break,
+				Ok(n) => read += n,
+				Err(err) => {
+					if err.is_interrupted() {
+						break;
+					}
 
-			if read == 0 {
-				break;
+					return Err(err);
+				}
 			}
-
-			offset += read;
 		}
 
-		Ok(offset)
+		if read == 0 {
+			check_interrupt().await?;
+		}
+
+		Ok(read)
 	}
 
-	pub async fn read_fully(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+	/// Reads until an EOF, I/O error, or interrupt
+	///
+	/// On interrupted, returns the number of bytes read if it is not zero
+	pub async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
 		let start_len = buf.len();
 
-		loop {
+		while !is_interrupted().await {
 			let mut capacity = buf.capacity();
 			let len = buf.len();
 
@@ -113,31 +141,48 @@ impl<Context: AsyncContext, Inner: Read<Context>> Stream<Context, Inner> {
 			}
 
 			unsafe {
-				let read;
-
 				capacity = buf.capacity();
-				read = self.read(buf.get_unchecked_mut(len..capacity)).await?;
 
-				if read == 0 {
-					break;
+				match self.read(buf.get_unchecked_mut(len..capacity)).await {
+					Ok(0) => break,
+					Ok(read) => buf.set_len(len + read),
+					Err(err) => {
+						if err.is_interrupted() {
+							break;
+						}
+
+						return Err(err);
+					}
 				}
-
-				buf.set_len(len + read);
 			}
 
 			if buf.len() == capacity {
 				let mut probe = [0u8; 32];
-				let read = self.read(&mut probe).await?;
 
-				if read == 0 {
-					break;
+				match self.read(&mut probe).await {
+					Ok(0) => break,
+					Ok(read) => {
+						buf.extend_from_slice(&probe[0..read]);
+					}
+
+					Err(err) => {
+						if err.is_interrupted() {
+							break;
+						}
+
+						return Err(err);
+					}
 				}
-
-				buf.extend_from_slice(&probe[0..read]);
 			}
 		}
 
-		Ok(buf.len() - start_len)
+		let total = buf.len() - start_len;
+
+		if total == 0 {
+			check_interrupt().await?;
+		}
+
+		Ok(total)
 	}
 }
 
@@ -154,20 +199,32 @@ impl<Context: AsyncContext, Inner: Write<Context>> Stream<Context, Inner> {
 		self.inner.write(buf, get_context().await)
 	}
 
+	/// Try to write the entire buffer, returning on I/O error, interrupt, or
+	/// EOF
+	///
+	/// On interrupted, returns the number of bytes read if it is not zero
 	pub async fn write_exact(&mut self, buf: &[u8]) -> Result<usize> {
-		let mut offset = 0;
+		let mut wrote = 0;
 
-		while offset < buf.len() {
-			let read = self.write(&buf[offset..]).await?;
+		while wrote < buf.len() {
+			match self.write(&buf[wrote..]).await {
+				Ok(0) => break,
+				Ok(n) => wrote += n,
+				Err(err) => {
+					if err.is_interrupted() {
+						break;
+					}
 
-			if read == 0 {
-				break;
+					return Err(err);
+				}
 			}
-
-			offset += read;
 		}
 
-		Ok(offset)
+		if wrote == 0 {
+			check_interrupt().await?;
+		}
+
+		Ok(wrote)
 	}
 
 	pub async fn flush(&mut self) -> Result<()> {

@@ -1,5 +1,5 @@
 use std::{
-	io::{Error, ErrorKind, Read as IoRead, Result, SeekFrom},
+	io::{Read as IoRead, SeekFrom},
 	marker::PhantomData,
 	str::from_utf8
 };
@@ -9,7 +9,8 @@ use memchr::memchr;
 use super::{Close, Lines, Read, Seek, Stream};
 use crate::{
 	async_std::Iterator,
-	coroutines::{async_fn, async_trait_fn, env::AsyncContext},
+	coroutines::{async_fn, async_trait_fn, env::AsyncContext, runtime::check_interrupt},
+	error::{Error, ErrorKind, Result},
 	xx_core
 };
 
@@ -24,6 +25,7 @@ pub struct BufReader<Context: AsyncContext, R: Read<Context>> {
 
 #[async_fn]
 impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
+	/// Discard all data in the buffer
 	fn discard(&mut self) {
 		self.pos = 0;
 
@@ -32,6 +34,7 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 		}
 	}
 
+	/// Reads from our internal buffer into `buf`
 	fn read_into(&mut self, buf: &mut [u8]) -> Result<usize> {
 		let read = (&self.buf[self.pos..]).read(buf)?;
 
@@ -40,23 +43,30 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 		Ok(read)
 	}
 
-	/* buf must be empty. fills from the start.
-	 * if zero is returned, internal data is not modified
-	 */
+	/// Fills the internal buffer from the start
+	/// If zero is returned, internal data is not modified
 	async fn fill_buf(&mut self) -> Result<usize> {
+		let mut read;
+		let mut probe = [0u8; 32];
+
+		read = self.inner.read(&mut probe).await?;
+
+		if read == 0 {
+			return Ok(0);
+		}
+
+		self.discard();
+		self.buf.extend_from_slice(&probe);
+
 		let capacity = self.buf.capacity();
-		let read;
 
 		unsafe {
-			read = self
+			read += self
 				.inner
-				.read(self.buf.get_unchecked_mut(0..capacity))
+				.read(self.buf.get_unchecked_mut(read..capacity))
 				.await?;
 
-			if read != 0 {
-				self.pos = 0;
-				self.buf.set_len(read);
-			}
+			self.buf.set_len(read);
 		}
 
 		Ok(read)
@@ -97,6 +107,10 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 		}
 	}
 
+	/// Read until `byte`
+	///
+	/// On interrupted, the read bytes can be calculated using the difference in
+	/// length of `buf` and can be called again with a new slice
 	pub async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
 		let start_len = buf.len();
 
@@ -116,6 +130,8 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 				break;
 			}
 
+			check_interrupt().await?;
+
 			if self.fill_buf().await? == 0 {
 				if buf.len() == start_len {
 					return Ok(None);
@@ -128,16 +144,20 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 		Ok(Some(buf.len() - start_len))
 	}
 
+	/// See `read_until`
+	///
+	/// On interrupt, this function cannot be called again because it may stop
+	/// reading in the middle of a utf8 character
 	pub async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>> {
 		let vec = unsafe { buf.as_mut_vec() };
-		let valid_len = vec.len();
+		let start_len = vec.len();
 
 		let mut result = self.read_until(b'\n', vec).await;
 
 		result = result.and_then(|read| match read {
 			None => Ok(None),
 			Some(read) => {
-				if let Err(_) = from_utf8(&vec[valid_len..]) {
+				if let Err(_) = from_utf8(&vec[start_len..]) {
 					Err(Error::new(
 						ErrorKind::InvalidData,
 						"invalid UTF-8 found in stream"
@@ -149,22 +169,26 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 		});
 
 		match result {
-			Err(_) => unsafe {
-				vec.set_len(valid_len);
-			},
-			Ok(None) => (),
-			Ok(Some(_)) => {
-				if buf.ends_with('\n') {
-					buf.pop();
-
-					if buf.ends_with('\r') {
-						buf.pop();
-					}
+			Err(err) => {
+				unsafe {
+					vec.set_len(start_len);
 				}
+
+				return Err(err);
+			}
+			Ok(None) => return Ok(None),
+			Ok(Some(_)) => ()
+		}
+
+		if buf.ends_with('\n') {
+			buf.pop();
+
+			if buf.ends_with('\r') {
+				buf.pop();
 			}
 		}
 
-		result
+		Ok(Some(buf.len() - start_len))
 	}
 
 	pub fn lines(self) -> Iterator<Context, Lines<Context, R>> {

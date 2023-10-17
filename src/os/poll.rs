@@ -1,5 +1,8 @@
 use enumflags2::bitflags;
 
+use super::syscall::{syscall_int, SyscallNumber::*};
+use crate::{error::Result, pointer::MutPtr};
+
 #[bitflags]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -38,4 +41,22 @@ pub enum PollFlag {
 	Message   = 1 << 10,
 	Remove    = 1 << 12,
 	RdHangUp  = 1 << 13
+}
+
+#[repr(C)]
+pub struct PollFd {
+	pub fd: i32,
+	pub events: u16,
+	pub returned_events: u16
+}
+
+pub fn poll(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
+	let events = syscall_int!(
+		Poll,
+		MutPtr::from(fds.as_mut_ptr()).as_raw_int(),
+		fds.len(),
+		timeout
+	)?;
+
+	Ok(events as u32)
 }

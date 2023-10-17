@@ -1,4 +1,4 @@
-use proc_macro::{Span, TokenStream};
+use proc_macro::TokenStream;
 use quote::quote;
 use syn::*;
 
@@ -71,11 +71,8 @@ pub fn transform_fn(item: TokenStream, callback: TransformCallback) -> Result<To
 		return transform_impl(&mut parsed, callback);
 	}
 
-	Err(Error::new(
-		item.into_iter()
-			.next()
-			.map_or_else(Span::call_site, |t| t.span())
-			.into(),
+	Err(Error::new_spanned::<proc_macro2::TokenStream, &str>(
+		item.into(),
 		"Expected a function, trait, or impl"
 	))
 }
