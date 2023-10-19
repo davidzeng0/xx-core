@@ -1,31 +1,21 @@
-use std::marker::PhantomData;
-
+use self::ext::ext_func;
 use crate::{
-	coroutines::{async_fn, env::AsyncContext, runtime::get_context},
-	task::env::Handle,
+	coroutines::{async_trait_fn, env::AsyncContext},
 	xx_core
 };
 
+pub mod ext;
 pub mod io;
 
 pub trait AsyncIterator<Context: AsyncContext> {
 	type Item;
 
-	fn next(&mut self, context: Handle<Context>) -> Option<Self::Item>;
+	#[async_trait_fn]
+	async fn async_next(&mut self) -> Option<Self::Item>;
 }
 
-pub struct Iterator<Context: AsyncContext, Inner: AsyncIterator<Context>> {
-	inner: Inner,
-	phantom: PhantomData<Context>
+pub trait AsyncIteratorExt<Context: AsyncContext>: AsyncIterator<Context> {
+	ext_func!(next(self: &mut Self) -> Option<Self::Item>);
 }
 
-#[async_fn]
-impl<Context: AsyncContext, Inner: AsyncIterator<Context>> Iterator<Context, Inner> {
-	pub fn new(inner: Inner) -> Self {
-		Self { inner, phantom: PhantomData }
-	}
-
-	pub async fn next(&mut self) -> Option<Inner::Item> {
-		self.inner.next(get_context().await)
-	}
-}
+impl<Context: AsyncContext, T: AsyncIterator<Context>> AsyncIteratorExt<Context> for T {}

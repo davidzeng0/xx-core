@@ -1,16 +1,19 @@
 use super::{async_fn, env::AsyncContext};
 use crate::{
 	error::{Error, Result},
+	opt::hint::unlikely,
 	task::{env::Handle, Cancel, Task},
 	xx_core
 };
 
 #[async_fn]
+#[inline(always)]
 pub async fn get_context<Context: AsyncContext>() -> Handle<Context> {
 	__xx_internal_async_context
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn block_on<Context: AsyncContext, T: Task<Output, C>, C: Cancel, Output>(
 	task: T
 ) -> Output {
@@ -18,13 +21,15 @@ pub async fn block_on<Context: AsyncContext, T: Task<Output, C>, C: Cancel, Outp
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn is_interrupted<Context: AsyncContext>() -> bool {
 	get_context().await.interrupted()
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn check_interrupt<Context: AsyncContext>() -> Result<()> {
-	if get_context().await.interrupted() {
+	if unlikely(get_context().await.interrupted()) {
 		Err(Error::interrupted())
 	} else {
 		Ok(())
@@ -32,11 +37,12 @@ pub async fn check_interrupt<Context: AsyncContext>() -> Result<()> {
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn take_interrupt<Context: AsyncContext>() -> bool {
 	let mut context = get_context().await;
 	let interrupted = context.interrupted();
 
-	if interrupted {
+	if unlikely(interrupted) {
 		context.clear_interrupt();
 	}
 
@@ -44,8 +50,9 @@ pub async fn take_interrupt<Context: AsyncContext>() -> bool {
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn check_interrupt_take<Context: AsyncContext>() -> Result<()> {
-	if take_interrupt().await {
+	if unlikely(take_interrupt().await) {
 		Err(Error::interrupted())
 	} else {
 		Ok(())

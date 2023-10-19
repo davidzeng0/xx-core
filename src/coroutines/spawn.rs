@@ -79,7 +79,7 @@ impl<
 
 		let start = Start::new(Self::worker_start, MutPtr::from(&mut data).as_raw_ptr());
 
-		data.worker = Some(Worker::new(executor, start));
+		data.worker = Some(executor.new_worker(start));
 
 		unsafe {
 			executor.start(data.worker.as_mut().unwrap().into());

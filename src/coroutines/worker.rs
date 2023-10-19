@@ -13,18 +13,18 @@ pub struct Worker {
 
 impl Worker {
 	pub fn main() -> Self {
-		Self {
-			executor: unsafe { Handle::new_null() },
-			from: unsafe { Handle::new_null() },
-			fiber: Fiber::main()
-		}
+		Self::from_fiber(unsafe { Handle::new_null() }, Fiber::main())
 	}
 
 	pub fn new(executor: Handle<Executor>, start: Start) -> Self {
+		Self::from_fiber(executor, Fiber::new(start))
+	}
+
+	pub fn from_fiber(executor: Handle<Executor>, fiber: Fiber) -> Self {
 		Self {
 			executor,
 			from: unsafe { Handle::new_null() },
-			fiber: Fiber::new(start)
+			fiber
 		}
 	}
 

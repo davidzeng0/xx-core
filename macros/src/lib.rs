@@ -24,3 +24,8 @@ pub fn async_fn_typed(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn async_fn_no_closure(attr: TokenStream, item: TokenStream) -> TokenStream {
 	async_fn::async_fn_no_closure(attr, item)
 }
+
+#[proc_macro_attribute]
+pub fn async_fn_full(attr: TokenStream, item: TokenStream) -> TokenStream {
+	async_fn::async_fn_full(attr, item)
+}

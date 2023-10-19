@@ -170,7 +170,7 @@ fn make_args(
 pub fn into_closure(
 	attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
 	args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>, closure_type: TokenStream,
-	transform_return: impl Fn(TokenStream) -> TokenStream
+	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
 ) -> Result<TokenStream> {
 	let return_type = get_return_type(&sig.output);
 
@@ -206,7 +206,7 @@ pub fn into_closure(
 
 	RemoveRefMut {}.visit_signature_mut(sig);
 
-	let closure_return_type = transform_return(types.clone());
+	let closure_return_type = transform_return(types.clone(), return_type.clone());
 
 	let (args, _) = make_args(args_vars, args_types);
 
@@ -233,7 +233,7 @@ pub fn into_closure(
 }
 
 pub fn into_basic_closure(
-	attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
+	_: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
 	args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
 	transform_return: impl Fn(TokenStream) -> TokenStream,
 	wrap: Option<impl Fn(TokenStream) -> (TokenStream, TokenStream)>
@@ -255,8 +255,6 @@ pub fn into_basic_closure(
 	};
 
 	if let Some(block) = block {
-		attrs.push(parse_quote!( #[inline(always)] ));
-
 		let mut closure = quote! { move |#args| #return_type #block };
 
 		if wrap.is_some() {

@@ -23,6 +23,7 @@ Function calls (even async ones) do not incur any overhead over a normal functio
 Switching fibers incurs a cost of ~3ns (14ns on an Apple M1 with only 8 FP regs preserved, possibly more on other cpus).
 
 Fibers, like threads, can only do one thing at a time. Branching out via `select` or `join` requires spawning a new fiber for each future to be awaited.
+The cost of spawning fibers can be alleviated with a pool.
 
 ## Example
 

@@ -2,6 +2,7 @@ use std::mem::ManuallyDrop;
 
 use enumflags2::make_bitflags;
 
+use self::pool::Pool;
 use super::{
 	os::{
 		mman::{map_memory, MemoryFlag, MemoryMap, MemoryProtection, MemoryType},
@@ -9,9 +10,14 @@ use super::{
 	},
 	sysdep::import_sysdeps
 };
-use crate::pointer::{ConstPtr, MutPtr};
+use crate::{
+	pointer::{ConstPtr, MutPtr},
+	task::env::Handle
+};
 
 import_sysdeps!();
+
+pub mod pool;
 
 #[allow(dead_code)]
 pub struct Fiber {
@@ -67,6 +73,13 @@ extern "C" fn exit_fiber(arg: *const ()) {
 	};
 }
 
+extern "C" fn exit_fiber_to_pool(arg: *const ()) {
+	let mut arg: MutPtr<(ManuallyDrop<Fiber>, Handle<Pool>)> = ConstPtr::from(arg).cast();
+	let fiber = unsafe { ManuallyDrop::take(&mut arg.0) };
+
+	arg.1.exit_fiber(fiber);
+}
+
 impl Fiber {
 	pub fn main() -> Self {
 		Fiber { context: Context::new(), stack: MemoryMap::new() }
@@ -91,6 +104,10 @@ impl Fiber {
 		Self { context, stack }
 	}
 
+	pub unsafe fn set_start(&mut self, start: Start) {
+		self.context.set_start(start)
+	}
+
 	/// Switch from the fiber `self` to the new fiber `to`
 	///
 	/// Safety: `self` must be currently running
@@ -112,5 +129,17 @@ impl Fiber {
 		});
 
 		fiber.switch(to);
+	}
+
+	pub unsafe fn exit_to_pool(self, to: &mut Fiber, pool: Handle<Pool>) {
+		let mut arg = (ManuallyDrop::new(self), pool);
+
+		to.context.set_intercept(Intercept {
+			intercept: exit_fiber_to_pool as usize,
+			arg: MutPtr::from(&mut arg).as_raw_ptr(),
+			ret: 0
+		});
+
+		arg.0.switch(to);
 	}
 }

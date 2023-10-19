@@ -63,7 +63,7 @@ impl Error {
 
 	pub fn os_error(&self) -> Option<ErrorCodes> {
 		match self {
-			Self::Os(code) => Some(ErrorCodes::from(*code)),
+			Self::Os(code) => Some(ErrorCodes::from_raw_os_error(*code)),
 			_ => None
 		}
 	}
@@ -73,7 +73,7 @@ impl Error {
 			Self::Simple(kind) => *kind,
 			Self::SimpleMessage(kind, _) => *kind,
 
-			Self::Os(code) => ErrorCodes::from(*code).kind(),
+			Self::Os(code) => ErrorCodes::from_raw_os_error(*code).kind(),
 			Self::Io(err) => err.kind(),
 			Self::Custom(kind, _) => *kind
 		}
@@ -115,7 +115,7 @@ impl From<io::Error> for Error {
 			let kind = value.kind();
 			let err = value.into_inner().unwrap();
 
-			Self::Custom(kind, err)
+			Self::custom(kind, err)
 		} else {
 			Self::Io(value)
 		}
@@ -145,8 +145,8 @@ impl Debug for Error {
 			Error::Os(code) => fmt
 				.debug_struct("Os")
 				.field("code", code)
-				.field("kind", &ErrorCodes::from(*code).kind())
-				.field("message", &ErrorCodes::from(*code).as_str())
+				.field("kind", &ErrorCodes::from_raw_os_error(*code).kind())
+				.field("message", &ErrorCodes::from_raw_os_error(*code).as_str())
 				.finish(),
 			Error::Io(io) => Debug::fmt(io, fmt)
 		}
@@ -162,7 +162,7 @@ impl Display for Error {
 			Error::Os(code) => write!(
 				fmt,
 				"{} (os error {})",
-				ErrorCodes::from(*code).as_str(),
+				ErrorCodes::from_raw_os_error(*code).as_str(),
 				code
 			),
 			Error::Io(io) => Display::fmt(io, fmt)
@@ -174,7 +174,7 @@ impl error::Error for Error {
 	#[allow(deprecated)]
 	fn description(&self) -> &str {
 		match self {
-			Error::Os(code) => ErrorCodes::from(*code).as_str(),
+			Error::Os(code) => ErrorCodes::from_raw_os_error(*code).as_str(),
 			Error::SimpleMessage(_, message) => message.as_ref(),
 			Error::Simple(kind) => ConstPtr::from(io::Error::from(*kind).description()).into_ref(),
 			Error::Custom(_, error) => error.description(),

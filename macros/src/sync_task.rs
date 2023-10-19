@@ -43,7 +43,7 @@ fn transform_func(
 						vec![quote! { () }],
 						vec![quote! { () }],
 						quote! { xx_core::task::closure::CancelClosure },
-						|capture| quote! { xx_core::task::closure::CancelClosure<#capture> }
+						|capture, _| quote! { xx_core::task::closure::CancelClosure<#capture> }
 					)?;
 
 					let inputs = func.sig.inputs.clone();

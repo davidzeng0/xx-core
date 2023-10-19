@@ -1,9 +1,12 @@
 use std::io;
 
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+
 use crate::error::{Error, ErrorKind, Result};
 
 #[repr(i32)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
 pub enum ErrorCodes {
 	/// Unknown error
 	Unknown = -1,
@@ -411,7 +414,7 @@ impl ErrorCodes {
 	pub const WouldBlock: ErrorCodes = ErrorCodes::Again;
 
 	pub fn from_raw_os_error(value: i32) -> Self {
-		Self::try_from(value).unwrap_or(Self::Unknown)
+		Self::from_i32(value).unwrap_or(Self::Unknown)
 	}
 
 	pub fn kind(&self) -> ErrorKind {
@@ -557,12 +560,6 @@ impl ErrorCodes {
 			Self::RfKill => "Operation not possible due to RF-kill",
 			Self::HwPoison => "Memory page has hardware error"
 		}
-	}
-}
-
-impl From<i32> for ErrorCodes {
-	fn from(value: i32) -> Self {
-		Self::from_raw_os_error(value)
 	}
 }
 

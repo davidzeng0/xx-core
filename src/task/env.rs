@@ -81,6 +81,7 @@ impl<T: Global + ?Sized> Handle<T> {
 }
 
 impl<T: Global + ?Sized> Clone for Handle<T> {
+	#[inline(always)]
 	fn clone(&self) -> Self {
 		Self { ptr: self.ptr }
 	}

@@ -1,8 +1,12 @@
 use super::worker::Worker;
-use crate::task::env::{Global, Handle};
+use crate::{
+	fiber::{pool::Pool, Start},
+	task::env::{Global, Handle}
+};
 
 /// Per thread executor, responsible for running worker threads
 pub struct Executor {
+	pool: Handle<Pool>,
 	main: Worker,
 	current: Handle<Worker>
 }
@@ -10,8 +14,21 @@ pub struct Executor {
 impl Executor {
 	pub fn new() -> Self {
 		Self {
+			pool: unsafe { Handle::new_null() },
 			main: Worker::main(),
 			current: unsafe { Handle::new_null() }
+		}
+	}
+
+	pub fn set_pool(&mut self, pool: Handle<Pool>) {
+		self.pool = pool;
+	}
+
+	pub fn new_worker(&mut self, start: Start) -> Worker {
+		if self.pool.is_null() {
+			Worker::new(self.into(), start)
+		} else {
+			Worker::from_fiber(self.into(), self.pool.new_fiber(start))
 		}
 	}
 
@@ -59,7 +76,13 @@ impl Executor {
 	pub unsafe fn exit(&mut self, worker: Worker) {
 		self.current = worker.from();
 
-		worker.into_inner().exit(self.current.inner());
+		if self.pool.is_null() {
+			worker.into_inner().exit(self.current.inner())
+		} else {
+			worker
+				.into_inner()
+				.exit_to_pool(self.current.inner(), self.pool);
+		}
 	}
 }
 
