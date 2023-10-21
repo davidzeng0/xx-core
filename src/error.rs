@@ -1,7 +1,6 @@
-use core::fmt;
 use std::{
 	error,
-	fmt::{Debug, Display, Formatter},
+	fmt::{self, Debug, Display, Formatter},
 	io, result
 };
 
@@ -83,7 +82,7 @@ impl Error {
 		self.kind() == ErrorKind::Interrupted
 	}
 
-	fn custom(kind: ErrorKind, err: Box<dyn error::Error + Send + Sync>) -> Self {
+	pub fn custom(kind: ErrorKind, err: Box<dyn error::Error + Send + Sync>) -> Self {
 		match err.downcast() {
 			Ok(this) => *this,
 			Err(err) => Self::Custom(kind, err)

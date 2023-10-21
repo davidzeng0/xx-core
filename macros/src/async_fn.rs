@@ -34,8 +34,9 @@ enum ClosureType {
 }
 
 fn transform_with_type(
-	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
-	context_type: proc_macro2::TokenStream, make_closure: ClosureType
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>,
+	sig: &mut Signature, block: Option<&mut Block>, context_type: proc_macro2::TokenStream,
+	make_closure: ClosureType
 ) -> Result<()> {
 	if sig.asyncness.take().is_none() {
 		if !is_item_fn {
@@ -75,6 +76,7 @@ fn transform_with_type(
 		ClosureType::Basic => {
 			into_basic_closure(
 				attrs,
+				&env_generics,
 				sig,
 				block,
 				vec![quote! { mut __xx_internal_async_context }],
@@ -92,6 +94,7 @@ fn transform_with_type(
 		ClosureType::Full => {
 			into_closure(
 				attrs,
+				&env_generics,
 				sig,
 				block,
 				vec![quote! { mut __xx_internal_async_context }],
@@ -107,11 +110,13 @@ fn transform_with_type(
 }
 
 fn transform_generic(
-	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>,
+	sig: &mut Signature, block: Option<&mut Block>
 ) -> Result<()> {
 	transform_with_type(
 		is_item_fn,
 		attrs,
+		env_generics,
 		sig,
 		block,
 		quote! { Context },
@@ -122,11 +127,13 @@ fn transform_generic(
 }
 
 fn transform_typed(
-	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>,
+	sig: &mut Signature, block: Option<&mut Block>
 ) -> Result<()> {
 	transform_with_type(
 		is_item_fn,
 		attrs,
+		env_generics,
 		sig,
 		block,
 		quote! { xx_async_runtime::Context },
@@ -137,11 +144,13 @@ fn transform_typed(
 }
 
 fn transform_generic_no_closure(
-	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>,
+	sig: &mut Signature, block: Option<&mut Block>
 ) -> Result<()> {
 	transform_with_type(
 		is_item_fn,
 		attrs,
+		env_generics,
 		sig,
 		block,
 		quote! { Context },
@@ -152,11 +161,13 @@ fn transform_generic_no_closure(
 }
 
 fn transform_generic_full(
-	is_item_fn: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+	is_item_fn: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>,
+	sig: &mut Signature, block: Option<&mut Block>
 ) -> Result<()> {
 	transform_with_type(
 		is_item_fn,
 		attrs,
+		env_generics,
 		sig,
 		block,
 		quote! { Context },

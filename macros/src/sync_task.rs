@@ -8,7 +8,8 @@ use crate::{
 };
 
 fn transform_func(
-	_: bool, attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>
+	_: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>, sig: &mut Signature,
+	block: Option<&mut Block>
 ) -> Result<()> {
 	attrs.push(parse_quote!( #[must_use] ));
 
@@ -38,6 +39,7 @@ fn transform_func(
 
 					cancel_closure_type = into_closure(
 						&mut func.attrs,
+						&env_generics,
 						&mut func.sig,
 						Some(&mut func.block),
 						vec![quote! { () }],
@@ -70,6 +72,7 @@ fn transform_func(
 
 	into_basic_closure(
 		attrs,
+		&env_generics,
 		sig,
 		block,
 		vec![quote! { request }],

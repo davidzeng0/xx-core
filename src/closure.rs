@@ -28,6 +28,7 @@ impl<Inner: FnOnce(Args) -> Output, Args, Output> ClosureWrap<Inner, Args, Outpu
 		Self { inner, phantom: PhantomData }
 	}
 
+	#[inline(always)]
 	pub fn call(self, args: Args) -> Output {
 		(self.inner)(args)
 	}

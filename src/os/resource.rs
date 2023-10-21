@@ -72,6 +72,7 @@ pub enum Constant {
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub struct Limit {
 	pub current: u64,
 	pub maximum: u64
@@ -79,7 +80,7 @@ pub struct Limit {
 
 impl Limit {
 	fn new() -> Self {
-		Self { current: 0, maximum: 0 }
+		Self::default()
 	}
 }
 

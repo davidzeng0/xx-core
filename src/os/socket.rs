@@ -1,5 +1,5 @@
 use std::{
-	mem::size_of,
+	mem::{size_of, zeroed},
 	os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd}
 };
 
@@ -340,6 +340,18 @@ pub struct MessageHeader {
 	pub control_len: usize,
 
 	pub flags: u32
+}
+
+impl MessageHeader {
+	pub fn new() -> Self {
+		unsafe { zeroed() }
+	}
+}
+
+impl Default for MessageHeader {
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 pub fn socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd> {

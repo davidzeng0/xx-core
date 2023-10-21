@@ -1,6 +1,6 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{punctuated::Punctuated, spanned::Spanned, visit_mut::*, *};
+use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, visit_mut::*, *};
 
 pub struct ReplaceSelf;
 
@@ -25,8 +25,31 @@ impl VisitMut for RemoveRefMut {
 	}
 }
 
+#[derive(Default)]
 struct AddLifetime {
+	added_lifetimes: Vec<Lifetime>,
+	self_lifetime: Option<Lifetime>,
 	modified: bool
+}
+
+fn closure_lifetime<R: Parse>() -> R {
+	parse_quote! { '__xx_internal_closure_lifetime }
+}
+
+impl AddLifetime {
+	fn next_lifetime(&mut self, span: Span) -> Lifetime {
+		let lifetime = Lifetime::new(
+			&format!(
+				"'__xx_internal_closure_lifetime_{}",
+				self.added_lifetimes.len() + 1
+			),
+			span
+		);
+
+		self.added_lifetimes.push(lifetime.clone());
+
+		lifetime
+	}
 }
 
 impl VisitMut for AddLifetime {
@@ -37,9 +60,9 @@ impl VisitMut for AddLifetime {
 			return;
 		}
 
-		self.modified = true;
+		reference.lifetime = Some(self.next_lifetime(reference.span()));
 
-		reference.lifetime = Some(parse_quote! { '__xx_internal_closure_lifetime });
+		self.modified = true;
 	}
 
 	fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
@@ -49,77 +72,164 @@ impl VisitMut for AddLifetime {
 			return;
 		}
 
-		self.modified = true;
+		*lifetime = self.next_lifetime(lifetime.span());
 
-		lifetime.ident = Ident::new("__xx_internal_closure_lifetime", lifetime.ident.span());
+		self.modified = true;
 	}
 
 	fn visit_receiver_mut(&mut self, rec: &mut Receiver) {
-		visit_receiver_mut(self, rec);
-
 		if let Some(reference) = &mut rec.reference {
-			if reference.1.is_some() {
-				return;
+			if reference.1.is_none() {
+				let lifetime = self.next_lifetime(reference.0.span());
+
+				reference.1 = Some(lifetime.clone());
+
+				self.self_lifetime = Some(lifetime);
+				self.modified = true;
 			}
-
-			self.modified = true;
-
-			reference.1 = Some(parse_quote! { '__xx_internal_closure_lifetime });
+		} else {
+			if let Type::Reference(reference) = rec.ty.as_mut() {
+				self.visit_type_reference_mut(reference);
+				self.self_lifetime = Some(reference.lifetime.clone().unwrap());
+			} else {
+				visit_type_mut(self, rec.ty.as_mut());
+			}
 		}
 	}
 
 	fn visit_type_impl_trait_mut(&mut self, impl_trait: &mut TypeImplTrait) {
 		visit_type_impl_trait_mut(self, impl_trait);
 
-		impl_trait
-			.bounds
-			.push(parse_quote! { '__xx_internal_closure_lifetime });
+		impl_trait.bounds.push(TypeParamBound::Lifetime(
+			self.next_lifetime(impl_trait.span())
+		));
+
+		self.modified = true;
+	}
+
+	fn visit_type_param_mut(&mut self, param: &mut TypeParam) {
+		let lifetime = self.next_lifetime(param.span());
+
+		if param.bounds.iter().any(|bound| match bound {
+			TypeParamBound::Lifetime(_) => true,
+			_ => false
+		}) {
+			return;
+		}
+
+		param.colon_token = Some(Default::default());
+		param.bounds.push(TypeParamBound::Lifetime(lifetime));
+
+		self.modified = true;
+	}
+
+	fn visit_lifetime_param_mut(&mut self, lifetime: &mut LifetimeParam) {
+		visit_lifetime_param_mut(self, lifetime);
+
+		lifetime.colon_token = Some(Default::default());
+		lifetime.bounds.push(closure_lifetime());
 
 		self.modified = true;
 	}
 }
 
-fn add_lifetime(sig: &mut Signature) -> bool {
-	let mut op = AddLifetime { modified: false };
+/// See https://github.com/danielhenrymantilla/fix_hidden_lifetime_bug.rs
+fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&mut Generics>) -> TokenStream {
+	let mut addl_bounds = Punctuated::<TypeParamBound, Token![+]>::new();
 
-	for input in sig.inputs.iter_mut() {
-		op.visit_fn_arg_mut(input);
+	if let Some(generics) = env_generics {
+		for param in &generics.params {
+			match param {
+				GenericParam::Const(_) => (),
+				GenericParam::Type(_) => (),
+				GenericParam::Lifetime(param) => {
+					let lifetime = &param.lifetime;
+
+					addl_bounds
+						.push(parse_quote! { xx_core::macros::closure::Captures<#lifetime> });
+				}
+			}
+		}
 	}
 
-	if op.modified {
-		for param in sig.generics.params.iter_mut() {
+	for param in sig.generics.lifetimes() {
+		let lifetime = &param.lifetime;
+
+		if lifetime != &closure_lifetime() {
+			addl_bounds.push(parse_quote! { xx_core::macros::closure::Captures<#lifetime> });
+		}
+	}
+
+	addl_bounds.push(closure_lifetime());
+
+	quote! { #addl_bounds }
+}
+
+pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&mut Generics>) -> TokenStream {
+	let mut op = AddLifetime::default();
+
+	for arg in &mut sig.inputs {
+		op.visit_fn_arg_mut(arg);
+	}
+
+	if !op.modified {
+		return quote! {};
+	}
+
+	op.visit_signature_mut(sig);
+
+	sig.generics.params.push(closure_lifetime());
+
+	let clause = sig
+		.generics
+		.where_clause
+		.get_or_insert_with(|| WhereClause {
+			where_token: Default::default(),
+			predicates: Punctuated::new()
+		});
+
+	let mut self_bounds = Punctuated::<Lifetime, Token![+]>::new();
+
+	if let Some(generics) = env_generics {
+		for param in &generics.params {
 			match param {
-				GenericParam::Type(type_param) => {
-					if type_param.bounds.iter().any(|bound| match bound {
-						TypeParamBound::Lifetime(_) => true,
-						_ => false
-					}) {
-						continue;
-					}
+				GenericParam::Const(_) => (),
+				GenericParam::Type(_) => (),
+				GenericParam::Lifetime(param) => {
+					let lifetime = &param.lifetime;
 
-					type_param.colon_token = Some(parse_quote! { : });
-					type_param
-						.bounds
-						.push(parse_quote! { '__xx_internal_closure_lifetime });
+					clause
+						.predicates
+						.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime });
+					self_bounds.push(lifetime.clone());
 				}
+			}
+		}
+	}
 
-				GenericParam::Lifetime(lifetime) => {
-					lifetime.colon_token = Some(parse_quote! { : });
-					lifetime
-						.bounds
-						.push(parse_quote! { '__xx_internal_closure_lifetime });
-				}
+	for lifetime in &op.added_lifetimes {
+		let mut bounds = quote! {};
 
-				_ => {}
+		sig.generics.params.push(parse_quote! { #lifetime });
+
+		if let Some(self_lifetime) = &op.self_lifetime {
+			if lifetime == self_lifetime {
+				bounds = quote! { + #self_bounds };
 			}
 		}
 
-		sig.generics
-			.params
-			.push(parse_quote! { '__xx_internal_closure_lifetime });
+		clause
+			.predicates
+			.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime #bounds });
 	}
 
-	op.modified
+	if true {
+		let lifetimes = lifetime_workaround(sig, env_generics);
+
+		quote! { + #lifetimes }
+	} else {
+		quote! { + '__xx_internal_closure_lifetime }
+	}
 }
 
 pub fn make_tuple_type<T: ToTokens>(data: Vec<T>) -> TokenStream {
@@ -168,13 +278,13 @@ fn make_args(
 }
 
 pub fn into_closure(
-	attrs: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
-	args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>, closure_type: TokenStream,
-	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
+	attrs: &mut Vec<Attribute>, env_generics: &Option<&mut Generics>, sig: &mut Signature,
+	block: Option<&mut Block>, args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
+	closure_type: TokenStream, transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
 ) -> Result<TokenStream> {
 	let return_type = get_return_type(&sig.output);
 
-	add_lifetime(sig);
+	add_lifetime(sig, env_generics);
 
 	let (types, construct, destruct) = build_tuples(&mut sig.inputs, |arg| match arg {
 		FnArg::Typed(pat) => {
@@ -233,13 +343,11 @@ pub fn into_closure(
 }
 
 pub fn into_basic_closure(
-	_: &mut Vec<Attribute>, sig: &mut Signature, block: Option<&mut Block>,
-	args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
+	_: &mut Vec<Attribute>, env_generics: &Option<&mut Generics>, sig: &mut Signature,
+	block: Option<&mut Block>, args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
 	transform_return: impl Fn(TokenStream) -> TokenStream,
 	wrap: Option<impl Fn(TokenStream) -> (TokenStream, TokenStream)>
 ) -> Result<TokenStream> {
-	let lifetime_added = add_lifetime(sig);
-
 	let return_type = &mut sig.output;
 
 	let (args, args_types) = make_args(args_vars, args_types);
@@ -268,15 +376,9 @@ pub fn into_basic_closure(
 		}};
 	}
 
-	let lifetime = if lifetime_added {
-		quote! { + '__xx_internal_closure_lifetime }
-	} else {
-		quote! {}
-	};
+	let addl_lifetimes = add_lifetime(sig, env_generics);
 
-	sig.output = parse_quote! {
-		-> #return_tokens #lifetime
-	};
+	sig.output = parse_quote! { -> #return_tokens #addl_lifetimes };
 
 	Ok(return_tokens)
 }

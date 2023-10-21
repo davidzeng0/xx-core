@@ -1,12 +1,10 @@
-use xx_core_macros::sync_task;
-
 use super::{env::AsyncContext, executor::Executor, task::AsyncTask, worker::Worker};
 use crate::{
 	error::Result,
 	fiber::Start,
 	pin_local_mut,
 	pointer::{ConstPtr, MutPtr},
-	task::{env::Handle, Progress, Request, RequestPtr, Task},
+	task::{env::Handle, sync_task, Progress, Request, RequestPtr, Task},
 	trace, xx_core
 };
 

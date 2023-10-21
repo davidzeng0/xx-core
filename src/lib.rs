@@ -4,6 +4,7 @@ pub mod coroutines;
 pub mod error;
 pub mod fiber;
 pub mod log;
+pub mod macros;
 pub mod opt;
 pub mod os;
 pub mod pointer;

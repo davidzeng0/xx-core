@@ -1,4 +1,4 @@
-#[inline]
+#[inline(always)]
 #[cold]
 fn cold() {}
 

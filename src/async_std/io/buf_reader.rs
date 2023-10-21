@@ -2,11 +2,13 @@ use std::{io::SeekFrom, marker::PhantomData};
 
 use memchr::memchr;
 
-use super::{BufRead, Close, CloseExt, Read, ReadExt, Seek, SeekExt};
+use super::{
+	read_into_slice, BufRead, Close, CloseExt, Read, ReadExt, Seek, SeekExt, DEFAULT_BUFFER_SIZE
+};
 use crate::{
 	coroutines::{async_fn, async_trait_fn, env::AsyncContext, runtime::check_interrupt},
 	error::Result,
-	opt::hint::likely,
+	opt::hint::{likely, unlikely},
 	xx_core
 };
 
@@ -23,7 +25,7 @@ pub struct BufReader<Context: AsyncContext, R: Read<Context>> {
 #[async_fn]
 impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 	/// Discard all data in the buffer
-	#[inline(always)]
+	#[inline]
 	fn discard(&mut self) {
 		self.pos = 0;
 
@@ -33,50 +35,50 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 	}
 
 	/// Reads from our internal buffer into `buf`
-	#[inline(always)]
-	fn read_into(&mut self, mut buf: &mut [u8]) -> usize {
-		let mut src = unsafe { self.buf.get_unchecked(self.pos..) };
-		let len = buf.len().min(src.len());
+	#[inline]
+	fn read_into(&mut self, buf: &mut [u8]) -> usize {
+		let len = read_into_slice(buf, self.buffer());
 
 		self.pos += len;
 
-		src = unsafe { src.get_unchecked(0..len) };
-		buf = unsafe { buf.get_unchecked_mut(0..len) };
-		buf.copy_from_slice(src);
 		len
+	}
+
+	#[inline]
+	async fn fill_buf_offset(&mut self, offset: usize, amount: usize) -> Result<usize> {
+		Ok(unsafe {
+			let spare = self.buf.get_unchecked_mut(offset..amount);
+			let read = self.inner.read(spare).await?;
+
+			if likely(read != 0) {
+				self.buf.set_len(offset + read);
+				self.pos = offset;
+			}
+
+			read
+		})
 	}
 
 	/// Fills the internal buffer from the start
 	/// If zero is returned, internal data is not modified
 	#[inline]
 	async fn fill_buf(&mut self) -> Result<usize> {
-		let capacity = self.buf.capacity();
-		let read;
-
-		unsafe {
-			read = self
-				.inner
-				.read(self.buf.get_unchecked_mut(0..capacity))
-				.await?;
-
-			if likely(read != 0) {
-				self.pos = 0;
-				self.buf.set_len(read);
-			}
-		}
-
-		Ok(read)
+		self.fill_buf_offset(0, self.buf.capacity()).await
 	}
 
 	pub fn new(inner: R) -> Self {
-		Self::with_capacity(inner, 16384)
+		Self::with_capacity(inner, DEFAULT_BUFFER_SIZE)
 	}
 
 	pub fn with_capacity(inner: R, capacity: usize) -> Self {
+		Self::from_parts(inner, Vec::with_capacity(capacity))
+	}
+
+	pub fn from_parts(inner: R, buf: Vec<u8>) -> Self {
 		BufReader {
 			inner,
 
-			buf: Vec::with_capacity(capacity),
+			buf,
 			pos: 0,
 
 			seek_threshold: 0,
@@ -87,6 +89,10 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 	/// Calling `into_inner` with data in the buffer will lead to data loss
 	pub fn into_inner(self) -> R {
 		self.inner
+	}
+
+	pub fn into_parts(self) -> (R, Vec<u8>, usize) {
+		(self.inner, self.buf, self.pos)
 	}
 
 	/// If doing a relative seek forwards on a stream with
@@ -101,7 +107,7 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 
 #[async_trait_fn]
 impl<Context: AsyncContext, R: Read<Context>> Read<Context> for BufReader<Context, R> {
-	#[inline(always)]
+	#[inline]
 	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		if likely(self.buf.len() != self.pos) {
 			return Ok(self.read_into(buf));
@@ -121,6 +127,16 @@ impl<Context: AsyncContext, R: Read<Context>> Read<Context> for BufReader<Contex
 
 #[async_trait_fn]
 impl<Context: AsyncContext, R: Read<Context>> BufRead<Context> for BufReader<Context, R> {
+	async fn async_fill_to(&mut self, amount: usize) -> Result<usize> {
+		let offset = self.buf.len();
+
+		if unlikely(offset >= amount) {
+			return Ok(0);
+		}
+
+		self.fill_buf_offset(offset, amount).await
+	}
+
 	async fn async_read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
 		let start_len = buf.len();
 
@@ -154,6 +170,10 @@ impl<Context: AsyncContext, R: Read<Context>> BufRead<Context> for BufReader<Con
 		Ok(Some(buf.len() - start_len))
 	}
 
+	fn capacity(&self) -> usize {
+		self.buf.capacity()
+	}
+
 	fn buffer(&self) -> &[u8] {
 		unsafe { self.buf.get_unchecked(self.pos..) }
 	}
@@ -176,15 +196,15 @@ impl<Context: AsyncContext, R: Read<Context> + Seek<Context>> BufReader<Context,
 			self.pos = pos as usize;
 			self.stream_position().await
 		} else if pos > 0 && pos as u64 <= self.seek_threshold {
-			let mut pos = pos as usize;
+			let mut left = pos as usize;
 
 			self.discard();
 
-			while pos > 0 {
-				let len = pos.min(self.buf.capacity());
+			while left > 0 {
+				let len = left.min(self.buf.capacity());
 				let buf = unsafe { self.buf.get_unchecked_mut(0..len) };
 
-				pos -= self.inner.read(buf).await?;
+				left -= self.inner.read(buf).await?;
 			}
 
 			self.stream_position().await

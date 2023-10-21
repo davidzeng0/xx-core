@@ -13,3 +13,5 @@ pub mod close;
 pub use close::*;
 
 pub mod bytes;
+
+pub const DEFAULT_BUFFER_SIZE: usize = 16384;

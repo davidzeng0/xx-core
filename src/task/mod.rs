@@ -1,5 +1,4 @@
-pub use xx_core_macros::sync_task;
-
+pub use crate::macros::sync_task;
 use crate::{error::Result, pointer::ConstPtr};
 pub mod block_on;
 pub mod closure;

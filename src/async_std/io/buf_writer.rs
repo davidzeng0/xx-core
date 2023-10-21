@@ -1,6 +1,6 @@
 use std::{io::SeekFrom, marker::PhantomData};
 
-use super::{Close, CloseExt, Seek, SeekExt, Write, WriteExt};
+use super::{Close, CloseExt, Seek, SeekExt, Write, WriteExt, DEFAULT_BUFFER_SIZE};
 use crate::{
 	coroutines::{async_fn, async_trait_fn, env::AsyncContext, runtime::check_interrupt},
 	error::{Error, ErrorKind, Result},
@@ -20,7 +20,7 @@ pub struct BufWriter<Context: AsyncContext, W: Write<Context>> {
 #[async_fn]
 impl<Context: AsyncContext, W: Write<Context>> BufWriter<Context, W> {
 	/// Discard all buffered data
-	#[inline(always)]
+	#[inline]
 	fn discard(&mut self) {
 		self.pos = 0;
 
@@ -30,7 +30,7 @@ impl<Context: AsyncContext, W: Write<Context>> BufWriter<Context, W> {
 	}
 
 	/// Reads from `buf` into our internal buffer
-	#[inline(always)]
+	#[inline]
 	fn write_buffered(&mut self, buf: &[u8]) -> usize {
 		self.buf.extend_from_slice(buf);
 
@@ -60,23 +60,24 @@ impl<Context: AsyncContext, W: Write<Context>> BufWriter<Context, W> {
 	}
 
 	pub fn new(inner: W) -> Self {
-		Self::with_capacity(inner, 16384)
+		Self::with_capacity(inner, DEFAULT_BUFFER_SIZE)
 	}
 
 	pub fn with_capacity(inner: W, capacity: usize) -> Self {
-		BufWriter {
-			inner,
+		Self::from_parts(inner, Vec::with_capacity(capacity))
+	}
 
-			buf: Vec::with_capacity(capacity),
-			pos: 0,
-
-			phantom: PhantomData
-		}
+	pub fn from_parts(inner: W, buf: Vec<u8>) -> Self {
+		BufWriter { inner, buf, pos: 0, phantom: PhantomData }
 	}
 
 	/// Calling `into_inner` without flushing will lead to data loss
 	pub fn into_inner(self) -> W {
 		self.inner
+	}
+
+	pub fn into_parts(self) -> (W, Vec<u8>, usize) {
+		(self.inner, self.buf, self.pos)
 	}
 }
 
@@ -93,15 +94,13 @@ impl<Context: AsyncContext, W: Write<Context>> Write<Context> for BufWriter<Cont
 
 		if buf.len() < self.buf.capacity() {
 			Ok(self.write_buffered(buf))
-		} else {
-			if self.inner.write_all(buf).await? != buf.len() {
-				return Err(Error::new(
-					ErrorKind::WriteZero,
-					"Write returned EOF mid write"
-				));
-			}
-
+		} else if self.inner.write_all(buf).await? == buf.len() {
 			Ok(buf.len())
+		} else {
+			Err(Error::new(
+				ErrorKind::WriteZero,
+				"Write returned EOF mid write"
+			))
 		}
 	}
 

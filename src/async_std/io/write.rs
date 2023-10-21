@@ -1,8 +1,18 @@
+use std::{
+	fmt::{self, Arguments},
+	io::IoSlice
+};
+
 use super::bytes::BytesEncoding;
 use crate::{
 	async_std::ext::ext_func,
-	coroutines::{async_trait_fn, async_trait_impl, env::AsyncContext, runtime::check_interrupt},
-	error::Result,
+	coroutines::{
+		async_fn, async_trait_fn, async_trait_impl,
+		env::AsyncContext,
+		runtime::{check_interrupt, get_context}
+	},
+	error::{Error, ErrorKind, Result},
+	task::env::Handle,
 	xx_core
 };
 
@@ -10,7 +20,7 @@ use crate::{
 pub trait Write<Context: AsyncContext> {
 	/// Write from `buf`, returning the amount of bytes read
 	///
-	/// Returning zero strictly means EOF
+	/// Returning zero strictly means EOF, unless the buffer's size was zero
 	async fn async_write(&mut self, buf: &[u8]) -> Result<usize>;
 
 	/// Flush buffered data
@@ -43,6 +53,66 @@ pub trait Write<Context: AsyncContext> {
 
 		Ok(wrote)
 	}
+
+	fn is_write_vectored(&self) -> bool {
+		false
+	}
+
+	async fn async_write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+		let buf = match bufs.iter().find(|b| !b.is_empty()) {
+			Some(buf) => buf,
+			None => return Ok(0)
+		};
+
+		self.write(&**buf).await
+	}
+}
+
+struct FmtAdapter<'a, Context: AsyncContext, T: ?Sized + 'a> {
+	inner: &'a mut T,
+	context: Handle<Context>,
+	wrote: usize,
+	error: Option<Error>
+}
+
+#[async_fn]
+impl<'a, T: ?Sized + Write<Context>, Context: AsyncContext> FmtAdapter<'a, Context, T> {
+	pub async fn new(inner: &'a mut T) -> FmtAdapter<'a, Context, T> {
+		Self {
+			inner,
+			context: get_context().await,
+			wrote: 0,
+			error: None
+		}
+	}
+
+	pub async fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
+		match fmt::write(self, args) {
+			Ok(()) => Ok(self.wrote),
+			Err(_) => Err(self
+				.error
+				.take()
+				.unwrap_or(Error::new(ErrorKind::Other, "Formatter error")))
+		}
+	}
+}
+
+impl<T: ?Sized + Write<Context>, Context: AsyncContext> fmt::Write for FmtAdapter<'_, Context, T> {
+	fn write_str(self: &mut Self, s: &str) -> fmt::Result {
+		match self.context.run(self.inner.write_string(s)) {
+			Err(err) => {
+				self.error = Some(err);
+
+				Err(fmt::Error)
+			}
+
+			Ok(n) => {
+				self.wrote += n;
+
+				Ok(())
+			}
+		}
+	}
 }
 
 pub trait WriteExt<Context: AsyncContext>: Write<Context> {
@@ -51,6 +121,13 @@ pub trait WriteExt<Context: AsyncContext>: Write<Context> {
 	ext_func!(flush(self: &mut Self) -> Result<()>);
 
 	ext_func!(write_all(self: &mut Self, buf: &[u8]) -> Result<usize>);
+
+	ext_func!(write_vectored(self: &mut Self, bufs: &[IoSlice<'_>]) -> Result<usize>);
+
+	#[async_trait_impl]
+	async fn write_fmt(&mut self, args: Arguments<'_>) -> Result<usize> {
+		FmtAdapter::new(self).await.write_args(args).await
+	}
 
 	#[async_trait_impl]
 	async fn write_string(&mut self, buf: &str) -> Result<usize> {

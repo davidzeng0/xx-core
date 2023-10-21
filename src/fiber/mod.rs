@@ -86,26 +86,29 @@ impl Fiber {
 	}
 
 	pub fn new(start: Start) -> Self {
-		let stack = map_memory(
-			0,
-			get_limit(Resource::Stack).expect("Failed to get stack size") as usize,
-			make_bitflags!(MemoryProtection::{Read | Write}).bits(),
-			MemoryType::Private as u32 | make_bitflags!(MemoryFlag::{Anonymous | Stack}).bits(),
-			None,
-			0
-		)
-		.unwrap();
+		let mut this = Self {
+			context: Context::new(),
+			stack: map_memory(
+				0,
+				get_limit(Resource::Stack).expect("Failed to get stack size") as usize,
+				make_bitflags!(MemoryProtection::{Read | Write}).bits(),
+				MemoryType::Private as u32 | make_bitflags!(MemoryFlag::{Anonymous | Stack}).bits(),
+				None,
+				0
+			)
+			.unwrap()
+		};
 
-		let mut context = Context::new();
+		unsafe {
+			this.set_start(start);
+		}
 
-		context.set_stack(stack.addr, stack.length);
-		context.set_start(start);
-
-		Self { context, stack }
+		this
 	}
 
 	pub unsafe fn set_start(&mut self, start: Start) {
-		self.context.set_start(start)
+		self.context.set_stack(self.stack.addr, self.stack.length);
+		self.context.set_start(start);
 	}
 
 	/// Switch from the fiber `self` to the new fiber `to`

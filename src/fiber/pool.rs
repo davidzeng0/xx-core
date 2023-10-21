@@ -26,7 +26,7 @@ impl Pool {
 		match pool.pop() {
 			None => (),
 			Some(mut fiber) => {
-				trace!(target: self, "== Reusing fiber");
+				trace!(target: self, "== Reusing stack for worker");
 
 				unsafe { fiber.set_start(start) }
 
