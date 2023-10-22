@@ -2,7 +2,7 @@ use crate::sysdep::import_sysdeps;
 
 import_sysdeps!();
 
-pub use platform::*;
+pub use platform::{SyscallNumber::*, *};
 
 #[macro_export]
 macro_rules! syscall_raw {

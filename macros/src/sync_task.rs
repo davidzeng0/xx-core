@@ -2,10 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{visit_mut::VisitMut, *};
 
-use crate::{
-	closure::{get_return_type, into_basic_closure, into_closure, make_tuple_type, ReplaceSelf},
-	transform::transform_fn
-};
+use crate::{closure::*, transform::transform_fn};
 
 fn transform_func(
 	_: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>, sig: &mut Signature,

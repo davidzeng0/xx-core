@@ -175,7 +175,7 @@ impl error::Error for Error {
 		match self {
 			Error::Os(code) => ErrorCodes::from_raw_os_error(*code).as_str(),
 			Error::SimpleMessage(_, message) => message.as_ref(),
-			Error::Simple(kind) => ConstPtr::from(io::Error::from(*kind).description()).into_ref(),
+			Error::Simple(kind) => ConstPtr::from(io::Error::from(*kind).description()).as_ref(),
 			Error::Custom(_, error) => error.description(),
 			Error::Io(io) => io.description()
 		}

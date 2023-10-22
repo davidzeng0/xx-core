@@ -2,10 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{spanned::Spanned, visit_mut::*, *};
 
-use crate::{
-	closure::{into_basic_closure, into_closure},
-	transform::transform_fn
-};
+use crate::{closure::*, transform::transform_fn};
 
 struct ReplaceAwait;
 

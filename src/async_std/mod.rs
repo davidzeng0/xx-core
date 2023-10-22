@@ -1,10 +1,8 @@
 use self::ext::ext_func;
-use crate::{
-	coroutines::{async_trait_fn, env::AsyncContext},
-	xx_core
-};
+use crate::{coroutines::*, xx_core};
 
-pub mod ext;
+mod ext;
+
 pub mod io;
 
 pub trait AsyncIterator<Context: AsyncContext> {

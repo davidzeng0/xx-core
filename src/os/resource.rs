@@ -1,9 +1,6 @@
 use std::mem::zeroed;
 
-use super::{
-	syscall::{syscall_int, SyscallNumber::*},
-	time::TimeVal
-};
+use super::{syscall::*, time::TimeVal};
 use crate::{
 	error::Result,
 	pointer::{ConstPtr, MutPtr}

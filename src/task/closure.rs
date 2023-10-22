@@ -1,8 +1,5 @@
-use super::{Cancel, Progress, RequestPtr, Task};
-use crate::{
-	closure::{Closure, ClosureWrap},
-	error::Result
-};
+use super::*;
+use crate::{closure::*, error::Result};
 
 pub type TaskClosureWrap<Inner, Output, Cancel> =
 	ClosureWrap<Inner, RequestPtr<Output>, Progress<Output, Cancel>>;

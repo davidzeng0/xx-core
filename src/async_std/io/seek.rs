@@ -1,11 +1,6 @@
 use std::io::SeekFrom;
 
-use crate::{
-	async_std::ext::ext_func,
-	coroutines::{async_trait_fn, async_trait_impl, env::AsyncContext},
-	error::Result,
-	xx_core
-};
+use crate::{async_std::ext::ext_func, coroutines::*, error::Result, xx_core};
 
 #[async_trait_fn]
 pub trait Seek<Context: AsyncContext> {

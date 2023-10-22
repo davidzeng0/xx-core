@@ -33,3 +33,9 @@ impl<Inner: FnOnce(Args) -> Output, Args, Output> ClosureWrap<Inner, Args, Outpu
 		(self.inner)(args)
 	}
 }
+
+pub mod lifetime {
+	pub trait Captures<'__> {}
+
+	impl<T: ?Sized> Captures<'_> for T {}
+}

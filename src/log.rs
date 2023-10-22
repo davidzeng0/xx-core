@@ -101,7 +101,9 @@ impl<'a> fmt::Write for Adapter<'a> {
 			self.output
 				.write_all(line.as_bytes())
 				.map_err(|_| fmt::Error)?;
-			self.wrote_prefix = false;
+			if line.ends_with('\n') {
+				self.wrote_prefix = false;
+			}
 		}
 
 		Ok(())

@@ -1,8 +1,5 @@
 use super::worker::Worker;
-use crate::{
-	fiber::{pool::Pool, Start},
-	task::env::{Global, Handle}
-};
+use crate::{fiber::*, task::*};
 
 /// Per thread executor, responsible for running worker threads
 pub struct Executor {

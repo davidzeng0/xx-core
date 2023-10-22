@@ -1,15 +1,9 @@
 use std::{io::IoSliceMut, marker::PhantomData, ptr::copy_nonoverlapping, str::from_utf8};
 
-use super::bytes::BytesEncoding;
 use crate::{
 	async_std::{ext::ext_func, AsyncIterator},
-	coroutines::{
-		async_fn, async_trait_fn, async_trait_impl,
-		env::AsyncContext,
-		runtime::{check_interrupt, is_interrupted}
-	},
-	error::{Error, ErrorKind, Result},
-	opt::hint::unlikely,
+	coroutines::*,
+	error::*,
 	xx_core
 };
 
@@ -29,7 +23,7 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	len
 }
 
-fn check_utf8(buf: &[u8]) -> Result<()> {
+pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	if from_utf8(buf).is_ok() {
 		Ok(())
 	} else {
@@ -133,7 +127,7 @@ pub trait Read<Context: AsyncContext> {
 		Ok(total)
 	}
 
-	async fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
+	async fn async_read_to_string(&mut self, buf: &mut String) -> Result<usize> {
 		let vec = unsafe { buf.as_mut_vec() };
 		let start_len = vec.len();
 
@@ -166,6 +160,42 @@ pub trait Read<Context: AsyncContext> {
 	}
 }
 
+pub struct ReadRef<'a, Context: AsyncContext, R: Read<Context>> {
+	reader: &'a mut R,
+	phantom: PhantomData<Context>
+}
+
+macro_rules! async_alias_func {
+	($func: ident ($self: ident: $self_type: ty $(, $arg: ident: $type: ty)*) -> $return_type: ty) => {
+		#[xx_core::coroutines::async_trait_fn]
+		async fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
+			$self.reader.$func($($arg,)* xx_core::coroutines::runtime::get_context().await)
+		}
+    }
+}
+
+macro_rules! alias_func {
+	($func: ident ($self: ident: $self_type: ty $(, $arg: ident: $type: ty)*) -> $return_type: ty) => {
+		fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
+			$self.reader.$func($($arg,)*)
+		}
+    }
+}
+
+impl<Context: AsyncContext, R: Read<Context>> Read<Context> for ReadRef<'_, Context, R> {
+	async_alias_func!(async_read(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
+
+	async_alias_func!(async_read_exact(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
+
+	async_alias_func!(async_read_to_end(self: &mut Self, buf: &mut Vec<u8>) -> Result<usize>);
+
+	async_alias_func!(async_read_to_string(self: &mut Self, buf: &mut String) -> Result<usize>);
+
+	async_alias_func!(async_read_vectored(self: &mut Self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>);
+
+	alias_func!(is_read_vectored(self: &Self) -> bool);
+}
+
 pub trait ReadExt<Context: AsyncContext>: Read<Context> {
 	ext_func!(read(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
 
@@ -173,17 +203,27 @@ pub trait ReadExt<Context: AsyncContext>: Read<Context> {
 
 	ext_func!(read_to_end(self: &mut Self, buf: &mut Vec<u8>) -> Result<usize>);
 
+	ext_func!(read_to_string(self: &mut Self, buf: &mut String) -> Result<usize>);
+
 	ext_func!(read_vectored(self: &mut Self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>);
+
+	fn as_ref(&mut self) -> ReadRef<'_, Context, Self>
+	where
+		Self: Sized
+	{
+		ReadRef { reader: self, phantom: PhantomData }
+	}
 }
 
 impl<Context: AsyncContext, T: ?Sized + Read<Context>> ReadExt<Context> for T {}
 
 #[async_trait_fn]
 pub trait BufRead<Context: AsyncContext>: Read<Context> + Sized {
-	/// Fill any remaining space in the internal buffer
+	/// Fill any remaining space in the internal buffer,
+	/// up to `amount` total unconsumed bytes
 	///
 	/// Returns the number of bytes filled, which can be zero
-	async fn async_fill_to(&mut self, amount: usize) -> Result<usize>;
+	async fn async_fill_amount(&mut self, amount: usize) -> Result<usize>;
 
 	/// Read until `byte`
 	///
@@ -235,9 +275,15 @@ pub trait BufRead<Context: AsyncContext>: Read<Context> + Sized {
 
 	fn capacity(&self) -> usize;
 
+	fn spare_capacity(&self) -> usize;
+
 	fn buffer(&self) -> &[u8];
 
+	fn buffer_mut(&mut self) -> &mut [u8];
+
 	fn consume(&mut self, count: usize);
+
+	fn discard(&mut self);
 
 	unsafe fn consume_unchecked(&mut self, count: usize);
 
@@ -246,95 +292,66 @@ pub trait BufRead<Context: AsyncContext>: Read<Context> + Sized {
 	}
 }
 
-struct BufReadExtras<'a, Context: AsyncContext, R: BufRead<Context>> {
+pub struct BufReadRef<'a, Context: AsyncContext, R: BufRead<Context>> {
 	reader: &'a mut R,
 	phantom: PhantomData<Context>
 }
 
-#[async_fn]
-impl<'a, Context: AsyncContext, R: BufRead<Context>> BufReadExtras<'a, Context, R> {
-	fn new(reader: &'a mut R) -> Self {
-		Self { reader, phantom: PhantomData }
-	}
+impl<Context: AsyncContext, R: BufRead<Context>> Read<Context> for BufReadRef<'_, Context, R> {
+	async_alias_func!(async_read(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
 
-	async fn check_eof() -> Error {
-		check_interrupt().await.err().unwrap_or(Error::new(
-			ErrorKind::UnexpectedEof,
-			"EOF while reading an int"
-		))
-	}
+	async_alias_func!(async_read_exact(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
 
-	#[inline(always)]
-	async fn read_bytes_slow<const N: usize>(&mut self) -> Result<[u8; N]> {
-		let mut bytes = [0u8; N];
+	async_alias_func!(async_read_to_end(self: &mut Self, buf: &mut Vec<u8>) -> Result<usize>);
 
-		if self.reader.read_exact(&mut bytes).await? == N {
-			Ok(bytes)
-		} else {
-			Err(Self::check_eof().await)
-		}
-	}
+	async_alias_func!(async_read_to_string(self: &mut Self, buf: &mut String) -> Result<usize>);
 
-	#[inline(always)]
-	fn read_bytes<const N: usize>(&mut self) -> [u8; N] {
-		/* this function call gets optimized to a single load instruction of size N */
-		let mut bytes = [0u8; N];
+	async_alias_func!(async_read_vectored(self: &mut Self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>);
 
-		for i in 0..N {
-			bytes[i] = unsafe { *self.reader.buffer().get_unchecked(i) };
-		}
+	alias_func!(is_read_vectored(self: &Self) -> bool);
+}
 
-		unsafe {
-			self.reader.consume_unchecked(N);
-		}
+impl<Context: AsyncContext, R: BufRead<Context>> BufRead<Context> for BufReadRef<'_, Context, R> {
+	async_alias_func!(async_fill_amount(self: &mut Self, amount: usize) -> Result<usize>);
 
-		bytes
-	}
+	async_alias_func!(async_read_until(self: &mut Self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>);
 
-	#[inline(always)]
-	pub async fn read_le<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
-		/* for some llvm or rustc reason, unlikely here does the actual job of
-		 * likely, and nets a performance gain on x64
-		 */
-		if unlikely(self.reader.buffer().len() >= N) {
-			Ok(T::from_bytes_le(self.read_bytes()))
-		} else {
-			Ok(T::from_bytes_le(self.read_bytes_slow().await?))
-		}
-	}
+	async_alias_func!(async_read_line(self: &mut Self, buf: &mut String) -> Result<Option<usize>>);
 
-	#[inline(always)]
-	pub async fn read_be<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
-		if unlikely(self.reader.buffer().len() >= N) {
-			Ok(T::from_bytes_be(self.read_bytes()))
-		} else {
-			Ok(T::from_bytes_be(self.read_bytes_slow().await?))
-		}
+	alias_func!(capacity(self: &Self) -> usize);
+
+	alias_func!(spare_capacity(self: &Self) -> usize);
+
+	alias_func!(buffer(self: &Self) -> &[u8]);
+
+	alias_func!(buffer_mut(self: &mut Self) -> &mut [u8]);
+
+	alias_func!(consume(self: &mut Self, count: usize) -> ());
+
+	alias_func!(discard(self: &mut Self) -> ());
+
+	unsafe fn consume_unchecked(&mut self, count: usize) {
+		self.reader.consume_unchecked(count)
 	}
 }
 
 pub trait BufReadExt<Context: AsyncContext>: BufRead<Context> {
-	ext_func!(fill_to(self: &mut Self, amount: usize) -> Result<usize>);
+	ext_func!(fill_amount(self: &mut Self, amount: usize) -> Result<usize>);
 
 	#[async_trait_impl]
 	async fn fill(&mut self) -> Result<usize> {
-		self.fill_to(self.capacity()).await
+		self.fill_amount(self.capacity()).await
 	}
 
 	ext_func!(read_until(self: &mut Self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>);
 
 	ext_func!(read_line(self: &mut Self, buf: &mut String) -> Result<Option<usize>>);
 
-	/// Read a number encoded in little endian bytes
-	#[async_trait_impl]
-	async fn read_le<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
-		BufReadExtras::new(self).read_le().await
-	}
-
-	/// Read a number encoded in big endian bytes
-	#[async_trait_impl]
-	async fn read_be<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
-		BufReadExtras::new(self).read_be().await
+	fn as_ref(&mut self) -> BufReadRef<'_, Context, Self>
+	where
+		Self: Sized
+	{
+		BufReadRef { reader: self, phantom: PhantomData }
 	}
 }
 

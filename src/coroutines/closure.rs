@@ -1,8 +1,5 @@
 use super::{env::AsyncContext, task::AsyncTask};
-use crate::{
-	closure::{Closure, ClosureWrap},
-	task::env::Handle
-};
+use crate::{closure::*, task::env::Handle};
 
 pub type AsyncClosureWrap<Inner, Context, Output> = ClosureWrap<Inner, Handle<Context>, Output>;
 

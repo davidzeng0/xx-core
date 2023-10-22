@@ -1,8 +1,5 @@
 use super::task::AsyncTask;
-use crate::{
-	error::Result,
-	task::{env::Global, Cancel, Task}
-};
+use crate::{error::Result, task::*};
 
 pub trait AsyncContext: Global + Sized {
 	/// Runs async task `T`

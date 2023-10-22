@@ -1,7 +1,7 @@
 use std::mem::{ManuallyDrop, MaybeUninit};
 
-use super::{Cancel, Progress, Request, RequestPtr, Task};
-use crate::pointer::{ConstPtr, MutPtr};
+use super::*;
+use crate::pointer::*;
 
 type ResumeArg<Resume, Output> = (ManuallyDrop<Resume>, MaybeUninit<Output>);
 

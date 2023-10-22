@@ -1,8 +1,11 @@
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::{
+	marker::PhantomData,
+	os::fd::{AsRawFd, BorrowedFd}
+};
 
 use enumflags2::bitflags;
 
-use super::syscall::{syscall_int, syscall_pointer, SyscallNumber::*};
+use super::syscall::*;
 use crate::error::Result;
 
 #[bitflags]
@@ -93,9 +96,10 @@ pub enum MemoryRemapFlag {
 	DontUnmap = 1 << 2
 }
 
-pub struct MemoryMap {
-	pub addr: usize,
-	pub length: usize
+pub struct MemoryMap<'a> {
+	addr: usize,
+	length: usize,
+	phantom: PhantomData<&'a ()>
 }
 
 pub fn mmap(
@@ -104,9 +108,9 @@ pub fn mmap(
 	syscall_pointer!(Mmap, addr, length, prot, flags, fd, off)
 }
 
-pub fn map_memory(
+pub fn map_memory<'a>(
 	addr: usize, length: usize, prot: u32, flags: u32, fd: Option<BorrowedFd<'_>>, off: isize
-) -> Result<MemoryMap> {
+) -> Result<MemoryMap<'a>> {
 	let addr = mmap(
 		addr,
 		length,
@@ -116,7 +120,7 @@ pub fn map_memory(
 		off
 	)?;
 
-	Ok(MemoryMap { addr, length })
+	Ok(MemoryMap { addr, length, phantom: PhantomData })
 }
 
 pub fn munmap(addr: usize, length: usize) -> Result<()> {
@@ -173,9 +177,17 @@ pub fn mremap(
 	syscall_pointer!(Mremap, addr, old_length, new_length, flags, new_address)
 }
 
-impl MemoryMap {
+impl MemoryMap<'_> {
 	pub fn new() -> Self {
-		Self { addr: 0, length: 0 }
+		Self { addr: 0, length: 0, phantom: PhantomData }
+	}
+
+	pub fn addr(&self) -> usize {
+		self.addr
+	}
+
+	pub fn length(&self) -> usize {
+		self.length
 	}
 
 	pub fn protect(&mut self, prot: u32) -> Result<()> {
@@ -199,7 +211,7 @@ impl MemoryMap {
 	}
 }
 
-impl Drop for MemoryMap {
+impl Drop for MemoryMap<'_> {
 	fn drop(&mut self) {
 		if self.addr != 0 {
 			munmap(self.addr, self.length).unwrap();

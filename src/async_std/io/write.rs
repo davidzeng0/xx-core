@@ -1,20 +1,6 @@
-use std::{
-	fmt::{self, Arguments},
-	io::IoSlice
-};
+use std::{io::IoSlice, marker::PhantomData};
 
-use super::bytes::BytesEncoding;
-use crate::{
-	async_std::ext::ext_func,
-	coroutines::{
-		async_fn, async_trait_fn, async_trait_impl,
-		env::AsyncContext,
-		runtime::{check_interrupt, get_context}
-	},
-	error::{Error, ErrorKind, Result},
-	task::env::Handle,
-	xx_core
-};
+use crate::{async_std::ext::ext_func, coroutines::*, error::*, xx_core};
 
 #[async_trait_fn]
 pub trait Write<Context: AsyncContext> {
@@ -68,51 +54,38 @@ pub trait Write<Context: AsyncContext> {
 	}
 }
 
-struct FmtAdapter<'a, Context: AsyncContext, T: ?Sized + 'a> {
-	inner: &'a mut T,
-	context: Handle<Context>,
-	wrote: usize,
-	error: Option<Error>
+pub struct WriteRef<'a, Context: AsyncContext, W: Write<Context>> {
+	writer: &'a mut W,
+	phantom: PhantomData<Context>
 }
 
-#[async_fn]
-impl<'a, T: ?Sized + Write<Context>, Context: AsyncContext> FmtAdapter<'a, Context, T> {
-	pub async fn new(inner: &'a mut T) -> FmtAdapter<'a, Context, T> {
-		Self {
-			inner,
-			context: get_context().await,
-			wrote: 0,
-			error: None
+macro_rules! async_alias_func {
+	($func: ident ($self: ident: $self_type: ty $(, $arg: ident: $type: ty)*) -> $return_type: ty) => {
+		#[xx_core::coroutines::async_trait_fn]
+		async fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
+			$self.writer.$func($($arg,)* xx_core::coroutines::runtime::get_context().await)
 		}
-	}
-
-	pub async fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
-		match fmt::write(self, args) {
-			Ok(()) => Ok(self.wrote),
-			Err(_) => Err(self
-				.error
-				.take()
-				.unwrap_or(Error::new(ErrorKind::Other, "Formatter error")))
-		}
-	}
+    }
 }
 
-impl<T: ?Sized + Write<Context>, Context: AsyncContext> fmt::Write for FmtAdapter<'_, Context, T> {
-	fn write_str(self: &mut Self, s: &str) -> fmt::Result {
-		match self.context.run(self.inner.write_string(s)) {
-			Err(err) => {
-				self.error = Some(err);
-
-				Err(fmt::Error)
-			}
-
-			Ok(n) => {
-				self.wrote += n;
-
-				Ok(())
-			}
+macro_rules! alias_func {
+	($func: ident ($self: ident: $self_type: ty $(, $arg: ident: $type: ty)*) -> $return_type: ty) => {
+		fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
+			$self.writer.$func($($arg,)*)
 		}
-	}
+    }
+}
+
+impl<Context: AsyncContext, W: Write<Context>> Write<Context> for WriteRef<'_, Context, W> {
+	async_alias_func!(async_write(self: &mut Self, buf: &[u8]) -> Result<usize>);
+
+	async_alias_func!(async_flush(self: &mut Self) -> Result<()>);
+
+	async_alias_func!(async_write_all(self: &mut Self, buf: &[u8]) -> Result<usize>);
+
+	async_alias_func!(async_write_vectored(self: &mut Self, bufs: &[IoSlice<'_>]) -> Result<usize>);
+
+	alias_func!(is_write_vectored(self: &Self) -> bool);
 }
 
 pub trait WriteExt<Context: AsyncContext>: Write<Context> {
@@ -124,35 +97,11 @@ pub trait WriteExt<Context: AsyncContext>: Write<Context> {
 
 	ext_func!(write_vectored(self: &mut Self, bufs: &[IoSlice<'_>]) -> Result<usize>);
 
-	#[async_trait_impl]
-	async fn write_fmt(&mut self, args: Arguments<'_>) -> Result<usize> {
-		FmtAdapter::new(self).await.write_args(args).await
-	}
-
-	#[async_trait_impl]
-	async fn write_string(&mut self, buf: &str) -> Result<usize> {
-		self.write_all(buf.as_bytes()).await
-	}
-
-	#[async_trait_impl]
-	async fn write_char(&mut self, ch: char) -> Result<usize> {
-		let mut buf = [0u8; 4];
-
-		self.write_string(ch.encode_utf8(&mut buf)).await
-	}
-
-	/// Write the number `val`, as little endian bytes
-	#[inline(always)]
-	#[async_trait_impl]
-	async fn write_le<T: BytesEncoding<N>, const N: usize>(&mut self, val: T) -> Result<usize> {
-		self.write_all(&val.to_bytes_le()).await
-	}
-
-	/// Write the number `val`, as big endian bytes
-	#[inline(always)]
-	#[async_trait_impl]
-	async fn write_be<T: BytesEncoding<N>, const N: usize>(&mut self, val: T) -> Result<usize> {
-		self.write_all(&val.to_bytes_be()).await
+	fn as_ref(&mut self) -> WriteRef<'_, Context, Self>
+	where
+		Self: Sized
+	{
+		WriteRef { writer: self, phantom: PhantomData }
 	}
 }
 

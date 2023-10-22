@@ -54,10 +54,13 @@ impl AddLifetime {
 
 impl VisitMut for AddLifetime {
 	fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
-		visit_type_reference_mut(self, reference);
-
 		if reference.lifetime.is_some() {
 			return;
+		}
+
+		if let Type::ImplTrait(_) = reference.elem.as_ref() {
+		} else {
+			visit_type_reference_mut(self, reference);
 		}
 
 		reference.lifetime = Some(self.next_lifetime(reference.span()));
@@ -146,23 +149,38 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&mut Generics>
 					let lifetime = &param.lifetime;
 
 					addl_bounds
-						.push(parse_quote! { xx_core::macros::closure::Captures<#lifetime> });
+						.push(parse_quote! { xx_core::closure::lifetime::Captures<#lifetime> });
 				}
 			}
 		}
 	}
 
+	/* this is apparently necessary */
 	for param in sig.generics.lifetimes() {
 		let lifetime = &param.lifetime;
 
 		if lifetime != &closure_lifetime() {
-			addl_bounds.push(parse_quote! { xx_core::macros::closure::Captures<#lifetime> });
+			addl_bounds.push(parse_quote! { xx_core::closure::lifetime::Captures<#lifetime> });
 		}
 	}
 
 	addl_bounds.push(closure_lifetime());
 
 	quote! { #addl_bounds }
+}
+
+struct ReturnLifetime;
+
+impl VisitMut for ReturnLifetime {
+	fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
+		visit_type_reference_mut(self, reference);
+
+		if reference.lifetime.is_some() {
+			return;
+		}
+
+		reference.lifetime = Some(closure_lifetime());
+	}
 }
 
 pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&mut Generics>) -> TokenStream {
@@ -176,8 +194,9 @@ pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&mut Generics>) -
 		return quote! {};
 	}
 
-	op.visit_signature_mut(sig);
+	ReturnLifetime {}.visit_return_type_mut(&mut sig.output);
 
+	op.visit_signature_mut(sig);
 	sig.generics.params.push(closure_lifetime());
 
 	let clause = sig
@@ -282,9 +301,9 @@ pub fn into_closure(
 	block: Option<&mut Block>, args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
 	closure_type: TokenStream, transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
 ) -> Result<TokenStream> {
-	let return_type = get_return_type(&sig.output);
-
 	add_lifetime(sig, env_generics);
+
+	let return_type = get_return_type(&sig.output);
 
 	let (types, construct, destruct) = build_tuples(&mut sig.inputs, |arg| match arg {
 		FnArg::Typed(pat) => {
@@ -348,6 +367,7 @@ pub fn into_basic_closure(
 	transform_return: impl Fn(TokenStream) -> TokenStream,
 	wrap: Option<impl Fn(TokenStream) -> (TokenStream, TokenStream)>
 ) -> Result<TokenStream> {
+	let addl_lifetimes = add_lifetime(sig, env_generics);
 	let return_type = &mut sig.output;
 
 	let (args, args_types) = make_args(args_vars, args_types);
@@ -375,8 +395,6 @@ pub fn into_basic_closure(
 			#closure
 		}};
 	}
-
-	let addl_lifetimes = add_lifetime(sig, env_generics);
 
 	sig.output = parse_quote! { -> #return_tokens #addl_lifetimes };
 

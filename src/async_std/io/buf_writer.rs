@@ -1,12 +1,7 @@
 use std::{io::SeekFrom, marker::PhantomData};
 
-use super::{Close, CloseExt, Seek, SeekExt, Write, WriteExt, DEFAULT_BUFFER_SIZE};
-use crate::{
-	coroutines::{async_fn, async_trait_fn, env::AsyncContext, runtime::check_interrupt},
-	error::{Error, ErrorKind, Result},
-	opt::hint::likely,
-	xx_core
-};
+use super::*;
+use crate::{coroutines::*, error::*, opt::hint::likely, xx_core};
 
 pub struct BufWriter<Context: AsyncContext, W: Write<Context>> {
 	inner: W,

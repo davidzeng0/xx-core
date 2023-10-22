@@ -35,13 +35,7 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 		self.as_ptr()
 	}
 
-	pub fn into_ref<'a>(self) -> &'a T {
-		unsafe { &*self.ptr }
-	}
-}
-
-impl<T: ?Sized, const MUTABLE: bool> AsRef<T> for Pointer<T, MUTABLE> {
-	fn as_ref(&self) -> &T {
+	pub fn as_ref<'a>(&self) -> &'a T {
 		unsafe { &*self.ptr }
 	}
 }
@@ -65,13 +59,7 @@ impl<T: ?Sized> MutPtr<T> {
 		self.as_ptr_mut()
 	}
 
-	pub fn into_mut<'a>(self) -> &'a mut T {
-		unsafe { &mut *self.as_ptr_mut() }
-	}
-}
-
-impl<T: ?Sized> AsMut<T> for MutPtr<T> {
-	fn as_mut(&mut self) -> &mut T {
+	pub fn as_mut<'a>(&mut self) -> &'a mut T {
 		unsafe { &mut *self.as_ptr_mut() }
 	}
 }

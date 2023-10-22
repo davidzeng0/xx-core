@@ -1,8 +1,13 @@
 pub use crate::macros::sync_task;
 use crate::{error::Result, pointer::ConstPtr};
+
 pub mod block_on;
 pub mod closure;
 pub mod env;
+
+pub use block_on::*;
+pub use closure::*;
+pub use env::*;
 
 pub type RequestPtr<T> = ConstPtr<Request<T>>;
 

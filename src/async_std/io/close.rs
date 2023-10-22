@@ -1,9 +1,4 @@
-use crate::{
-	async_std::ext::ext_func,
-	coroutines::{async_trait_fn, env::AsyncContext},
-	error::Result,
-	xx_core
-};
+use crate::{async_std::ext::ext_func, coroutines::*, error::Result, xx_core};
 
 #[async_trait_fn]
 pub trait Close<Context: AsyncContext> {

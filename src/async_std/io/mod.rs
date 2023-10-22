@@ -12,6 +12,6 @@ pub use seek::*;
 pub mod close;
 pub use close::*;
 
-pub mod bytes;
+pub mod typed;
 
 pub const DEFAULT_BUFFER_SIZE: usize = 16384;

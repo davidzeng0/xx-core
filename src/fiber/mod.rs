@@ -2,28 +2,22 @@ use std::mem::ManuallyDrop;
 
 use enumflags2::make_bitflags;
 
-use self::pool::Pool;
 use super::{
-	os::{
-		mman::{map_memory, MemoryFlag, MemoryMap, MemoryProtection, MemoryType},
-		resource::{get_limit, Resource}
-	},
+	os::{mman::*, resource::*},
 	sysdep::import_sysdeps
 };
-use crate::{
-	pointer::{ConstPtr, MutPtr},
-	task::env::Handle
-};
+use crate::{pointer::*, task::env::Handle};
 
 import_sysdeps!();
 
 pub mod pool;
+pub use self::pool::Pool;
 
 #[allow(dead_code)]
 pub struct Fiber {
 	context: Context,
 
-	stack: MemoryMap
+	stack: MemoryMap<'static>
 }
 
 /// Safety: the stack is not used before a fiber is started,
@@ -107,7 +101,8 @@ impl Fiber {
 	}
 
 	pub unsafe fn set_start(&mut self, start: Start) {
-		self.context.set_stack(self.stack.addr, self.stack.length);
+		self.context
+			.set_stack(self.stack.addr(), self.stack.length());
 		self.context.set_start(start);
 	}
 

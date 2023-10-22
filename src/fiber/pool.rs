@@ -1,10 +1,6 @@
 use std::sync::Mutex;
 
-use crate::{
-	fiber::{Fiber, Start},
-	task::env::Global,
-	trace
-};
+use crate::{fiber::*, task::*, trace};
 
 pub struct Pool {
 	pool: Mutex<Vec<Fiber>>,
@@ -24,7 +20,12 @@ impl Pool {
 		self.count += 1;
 
 		match pool.pop() {
-			None => (),
+			None => {
+				trace!(target: self, "== Creating stack for worker");
+
+				Fiber::new(start)
+			}
+
 			Some(mut fiber) => {
 				trace!(target: self, "== Reusing stack for worker");
 
@@ -33,8 +34,6 @@ impl Pool {
 				return fiber;
 			}
 		}
-
-		Fiber::new(start)
 	}
 
 	fn calculate_ideal(count: u64) -> u64 {

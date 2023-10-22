@@ -1,8 +1,5 @@
 use super::executor::Executor;
-use crate::{
-	fiber::{Fiber, Start},
-	task::env::{Global, Handle}
-};
+use crate::{fiber::*, task::*};
 
 /// A worker thread capable of running async operations via fibers
 pub struct Worker {

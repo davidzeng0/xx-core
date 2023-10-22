@@ -1,6 +1,6 @@
 use enumflags2::bitflags;
 
-use super::syscall::{syscall_int, SyscallNumber::*};
+use super::syscall::*;
 use crate::{error::Result, pointer::MutPtr};
 
 #[bitflags]
