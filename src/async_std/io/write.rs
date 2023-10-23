@@ -1,6 +1,7 @@
 use std::{io::IoSlice, marker::PhantomData};
 
-use crate::{async_std::ext::ext_func, coroutines::*, error::*, xx_core};
+use super::check_interrupt_if_zero;
+use crate::{async_std::ext::ext_func, coroutines::*, error::*, opt::hint::unlikely, xx_core};
 
 #[async_trait_fn]
 pub trait Write<Context: AsyncContext> {
@@ -10,7 +11,9 @@ pub trait Write<Context: AsyncContext> {
 	async fn async_write(&mut self, buf: &[u8]) -> Result<usize>;
 
 	/// Flush buffered data
-	async fn async_flush(&mut self) -> Result<()>;
+	async fn async_flush(&mut self) -> Result<()> {
+		Ok(())
+	}
 
 	/// Try to write the entire buffer, returning on I/O error, interrupt, or
 	/// EOF
@@ -23,21 +26,24 @@ pub trait Write<Context: AsyncContext> {
 			match self.write(&buf[wrote..]).await {
 				Ok(0) => break,
 				Ok(n) => wrote += n,
-				Err(err) => {
-					if err.is_interrupted() {
-						break;
-					}
-
-					return Err(err);
-				}
+				Err(err) if err.is_interrupted() => break,
+				Err(err) => return Err(err)
 			}
 		}
 
-		if wrote == 0 {
+		check_interrupt_if_zero(wrote).await
+	}
+
+	async fn async_write_all_or_err(&mut self, buf: &[u8]) -> Result<()> {
+		let wrote = self.write_all(buf).await?;
+
+		if unlikely(wrote != buf.len()) {
 			check_interrupt().await?;
+
+			return Err(Error::new(ErrorKind::UnexpectedEof, "Short write"));
 		}
 
-		Ok(wrote)
+		Ok(())
 	}
 
 	fn is_write_vectored(&self) -> bool {
@@ -45,18 +51,22 @@ pub trait Write<Context: AsyncContext> {
 	}
 
 	async fn async_write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
-		let buf = match bufs.iter().find(|b| !b.is_empty()) {
-			Some(buf) => buf,
-			None => return Ok(0)
-		};
-
-		self.write(&**buf).await
+		match bufs.iter().find(|b| !b.is_empty()) {
+			Some(buf) => self.write(&**buf).await,
+			None => Ok(0)
+		}
 	}
 }
 
-pub struct WriteRef<'a, Context: AsyncContext, W: Write<Context>> {
+pub struct WriteRef<'a, Context: AsyncContext, W: Write<Context> + ?Sized> {
 	writer: &'a mut W,
 	phantom: PhantomData<Context>
+}
+
+impl<'a, Context: AsyncContext, W: Write<Context> + ?Sized> WriteRef<'a, Context, W> {
+	pub fn new(writer: &'a mut W) -> Self {
+		Self { writer, phantom: PhantomData }
+	}
 }
 
 macro_rules! async_alias_func {
@@ -65,7 +75,7 @@ macro_rules! async_alias_func {
 		async fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
 			$self.writer.$func($($arg,)* xx_core::coroutines::runtime::get_context().await)
 		}
-    }
+	}
 }
 
 macro_rules! alias_func {
@@ -73,7 +83,7 @@ macro_rules! alias_func {
 		fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
 			$self.writer.$func($($arg,)*)
 		}
-    }
+	}
 }
 
 impl<Context: AsyncContext, W: Write<Context>> Write<Context> for WriteRef<'_, Context, W> {
@@ -82,6 +92,8 @@ impl<Context: AsyncContext, W: Write<Context>> Write<Context> for WriteRef<'_, C
 	async_alias_func!(async_flush(self: &mut Self) -> Result<()>);
 
 	async_alias_func!(async_write_all(self: &mut Self, buf: &[u8]) -> Result<usize>);
+
+	async_alias_func!(async_write_all_or_err(self: &mut Self, buf: &[u8]) -> Result<()>);
 
 	async_alias_func!(async_write_vectored(self: &mut Self, bufs: &[IoSlice<'_>]) -> Result<usize>);
 
@@ -95,13 +107,12 @@ pub trait WriteExt<Context: AsyncContext>: Write<Context> {
 
 	ext_func!(write_all(self: &mut Self, buf: &[u8]) -> Result<usize>);
 
+	ext_func!(write_all_or_err(self: &mut Self, buf: &[u8]) -> Result<()>);
+
 	ext_func!(write_vectored(self: &mut Self, bufs: &[IoSlice<'_>]) -> Result<usize>);
 
-	fn as_ref(&mut self) -> WriteRef<'_, Context, Self>
-	where
-		Self: Sized
-	{
-		WriteRef { writer: self, phantom: PhantomData }
+	fn as_ref(&mut self) -> WriteRef<'_, Context, Self> {
+		WriteRef::new(self)
 	}
 }
 

@@ -1,7 +1,7 @@
 use std::{io::SeekFrom, marker::PhantomData};
 
 use super::*;
-use crate::{coroutines::*, error::*, opt::hint::likely, xx_core};
+use crate::{coroutines::*, error::*, opt::hint::unlikely, xx_core};
 
 pub struct BufWriter<Context: AsyncContext, W: Write<Context>> {
 	inner: W,
@@ -35,18 +35,16 @@ impl<Context: AsyncContext, W: Write<Context>> BufWriter<Context, W> {
 	/// Flushes the buffer without flushing downstream
 	async fn flush_buf(&mut self) -> Result<()> {
 		while self.pos < self.buf.len() {
-			check_interrupt().await?;
-
 			let wrote = self.inner.write(&self.buf[self.pos..]).await?;
 
-			if likely(wrote != 0) {
-				self.pos += wrote;
-			} else {
+			if unlikely(wrote == 0) {
 				return Err(Error::new(
 					ErrorKind::WriteZero,
 					"Write returned EOF while flushing"
 				));
 			}
+
+			self.pos += wrote;
 		}
 
 		self.discard();
@@ -78,7 +76,6 @@ impl<Context: AsyncContext, W: Write<Context>> BufWriter<Context, W> {
 
 #[async_trait_fn]
 impl<Context: AsyncContext, W: Write<Context>> Write<Context> for BufWriter<Context, W> {
-	/// Fully writes buf unless interrupt
 	#[inline]
 	async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
 		if self.buf.spare_capacity_mut().len() >= buf.len() {
@@ -89,23 +86,14 @@ impl<Context: AsyncContext, W: Write<Context>> Write<Context> for BufWriter<Cont
 
 		if buf.len() < self.buf.capacity() {
 			Ok(self.write_buffered(buf))
-		} else if self.inner.write_all(buf).await? == buf.len() {
-			Ok(buf.len())
 		} else {
-			Err(Error::new(
-				ErrorKind::WriteZero,
-				"Write returned EOF mid write"
-			))
+			self.inner.write(buf).await
 		}
-	}
-
-	async fn async_write_all(&mut self, buf: &[u8]) -> Result<usize> {
-		self.write(buf).await
 	}
 
 	/// Flush buffer to stream
 	///
-	/// Upon interrupt, this function should be called again
+	/// On interrupt, this function should be called again
 	/// to finish flushing
 	async fn async_flush(&mut self) -> Result<()> {
 		self.flush_buf().await?;

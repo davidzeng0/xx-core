@@ -50,6 +50,8 @@ impl Pool {
 		let ideal = Self::calculate_ideal(self.count);
 
 		if pool.len() < ideal as usize {
+			trace!(target: self, "== Preserving worker stack");
+
 			pool.push(fiber);
 		}
 	}

@@ -53,11 +53,11 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 	}
 
 	pub fn with_capacity(inner: R, capacity: usize) -> Self {
-		Self::from_parts(inner, Vec::with_capacity(capacity))
+		Self::from_parts(inner, Vec::with_capacity(capacity), 0)
 	}
 
-	pub fn from_parts(inner: R, buf: Vec<u8>) -> Self {
-		BufReader { inner, buf, pos: 0, phantom: PhantomData }
+	pub fn from_parts(inner: R, buf: Vec<u8>, pos: usize) -> Self {
+		BufReader { inner, buf, pos, phantom: PhantomData }
 	}
 
 	/// Calling `into_inner` with data in the buffer will lead to data loss
@@ -83,6 +83,10 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 		}
 
 		self.pos = 0;
+	}
+
+	pub fn position(&self) -> usize {
+		self.pos
 	}
 }
 
@@ -147,8 +151,6 @@ impl<Context: AsyncContext, R: Read<Context>> BufRead<Context> for BufReader<Con
 			if done {
 				break;
 			}
-
-			check_interrupt().await?;
 
 			if self.fill_buf().await? == 0 {
 				if buf.len() == start_len {

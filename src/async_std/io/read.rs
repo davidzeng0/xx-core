@@ -1,9 +1,11 @@
-use std::{io::IoSliceMut, marker::PhantomData, ptr::copy_nonoverlapping, str::from_utf8};
+use std::{io::IoSliceMut, marker::PhantomData, ptr::copy_nonoverlapping};
 
+use super::{check_interrupt_if_zero, check_utf8};
 use crate::{
 	async_std::{ext::ext_func, AsyncIterator},
 	coroutines::*,
 	error::*,
+	opt::hint::unlikely,
 	xx_core
 };
 
@@ -23,17 +25,6 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	len
 }
 
-pub fn check_utf8(buf: &[u8]) -> Result<()> {
-	if from_utf8(buf).is_ok() {
-		Ok(())
-	} else {
-		Err(Error::new(
-			ErrorKind::InvalidData,
-			"invalid UTF-8 found in stream"
-		))
-	}
-}
-
 #[async_trait_fn]
 pub trait Read<Context: AsyncContext> {
 	/// Read into `buf`, returning the amount of bytes read
@@ -47,25 +38,28 @@ pub trait Read<Context: AsyncContext> {
 	async fn async_read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
 		let mut read = 0;
 
-		while read < buf.len() && !is_interrupted().await {
+		while read < buf.len() {
 			match self.read(&mut buf[read..]).await {
 				Ok(0) => break,
 				Ok(n) => read += n,
-				Err(err) => {
-					if err.is_interrupted() {
-						break;
-					}
-
-					return Err(err);
-				}
+				Err(err) if err.is_interrupted() => break,
+				Err(err) => return Err(err)
 			}
 		}
 
-		if read == 0 {
+		check_interrupt_if_zero(read).await
+	}
+
+	async fn async_read_exact_or_err(&mut self, buf: &mut [u8]) -> Result<()> {
+		let read = self.read_exact(buf).await?;
+
+		if unlikely(read != buf.len()) {
 			check_interrupt().await?;
+
+			return Err(Error::new(ErrorKind::UnexpectedEof, "Short read"));
 		}
 
-		Ok(read)
+		Ok(())
 	}
 
 	/// Reads until an EOF, I/O error, or interrupt
@@ -88,13 +82,8 @@ pub trait Read<Context: AsyncContext> {
 				match self.read(buf.get_unchecked_mut(len..capacity)).await {
 					Ok(0) => break,
 					Ok(read) => buf.set_len(len + read),
-					Err(err) => {
-						if err.is_interrupted() {
-							break;
-						}
-
-						return Err(err);
-					}
+					Err(err) if err.is_interrupted() => break,
+					Err(err) => return Err(err)
 				}
 			}
 
@@ -107,24 +96,13 @@ pub trait Read<Context: AsyncContext> {
 						buf.extend_from_slice(&probe[0..read]);
 					}
 
-					Err(err) => {
-						if err.is_interrupted() {
-							break;
-						}
-
-						return Err(err);
-					}
+					Err(err) if err.is_interrupted() => break,
+					Err(err) => return Err(err)
 				}
 			}
 		}
 
-		let total = buf.len() - start_len;
-
-		if total == 0 {
-			check_interrupt().await?;
-		}
-
-		Ok(total)
+		check_interrupt_if_zero(buf.len() - start_len).await
 	}
 
 	async fn async_read_to_string(&mut self, buf: &mut String) -> Result<usize> {
@@ -151,18 +129,22 @@ pub trait Read<Context: AsyncContext> {
 	}
 
 	async fn async_read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
-		let buf = match bufs.iter_mut().find(|b| !b.is_empty()) {
-			Some(buf) => buf,
-			None => return Ok(0)
-		};
-
-		self.read(&mut **buf).await
+		match bufs.iter_mut().find(|b| !b.is_empty()) {
+			Some(buf) => self.read(&mut **buf).await,
+			None => Ok(0)
+		}
 	}
 }
 
-pub struct ReadRef<'a, Context: AsyncContext, R: Read<Context>> {
+pub struct ReadRef<'a, Context: AsyncContext, R: Read<Context> + ?Sized> {
 	reader: &'a mut R,
 	phantom: PhantomData<Context>
+}
+
+impl<'a, Context: AsyncContext, R: Read<Context> + ?Sized> ReadRef<'a, Context, R> {
+	pub fn new(reader: &'a mut R) -> Self {
+		Self { reader, phantom: PhantomData }
+	}
 }
 
 macro_rules! async_alias_func {
@@ -187,6 +169,8 @@ impl<Context: AsyncContext, R: Read<Context>> Read<Context> for ReadRef<'_, Cont
 
 	async_alias_func!(async_read_exact(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
 
+	async_alias_func!(async_read_exact_or_err(self: &mut Self, buf: &mut [u8]) -> Result<()>);
+
 	async_alias_func!(async_read_to_end(self: &mut Self, buf: &mut Vec<u8>) -> Result<usize>);
 
 	async_alias_func!(async_read_to_string(self: &mut Self, buf: &mut String) -> Result<usize>);
@@ -196,10 +180,36 @@ impl<Context: AsyncContext, R: Read<Context>> Read<Context> for ReadRef<'_, Cont
 	alias_func!(is_read_vectored(self: &Self) -> bool);
 }
 
+impl<Context: AsyncContext, R: BufRead<Context>> BufRead<Context> for ReadRef<'_, Context, R> {
+	async_alias_func!(async_fill_amount(self: &mut Self, amount: usize) -> Result<usize>);
+
+	async_alias_func!(async_read_until(self: &mut Self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>);
+
+	async_alias_func!(async_read_line(self: &mut Self, buf: &mut String) -> Result<Option<usize>>);
+
+	alias_func!(capacity(self: &Self) -> usize);
+
+	alias_func!(spare_capacity(self: &Self) -> usize);
+
+	alias_func!(buffer(self: &Self) -> &[u8]);
+
+	alias_func!(buffer_mut(self: &mut Self) -> &mut [u8]);
+
+	alias_func!(consume(self: &mut Self, count: usize) -> ());
+
+	alias_func!(discard(self: &mut Self) -> ());
+
+	unsafe fn consume_unchecked(&mut self, count: usize) {
+		self.reader.consume_unchecked(count)
+	}
+}
+
 pub trait ReadExt<Context: AsyncContext>: Read<Context> {
 	ext_func!(read(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
 
 	ext_func!(read_exact(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
+
+	ext_func!(read_exact_or_err(self: &mut Self, buf: &mut [u8]) -> Result<()>);
 
 	ext_func!(read_to_end(self: &mut Self, buf: &mut Vec<u8>) -> Result<usize>);
 
@@ -207,11 +217,8 @@ pub trait ReadExt<Context: AsyncContext>: Read<Context> {
 
 	ext_func!(read_vectored(self: &mut Self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>);
 
-	fn as_ref(&mut self) -> ReadRef<'_, Context, Self>
-	where
-		Self: Sized
-	{
-		ReadRef { reader: self, phantom: PhantomData }
+	fn as_ref(&mut self) -> ReadRef<'_, Context, Self> {
+		ReadRef::new(self)
 	}
 }
 
@@ -292,49 +299,6 @@ pub trait BufRead<Context: AsyncContext>: Read<Context> + Sized {
 	}
 }
 
-pub struct BufReadRef<'a, Context: AsyncContext, R: BufRead<Context>> {
-	reader: &'a mut R,
-	phantom: PhantomData<Context>
-}
-
-impl<Context: AsyncContext, R: BufRead<Context>> Read<Context> for BufReadRef<'_, Context, R> {
-	async_alias_func!(async_read(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
-
-	async_alias_func!(async_read_exact(self: &mut Self, buf: &mut [u8]) -> Result<usize>);
-
-	async_alias_func!(async_read_to_end(self: &mut Self, buf: &mut Vec<u8>) -> Result<usize>);
-
-	async_alias_func!(async_read_to_string(self: &mut Self, buf: &mut String) -> Result<usize>);
-
-	async_alias_func!(async_read_vectored(self: &mut Self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>);
-
-	alias_func!(is_read_vectored(self: &Self) -> bool);
-}
-
-impl<Context: AsyncContext, R: BufRead<Context>> BufRead<Context> for BufReadRef<'_, Context, R> {
-	async_alias_func!(async_fill_amount(self: &mut Self, amount: usize) -> Result<usize>);
-
-	async_alias_func!(async_read_until(self: &mut Self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>);
-
-	async_alias_func!(async_read_line(self: &mut Self, buf: &mut String) -> Result<Option<usize>>);
-
-	alias_func!(capacity(self: &Self) -> usize);
-
-	alias_func!(spare_capacity(self: &Self) -> usize);
-
-	alias_func!(buffer(self: &Self) -> &[u8]);
-
-	alias_func!(buffer_mut(self: &mut Self) -> &mut [u8]);
-
-	alias_func!(consume(self: &mut Self, count: usize) -> ());
-
-	alias_func!(discard(self: &mut Self) -> ());
-
-	unsafe fn consume_unchecked(&mut self, count: usize) {
-		self.reader.consume_unchecked(count)
-	}
-}
-
 pub trait BufReadExt<Context: AsyncContext>: BufRead<Context> {
 	ext_func!(fill_amount(self: &mut Self, amount: usize) -> Result<usize>);
 
@@ -346,13 +310,6 @@ pub trait BufReadExt<Context: AsyncContext>: BufRead<Context> {
 	ext_func!(read_until(self: &mut Self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>);
 
 	ext_func!(read_line(self: &mut Self, buf: &mut String) -> Result<Option<usize>>);
-
-	fn as_ref(&mut self) -> BufReadRef<'_, Context, Self>
-	where
-		Self: Sized
-	{
-		BufReadRef { reader: self, phantom: PhantomData }
-	}
 }
 
 impl<Context: AsyncContext, T: BufRead<Context>> BufReadExt<Context> for T {}

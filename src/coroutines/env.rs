@@ -11,10 +11,11 @@ pub trait AsyncContext: Global + Sized {
 	/// Interrupt the current running task
 	fn interrupt(&mut self) -> Result<()>;
 
-	/// Returns true if the worker has a pending interrupt
+	/// Returns true if the worker is being interrupted
 	fn interrupted(&self) -> bool;
 
-	/// Clears any pending interrupts on the current worker
+	/// Clears any interrupts and pending interrupts (due to guards) on the
+	/// current worker
 	fn clear_interrupt(&mut self);
 
 	fn interrupt_guard(&mut self, count: i32);

@@ -60,17 +60,19 @@ pub struct TypedReader<Context: AsyncContext, R: BufRead<Context>> {
 	phantom: PhantomData<Context>
 }
 
+fn eof_error() -> Error {
+	Error::new(ErrorKind::UnexpectedEof, "Unexpected end of stream")
+}
+
+#[async_fn]
+async fn check_eof<Context: AsyncContext>() -> Error {
+	check_interrupt().await.err().unwrap_or(eof_error())
+}
+
 #[async_fn]
 impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
 	pub fn new(reader: R) -> Self {
 		Self { reader, phantom: PhantomData }
-	}
-
-	async fn check_eof() -> Error {
-		check_interrupt().await.err().unwrap_or(Error::new(
-			ErrorKind::UnexpectedEof,
-			"EOF while reading an int"
-		))
 	}
 
 	pub fn into_inner(self) -> R {
@@ -87,7 +89,7 @@ impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
 		} else if read == 0 {
 			Ok(None)
 		} else {
-			Err(Self::check_eof().await)
+			Err(check_eof().await)
 		}
 	}
 
@@ -109,7 +111,7 @@ impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
 
 	#[inline(always)]
 	pub async fn read_le<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<Option<T>> {
-		/* for some llvm or rustc reason, unlikely here does the actual job of
+		/* for some llvm reason, unlikely here does the actual job of
 		 * likely, and nets a performance gain on x64
 		 */
 		Ok(if unlikely(self.reader.buffer().len() >= N) {
@@ -126,6 +128,16 @@ impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
 		} else {
 			self.read_bytes_slow().await?.map(T::from_bytes_be)
 		})
+	}
+
+	#[inline(always)]
+	pub async fn read_le_or_eof<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
+		self.read_le().await?.ok_or(eof_error())
+	}
+
+	#[inline(always)]
+	pub async fn read_be_or_eof<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
+		self.read_be().await?.ok_or(eof_error())
 	}
 }
 
@@ -185,7 +197,7 @@ impl<W: Write<Context>, Context: AsyncContext> fmt::Write
 	for FmtAdapter<'_, Context, TypedWriter<Context, W>>
 {
 	fn write_str(self: &mut Self, s: &str) -> fmt::Result {
-		match self.context.run(self.writer.write_string(s)) {
+		match self.context.run(self.writer.write_string_exact_or_err(s)) {
 			Err(err) => {
 				self.error = Some(err);
 
@@ -207,23 +219,24 @@ impl<Context: AsyncContext, W: Write<Context>> TypedWriter<Context, W> {
 		Self { writer, phantom: PhantomData }
 	}
 
-	async fn check_eof() -> Error {
-		check_interrupt().await.err().unwrap_or(Error::new(
-			ErrorKind::UnexpectedEof,
-			"EOF while reading an int"
-		))
-	}
-
 	pub fn into_inner(self) -> W {
 		self.writer
 	}
 
+	/// Returns the number of bytes written, or error if the data could not be
+	/// fully written
 	pub async fn write_fmt(&mut self, args: Arguments<'_>) -> Result<usize> {
 		FmtAdapter::new(self).await.write_args(args).await
 	}
 
 	pub async fn write_string(&mut self, buf: &str) -> Result<usize> {
 		self.writer.write_all(buf.as_bytes()).await
+	}
+
+	pub async fn write_string_exact_or_err(&mut self, buf: &str) -> Result<usize> {
+		self.writer.write_all_or_err(buf.as_bytes()).await?;
+
+		Ok(buf.as_bytes().len())
 	}
 
 	pub async fn write_char(&mut self, ch: char) -> Result<usize> {

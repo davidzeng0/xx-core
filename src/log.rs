@@ -138,88 +138,80 @@ fn init() {
 	set_max_level(LevelFilter::Info)
 }
 
-fn get_struct_name<T>(_: &T) -> &str {
+pub fn get_struct_name<T>(_: &T) -> &str {
 	type_name::<T>().split("::").last().unwrap()
 }
 
-fn get_struct_addr<T>(val: &T) -> usize {
+pub fn get_struct_addr<T>(val: &T) -> usize {
 	val as *const _ as usize
 }
 
-pub fn format_target<T>(val: &T) -> String {
-	format!(
-		"@ {:0>8x} {: >13}",
-		get_struct_addr(val) & 0xffffffff,
-		get_struct_name(val)
-	)
+pub fn get_struct_addr_low<T>(val: &T) -> usize {
+	val as *const _ as usize & 0xffffffff
+}
+
+#[macro_export]
+macro_rules! log {
+	($level: expr, target: $target: expr, $($arg: tt)+) => {
+		{
+			let mut __xx_core_log_fmt_buf = ::std::io::Cursor::new([0u8; 64]);
+
+			::std::io::Write::write_fmt(
+				&mut __xx_core_log_fmt_buf,
+				format_args!(
+					"@ {:0>8x} {: >13}",
+					$crate::log::get_struct_addr_low($target),
+					$crate::log::get_struct_name($target)
+				)
+			).expect("Log struct name too long");
+
+			let __xx_core_log_fmted_pos = __xx_core_log_fmt_buf.position() as usize;
+			let __xx_core_log_fmted_target = &__xx_core_log_fmt_buf.get_ref()[0..__xx_core_log_fmted_pos];
+
+			::log::log!(
+				target: unsafe { ::std::str::from_utf8_unchecked(__xx_core_log_fmted_target) },
+				$level,
+				$($arg)+
+			)
+		}
+	};
+
+	($level: expr, $($arg: tt)+) => {
+		::log::log!($level, $($arg)+)
+	};
 }
 
 #[macro_export]
 macro_rules! error {
-    (target: $target: expr, $($arg: tt)+) => {
-        log::error!(
-            target: &$crate::log::format_target($target) as &str,
-            $($arg)+
-        )
-    };
-
-    ($($arg: tt)+) => {
-        log::error!($($arg)+)
-    };
+	($($arg: tt)+) => {
+		$crate::log!(::log::Level::Error, $($arg)+)
+	}
 }
 
 #[macro_export]
 macro_rules! warn {
-    (target: $target: expr, $($arg: tt)+) => {
-        log::warn!(
-            target: &$crate::log::format_target($target) as &str,
-            $($arg)+
-        )
-    };
-
-    ($($arg: tt)+) => {
-        log::warn!($($arg)+)
-    };
+	($($arg: tt)+) => {
+		$crate::log!(::log::Level::Warn, $($arg)+)
+	}
 }
 
 #[macro_export]
 macro_rules! info {
-    (target: $target: expr, $($arg: tt)+) => {
-        log::info!(
-            target: &$crate::log::format_target($target) as &str,
-            $($arg)+
-        )
-    };
-
-    ($($arg: tt)+) => {
-        log::info!($($arg)+)
-    };
+	($($arg: tt)+) => {
+		$crate::log!(::log::Level::Info, $($arg)+)
+	}
 }
 
 #[macro_export]
 macro_rules! debug {
-    (target: $target: expr, $($arg: tt)+) => {
-        log::debug!(
-            target: &$crate::log::format_target($target) as &str,
-            $($arg)+
-        )
-    };
-
-    ($($arg: tt)+) => {
-        log::debug!($($arg)+)
-    };
+	($($arg: tt)+) => {
+		$crate::log!(::log::Level::Debug, $($arg)+)
+	}
 }
 
 #[macro_export]
 macro_rules! trace {
-    (target: $target: expr, $($arg: tt)+) => {
-        log::trace!(
-            target: &$crate::log::format_target($target) as &str,
-            $($arg)+
-        )
-    };
-
-    ($($arg: tt)+) => {
-        log::trace!($($arg)+)
-    };
+	($($arg: tt)+) => {
+		$crate::log!(::log::Level::Trace, $($arg)+)
+	}
 }

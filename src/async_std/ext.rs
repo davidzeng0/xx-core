@@ -6,7 +6,7 @@ macro_rules! ext_func {
 				$self.[<async_ $func>]($($arg,)* xx_core::coroutines::runtime::get_context().await)
 			}
 		}
-    }
+	}
 }
 
 pub(crate) use ext_func;
