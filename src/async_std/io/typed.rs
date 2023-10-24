@@ -7,53 +7,77 @@ use std::{
 use super::{BufRead, ReadExt, Write, WriteExt};
 use crate::{coroutines::*, error::*, opt::hint::*, task::Handle, xx_core};
 
-pub trait BytesEncoding<const N: usize> {
-	fn to_bytes_le(self) -> [u8; N];
-	fn to_bytes_be(self) -> [u8; N];
-
-	fn from_bytes_le(bytes: [u8; N]) -> Self;
-	fn from_bytes_be(bytes: [u8; N]) -> Self;
+pub trait ToBytes<const N: usize> {
+	fn to_bytes(self) -> [u8; N];
 }
 
-macro_rules! impl_bytes_type_bits {
-	($type: ty, $bits: literal) => {
-		impl BytesEncoding<{ $bits as usize / 8 }> for $type {
-			#[inline(always)]
-			fn to_bytes_le(self) -> [u8; $bits as usize / 8] {
-				self.to_le_bytes()
+pub trait FromBytes<const N: usize> {
+	fn from_bytes(bytes: [u8; N]) -> Self;
+}
+
+impl<const N: usize> ToBytes<N> for [u8; N] {
+	fn to_bytes(self) -> [u8; N] {
+		self
+	}
+}
+
+impl<const N: usize> FromBytes<N> for [u8; N] {
+	fn from_bytes(bytes: [u8; N]) -> Self {
+		bytes
+	}
+}
+
+macro_rules! impl_primitive_bytes_encoding_endian {
+	($type: ty, $bytes: expr, $endian: ident, $trait_endian: ident) => {
+		paste::paste! {
+			#[allow(non_camel_case_types)]
+			struct [<$type $endian>](pub $type);
+
+			impl ToBytes<{ $bytes }> for [<$type $endian>] {
+				#[inline(always)]
+				fn to_bytes(self) -> [u8; $bytes] {
+					self.0.[<to_ $endian _bytes>]()
+				}
 			}
 
-			#[inline(always)]
-			fn to_bytes_be(self) -> [u8; $bits as usize / 8] {
-				self.to_be_bytes()
+			impl FromBytes<{ $bytes }> for [<$type $endian>] {
+				#[inline(always)]
+				fn from_bytes(bytes: [u8; $bytes]) -> Self {
+					Self($type::[<from_ $endian _bytes>](bytes))
+				}
 			}
 
-			#[inline(always)]
-			fn from_bytes_le(bytes: [u8; $bits as usize / 8]) -> Self {
-				Self::from_le_bytes(bytes)
-			}
-
-			#[inline(always)]
-			fn from_bytes_be(bytes: [u8; $bits as usize / 8]) -> Self {
-				Self::from_be_bytes(bytes)
+			impl [<$type $endian>] {
+				pub const BYTES: usize = $bytes;
 			}
 		}
 	};
 }
 
+macro_rules! impl_primitive_type {
+	($type: ty, $bits: literal) => {
+		impl_primitive_bytes_encoding_endian!($type, $bits / 8 as usize, le, LittleEndian);
+		impl_primitive_bytes_encoding_endian!($type, $bits / 8 as usize, be, BigEndian);
+	};
+}
+
+macro_rules! impl_int {
+	($bits: literal) => {
+		paste::paste! {
+			impl_primitive_type!([<i $bits>], $bits);
+			impl_primitive_type!([<u $bits>], $bits);
+		}
+	};
+}
+
 /* usize and isize omitted intentionally */
-impl_bytes_type_bits!(i8, 8);
-impl_bytes_type_bits!(u8, 8);
-impl_bytes_type_bits!(i16, 16);
-impl_bytes_type_bits!(u16, 16);
-impl_bytes_type_bits!(i32, 32);
-impl_bytes_type_bits!(u32, 32);
-impl_bytes_type_bits!(i64, 64);
-impl_bytes_type_bits!(u64, 64);
-impl_bytes_type_bits!(i128, 128);
-impl_bytes_type_bits!(u128, 128);
-impl_bytes_type_bits!(f32, 32);
-impl_bytes_type_bits!(f64, 64);
+impl_int!(8);
+impl_int!(16);
+impl_int!(32);
+impl_int!(64);
+impl_int!(128);
+impl_primitive_type!(f32, 32);
+impl_primitive_type!(f64, 64);
 
 pub struct TypedReader<Context: AsyncContext, R: BufRead<Context>> {
 	reader: R,
@@ -69,8 +93,56 @@ async fn check_eof<Context: AsyncContext>() -> Error {
 	check_interrupt().await.err().unwrap_or(eof_error())
 }
 
+macro_rules! read_num_type_endian {
+	($type: ty, $endian: ident) => {
+		paste::paste! {
+			#[inline(always)]
+			#[async_fn]
+			pub async fn [<read_ $type _ $endian>](&mut self) -> Result<Option<$type>> {
+				self.read_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>().await.map(|c| c.map(|t| t.0))
+			}
+
+			#[inline(always)]
+			#[async_fn]
+			pub async fn [<read_ $type _ $endian _or_err>](&mut self) -> Result<$type> {
+				self.[<read_ $type _ $endian>]().await?.ok_or(eof_error())
+			}
+		}
+	}
+}
+
+macro_rules! read_num_type {
+	($type: ty) => {
+		read_num_type_endian!($type, le);
+		read_num_type_endian!($type, be);
+	};
+}
+
+macro_rules! read_int {
+	($bits: literal) => {
+		paste::paste! {
+			read_num_type!([<i $bits>]);
+			read_num_type!([<u $bits>]);
+		}
+	};
+}
+
 #[async_fn]
 impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
+	read_int!(8);
+
+	read_int!(16);
+
+	read_int!(32);
+
+	read_int!(64);
+
+	read_int!(128);
+
+	read_num_type!(f32);
+
+	read_num_type!(f64);
+
 	pub fn new(reader: R) -> Self {
 		Self { reader, phantom: PhantomData }
 	}
@@ -110,34 +182,20 @@ impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
 	}
 
 	#[inline(always)]
-	pub async fn read_le<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<Option<T>> {
+	pub async fn read_type<T: FromBytes<N>, const N: usize>(&mut self) -> Result<Option<T>> {
 		/* for some llvm reason, unlikely here does the actual job of
 		 * likely, and nets a performance gain on x64
 		 */
 		Ok(if unlikely(self.reader.buffer().len() >= N) {
-			Some(T::from_bytes_le(self.read_bytes()))
+			Some(T::from_bytes(self.read_bytes()))
 		} else {
-			self.read_bytes_slow().await?.map(T::from_bytes_le)
+			self.read_bytes_slow().await?.map(T::from_bytes)
 		})
 	}
 
 	#[inline(always)]
-	pub async fn read_be<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<Option<T>> {
-		Ok(if unlikely(self.reader.buffer().len() >= N) {
-			Some(T::from_bytes_be(self.read_bytes()))
-		} else {
-			self.read_bytes_slow().await?.map(T::from_bytes_be)
-		})
-	}
-
-	#[inline(always)]
-	pub async fn read_le_or_eof<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
-		self.read_le().await?.ok_or(eof_error())
-	}
-
-	#[inline(always)]
-	pub async fn read_be_or_eof<T: BytesEncoding<N>, const N: usize>(&mut self) -> Result<T> {
-		self.read_be().await?.ok_or(eof_error())
+	pub async fn read_type_or_err<T: FromBytes<N>, const N: usize>(&mut self) -> Result<T> {
+		self.read_type().await?.ok_or(eof_error())
 	}
 }
 
@@ -213,8 +271,50 @@ impl<W: Write<Context>, Context: AsyncContext> fmt::Write
 	}
 }
 
+macro_rules! write_num_type_endian {
+	($type: ty, $endian: ident) => {
+		paste::paste! {
+			#[inline(always)]
+			#[async_fn]
+			pub async fn [<write_ $type _ $endian>](&mut self, val: $type) -> Result<usize> {
+				self.write_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>([<$type $endian>](val)).await
+			}
+		}
+	}
+}
+
+macro_rules! write_num_type {
+	($type: ty) => {
+		write_num_type_endian!($type, le);
+		write_num_type_endian!($type, be);
+	};
+}
+
+macro_rules! write_int {
+	($bits: literal) => {
+		paste::paste! {
+			write_num_type!([<i $bits>]);
+			write_num_type!([<u $bits>]);
+		}
+	};
+}
+
 #[async_fn]
 impl<Context: AsyncContext, W: Write<Context>> TypedWriter<Context, W> {
+	write_int!(8);
+
+	write_int!(32);
+
+	write_int!(16);
+
+	write_int!(64);
+
+	write_int!(128);
+
+	write_num_type!(f32);
+
+	write_num_type!(f64);
+
 	pub fn new(writer: W) -> Self {
 		Self { writer, phantom: PhantomData }
 	}
@@ -245,16 +345,9 @@ impl<Context: AsyncContext, W: Write<Context>> TypedWriter<Context, W> {
 		self.write_string(ch.encode_utf8(&mut buf)).await
 	}
 
-	/// Write the number `val`, as little endian bytes
 	#[inline(always)]
-	pub async fn write_le<T: BytesEncoding<N>, const N: usize>(&mut self, val: T) -> Result<usize> {
-		self.writer.write_all(&val.to_bytes_le()).await
-	}
-
-	/// Write the number `val`, as big endian bytes
-	#[inline(always)]
-	pub async fn write_be<T: BytesEncoding<N>, const N: usize>(&mut self, val: T) -> Result<usize> {
-		self.writer.write_all(&val.to_bytes_be()).await
+	pub async fn write_type<T: ToBytes<N>, const N: usize>(&mut self, val: T) -> Result<usize> {
+		self.writer.write_all(&val.to_bytes()).await
 	}
 }
 

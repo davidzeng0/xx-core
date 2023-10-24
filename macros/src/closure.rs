@@ -28,7 +28,6 @@ impl VisitMut for RemoveRefMut {
 #[derive(Default)]
 struct AddLifetime {
 	added_lifetimes: Vec<Lifetime>,
-	self_lifetime: Option<Lifetime>,
 	modified: bool
 }
 
@@ -87,13 +86,11 @@ impl VisitMut for AddLifetime {
 
 				reference.1 = Some(lifetime.clone());
 
-				self.self_lifetime = Some(lifetime);
 				self.modified = true;
 			}
 		} else {
 			if let Type::Reference(reference) = rec.ty.as_mut() {
 				self.visit_type_reference_mut(reference);
-				self.self_lifetime = Some(reference.lifetime.clone().unwrap());
 			} else {
 				visit_type_mut(self, rec.ty.as_mut());
 			}
@@ -101,8 +98,6 @@ impl VisitMut for AddLifetime {
 	}
 
 	fn visit_type_impl_trait_mut(&mut self, impl_trait: &mut TypeImplTrait) {
-		visit_type_impl_trait_mut(self, impl_trait);
-
 		impl_trait.bounds.push(TypeParamBound::Lifetime(
 			self.next_lifetime(impl_trait.span())
 		));
@@ -227,19 +222,10 @@ pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&mut Generics>) -
 	}
 
 	for lifetime in &op.added_lifetimes {
-		let mut bounds = quote! {};
-
 		sig.generics.params.push(parse_quote! { #lifetime });
-
-		if let Some(self_lifetime) = &op.self_lifetime {
-			if lifetime == self_lifetime {
-				bounds = quote! { + #self_bounds };
-			}
-		}
-
 		clause
 			.predicates
-			.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime #bounds });
+			.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime });
 	}
 
 	if true {
