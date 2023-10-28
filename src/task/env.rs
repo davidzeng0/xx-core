@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use crate::pointer::MutPtr;
+use super::*;
 
 /// A type that implements [`Global`] declares it
 /// as a type which can be infinitely (and simultaneously)
@@ -28,6 +28,14 @@ impl<T: Global> Boxed<T> {
 
 	pub fn get_handle(&mut self) -> Handle<T> {
 		self.data.as_mut().into()
+	}
+
+	pub unsafe fn into_raw(b: Self) -> *mut T {
+		Box::into_raw(b.data)
+	}
+
+	pub unsafe fn from_raw(raw: *mut T) -> Self {
+		Self { data: Box::from_raw(raw) }
 	}
 }
 
@@ -63,7 +71,7 @@ impl<T: Global + Sized> Handle<T> {
 }
 
 impl<T: Global + ?Sized> Handle<T> {
-	pub fn as_raw_ptr(&mut self) -> *const () {
+	pub fn as_raw_ptr(&self) -> *const () {
 		self.ptr.as_raw_ptr()
 	}
 
@@ -121,7 +129,7 @@ macro_rules! pin_local_mut {
 		let mut $var = $var;
 
 		unsafe {
-			$crate::task::env::Global::pinned(&mut $var);
+			$crate::task::Global::pinned(&mut $var);
 		}
 	};
 }

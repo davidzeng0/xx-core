@@ -14,7 +14,7 @@ impl VisitMut for ReplaceSelf {
 	}
 }
 
-struct RemoveRefMut;
+pub struct RemoveRefMut;
 
 impl VisitMut for RemoveRefMut {
 	fn visit_pat_ident_mut(&mut self, ident: &mut PatIdent) {
@@ -132,7 +132,7 @@ impl VisitMut for AddLifetime {
 }
 
 /// See https://github.com/danielhenrymantilla/fix_hidden_lifetime_bug.rs
-fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&mut Generics>) -> TokenStream {
+fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&Generics>) -> TokenStream {
 	let mut addl_bounds = Punctuated::<TypeParamBound, Token![+]>::new();
 
 	if let Some(generics) = env_generics {
@@ -143,8 +143,9 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&mut Generics>
 				GenericParam::Lifetime(param) => {
 					let lifetime = &param.lifetime;
 
-					addl_bounds
-						.push(parse_quote! { xx_core::closure::lifetime::Captures<#lifetime> });
+					addl_bounds.push(
+						parse_quote! { xx_core::macros::closure::lifetime::Captures<#lifetime> }
+					);
 				}
 			}
 		}
@@ -155,7 +156,8 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&mut Generics>
 		let lifetime = &param.lifetime;
 
 		if lifetime != &closure_lifetime() {
-			addl_bounds.push(parse_quote! { xx_core::closure::lifetime::Captures<#lifetime> });
+			addl_bounds
+				.push(parse_quote! { xx_core::macros::closure::lifetime::Captures<#lifetime> });
 		}
 	}
 
@@ -178,7 +180,7 @@ impl VisitMut for ReturnLifetime {
 	}
 }
 
-pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&mut Generics>) -> TokenStream {
+pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&Generics>) -> TokenStream {
 	let mut op = AddLifetime::default();
 
 	for arg in &mut sig.inputs {
@@ -282,8 +284,8 @@ fn make_args(
 	(quote! { #(#args),* }, quote! { #(#args_types),* })
 }
 
-pub fn into_closure(
-	attrs: &mut Vec<Attribute>, env_generics: &Option<&mut Generics>, sig: &mut Signature,
+pub fn into_typed_closure(
+	attrs: &mut Vec<Attribute>, env_generics: &Option<&Generics>, sig: &mut Signature,
 	block: Option<&mut Block>, args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
 	closure_type: TokenStream, transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
 ) -> Result<TokenStream> {
@@ -347,8 +349,8 @@ pub fn into_closure(
 	Ok(closure_return_type)
 }
 
-pub fn into_basic_closure(
-	_: &mut Vec<Attribute>, env_generics: &Option<&mut Generics>, sig: &mut Signature,
+pub fn into_opaque_closure(
+	_: &mut Vec<Attribute>, env_generics: &Option<&Generics>, sig: &mut Signature,
 	block: Option<&mut Block>, args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
 	transform_return: impl Fn(TokenStream) -> TokenStream,
 	wrap: Option<impl Fn(TokenStream) -> (TokenStream, TokenStream)>

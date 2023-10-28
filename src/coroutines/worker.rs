@@ -1,5 +1,5 @@
-use super::executor::Executor;
-use crate::{fiber::*, task::*};
+use super::*;
+use crate::fiber::*;
 
 /// A worker thread capable of running async operations via fibers
 pub struct Worker {
@@ -14,7 +14,7 @@ impl Worker {
 	}
 
 	pub fn new(executor: Handle<Executor>, start: Start) -> Self {
-		Self::from_fiber(executor, Fiber::new(start))
+		Self::from_fiber(executor, Fiber::new_with_start(start))
 	}
 
 	pub fn from_fiber(executor: Handle<Executor>, fiber: Fiber) -> Self {
@@ -26,19 +26,19 @@ impl Worker {
 	}
 
 	/// The worker that `self` will resume to when suspending
-	pub(crate) fn from(&self) -> Handle<Worker> {
+	pub(super) fn from(&self) -> Handle<Worker> {
 		self.from
 	}
 
-	pub(crate) fn set_resume_to(&mut self, from: Handle<Worker>) {
+	pub(super) fn set_resume_to(&mut self, from: Handle<Worker>) {
 		self.from = from;
 	}
 
-	pub(crate) fn inner(&mut self) -> &mut Fiber {
+	pub(super) fn inner(&mut self) -> &mut Fiber {
 		&mut self.fiber
 	}
 
-	pub(crate) fn into_inner(self) -> Fiber {
+	pub(super) fn into_inner(self) -> Fiber {
 		self.fiber
 	}
 

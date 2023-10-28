@@ -1,11 +1,11 @@
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{visit_mut::VisitMut, *};
 
-use crate::{closure::*, transform::transform_fn};
+use super::{make_closure::*, transform::*};
 
 fn transform_func(
-	_: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&mut Generics>, sig: &mut Signature,
+	_: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&Generics>, sig: &mut Signature,
 	block: Option<&mut Block>
 ) -> Result<()> {
 	attrs.push(parse_quote!( #[must_use] ));
@@ -23,7 +23,7 @@ fn transform_func(
 	let default_cancel_capture = make_tuple_type(default_cancel_capture);
 
 	let mut cancel_closure_type = quote! {
-		xx_core::task::closure::CancelClosure<#default_cancel_capture>
+		xx_core::task::CancelClosure<#default_cancel_capture>
 	};
 
 	let block = if let Some(block) = block {
@@ -34,15 +34,15 @@ fn transform_func(
 						request: xx_core::task::RequestPtr<#return_type>
 					});
 
-					cancel_closure_type = into_closure(
+					cancel_closure_type = into_typed_closure(
 						&mut func.attrs,
 						&env_generics,
 						&mut func.sig,
 						Some(&mut func.block),
 						vec![quote! { () }],
 						vec![quote! { () }],
-						quote! { xx_core::task::closure::CancelClosure },
-						|capture, _| quote! { xx_core::task::closure::CancelClosure<#capture> }
+						quote! { xx_core::task::CancelClosure },
+						|capture, _| quote! { xx_core::task::CancelClosure<#capture> }
 					)?;
 
 					let inputs = func.sig.inputs.clone();
@@ -67,7 +67,7 @@ fn transform_func(
 		-> xx_core::task::Progress<#return_type, #cancel_closure_type>
 	};
 
-	into_basic_closure(
+	into_opaque_closure(
 		attrs,
 		&env_generics,
 		sig,
@@ -77,8 +77,8 @@ fn transform_func(
 		|_| quote! { xx_core::task::Progress<#return_type, #cancel_closure_type> },
 		Some(|_| {
 			(
-				quote! { xx_core::task::Task<#return_type, #cancel_closure_type> },
-				quote! { xx_core::task::closure::TaskClosureWrap }
+				quote! { xx_core::task::Task<Output = #return_type, Cancel = #cancel_closure_type> },
+				quote! { xx_core::task::TaskClosureWrap }
 			)
 		})
 	)?;
@@ -148,6 +148,6 @@ fn transform_func(
 pub fn sync_task(_: TokenStream, item: TokenStream) -> TokenStream {
 	match transform_fn(item, transform_func) {
 		Ok(ts) => ts,
-		Err(err) => err.to_compile_error().into()
+		Err(err) => err.to_compile_error()
 	}
 }

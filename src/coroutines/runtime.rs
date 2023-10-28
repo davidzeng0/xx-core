@@ -1,29 +1,26 @@
 use super::*;
-use crate::{error::*, opt::hint::unlikely, task::*, xx_core};
 
 #[async_fn]
 #[inline(always)]
-pub async fn get_context<Context: AsyncContext>() -> Handle<Context> {
+pub async fn get_context() -> Handle<Context> {
 	__xx_internal_async_context
 }
 
 #[async_fn]
 #[inline(always)]
-pub async fn block_on<Context: AsyncContext, T: Task<Output, C>, C: Cancel, Output>(
-	task: T
-) -> Output {
+pub async fn block_on<T: SyncTask>(task: T) -> T::Output {
 	get_context().await.block_on(task)
 }
 
 #[async_fn]
 #[inline(always)]
-pub async fn is_interrupted<Context: AsyncContext>() -> bool {
+pub async fn is_interrupted() -> bool {
 	get_context().await.interrupted()
 }
 
 #[async_fn]
 #[inline(always)]
-pub async fn check_interrupt<Context: AsyncContext>() -> Result<()> {
+pub async fn check_interrupt() -> Result<()> {
 	if unlikely(get_context().await.interrupted()) {
 		Err(Error::interrupted())
 	} else {
@@ -33,7 +30,7 @@ pub async fn check_interrupt<Context: AsyncContext>() -> Result<()> {
 
 #[async_fn]
 #[inline(always)]
-pub async fn take_interrupt<Context: AsyncContext>() -> bool {
+pub async fn take_interrupt() -> bool {
 	let mut context = get_context().await;
 	let interrupted = context.interrupted();
 
@@ -46,29 +43,11 @@ pub async fn take_interrupt<Context: AsyncContext>() -> bool {
 
 #[async_fn]
 #[inline(always)]
-pub async fn check_interrupt_take<Context: AsyncContext>() -> Result<()> {
+pub async fn check_interrupt_take() -> Result<()> {
 	if unlikely(take_interrupt().await) {
 		Err(Error::interrupted())
 	} else {
 		Ok(())
-	}
-}
-
-pub struct InterruptGuard<Context: AsyncContext> {
-	context: Handle<Context>
-}
-
-impl<Context: AsyncContext> InterruptGuard<Context> {
-	fn new(mut context: Handle<Context>) -> Self {
-		context.interrupt_guard(1);
-
-		Self { context }
-	}
-}
-
-impl<Context: AsyncContext> Drop for InterruptGuard<Context> {
-	fn drop(&mut self) {
-		self.context.interrupt_guard(-1);
 	}
 }
 
@@ -77,6 +56,6 @@ impl<Context: AsyncContext> Drop for InterruptGuard<Context> {
 /// While this guard is held, any attempt to interrupt
 /// the current context will be ignored
 #[async_fn]
-pub async fn interrupt_guard<Context: AsyncContext>() -> InterruptGuard<Context> {
+pub async fn interrupt_guard() -> InterruptGuard {
 	InterruptGuard::new(get_context().await)
 }

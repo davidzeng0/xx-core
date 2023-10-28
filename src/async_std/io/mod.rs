@@ -1,46 +1,64 @@
-pub mod buf_reader;
 use std::str::from_utf8;
 
+mod buf_reader;
 pub use buf_reader::*;
-pub mod buf_writer;
+mod buf_writer;
 pub use buf_writer::*;
 
-pub mod read;
+mod read;
 pub use read::*;
-pub mod write;
+mod write;
 pub use write::*;
-pub mod seek;
+mod seek;
 pub use seek::*;
-pub mod close;
-pub use close::*;
-pub mod split;
+mod split;
 pub use split::*;
 
-pub mod typed;
+mod typed;
+use std::{
+	io::{IoSlice, IoSliceMut, SeekFrom},
+	marker::PhantomData,
+	ptr::copy
+};
+
 pub use typed::*;
 
-use crate::{coroutines::*, error::*, opt::hint::unlikely, xx_core};
+use super::*;
+use crate::{coroutines::*, error::*, opt::hint::*};
 
 pub const DEFAULT_BUFFER_SIZE: usize = 16384;
+
+pub fn invalid_utf8_error() -> Error {
+	Error::new(ErrorKind::InvalidData, "invalid UTF-8 found in stream")
+}
 
 pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	if from_utf8(buf).is_ok() {
 		Ok(())
 	} else {
-		Err(Error::new(
-			ErrorKind::InvalidData,
-			"invalid UTF-8 found in stream"
-		))
+		Err(invalid_utf8_error())
 	}
 }
 
 #[async_fn]
-pub async fn check_interrupt_if_zero<Context: AsyncContext>(len: usize) -> Result<usize> {
+pub async fn check_interrupt_if_zero(len: usize) -> Result<usize> {
 	if unlikely(len == 0) {
 		check_interrupt().await?;
 	}
 
 	Ok(len)
+}
+
+pub fn unexpected_end_of_stream() -> Error {
+	Error::new(ErrorKind::UnexpectedEof, "Unexpected end of stream")
+}
+
+#[async_fn]
+pub async fn short_io_error() -> Error {
+	check_interrupt()
+		.await
+		.err()
+		.unwrap_or_else(|| unexpected_end_of_stream())
 }
 
 #[macro_export]

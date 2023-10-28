@@ -6,7 +6,7 @@ use super::{
 	os::{mman::*, resource::*},
 	sysdep::import_sysdeps
 };
-use crate::{pointer::*, task::env::Handle};
+use crate::{pointer::*, task::Handle};
 
 import_sysdeps!();
 
@@ -25,8 +25,8 @@ pub struct Fiber {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Start {
-	pub(crate) start: usize,
-	pub(crate) arg: *const ()
+	start: usize,
+	arg: *const ()
 }
 
 impl Start {
@@ -52,10 +52,10 @@ impl Start {
 /// and A's intercept can be written on the stack
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct Intercept {
-	pub intercept: usize,
-	pub arg: *const (),
-	pub ret: usize
+struct Intercept {
+	intercept: usize,
+	arg: *const (),
+	ret: usize
 }
 
 extern "C" fn exit_fiber(arg: *const ()) {
@@ -79,8 +79,8 @@ impl Fiber {
 		Fiber { context: Context::new(), stack: MemoryMap::new() }
 	}
 
-	pub fn new(start: Start) -> Self {
-		let mut this = Self {
+	pub fn new() -> Self {
+		Self {
 			context: Context::new(),
 			stack: map_memory(
 				0,
@@ -91,7 +91,11 @@ impl Fiber {
 				0
 			)
 			.unwrap()
-		};
+		}
+	}
+
+	pub fn new_with_start(start: Start) -> Self {
+		let mut this = Self::new();
 
 		unsafe {
 			this.set_start(start);

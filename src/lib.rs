@@ -11,6 +11,8 @@ pub mod pointer;
 pub mod sysdep;
 pub mod task;
 
+pub use macros::*;
+
 pub mod xx_core {
 	pub use super::*;
 }

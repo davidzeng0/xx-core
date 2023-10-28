@@ -1,10 +1,8 @@
-use std::io::SeekFrom;
+use super::*;
 
-use crate::{async_std::ext::ext_func, coroutines::*, error::Result, xx_core};
-
-#[async_trait_fn]
-pub trait Seek<Context: AsyncContext> {
-	async fn async_seek(&mut self, seek: SeekFrom) -> Result<u64>;
+#[async_trait]
+pub trait Seek {
+	async fn seek(&mut self, seek: SeekFrom) -> Result<u64>;
 
 	/// Whether or not stream length can be calculated without an
 	/// expensive I/O operation
@@ -13,7 +11,7 @@ pub trait Seek<Context: AsyncContext> {
 	}
 
 	/// Get the length of the stream in bytes
-	async fn async_stream_len(&mut self) -> Result<u64> {
+	async fn stream_len(&mut self) -> Result<u64> {
 		let old_pos = self.stream_position().await?;
 		let len = self.seek(SeekFrom::End(0)).await?;
 
@@ -31,34 +29,58 @@ pub trait Seek<Context: AsyncContext> {
 	}
 
 	/// Get the position in the stream in bytes
-	async fn async_stream_position(&mut self) -> Result<u64> {
+	async fn stream_position(&mut self) -> Result<u64> {
 		self.seek(SeekFrom::Current(0)).await
 	}
-}
 
-pub trait SeekExt<Context: AsyncContext>: Seek<Context> {
-	ext_func!(seek(self: &mut Self, seek: SeekFrom) -> Result<u64>);
-
-	ext_func!(stream_len(self: &mut Self) -> Result<u64>);
-
-	ext_func!(stream_position(self: &mut Self) -> Result<u64>);
-
-	#[async_trait_impl]
 	async fn rewind(&mut self) -> Result<()> {
 		self.seek(SeekFrom::Start(0)).await?;
 
 		Ok(())
 	}
 
-	#[async_trait_impl]
 	async fn rewind_exact(&mut self, amount: i64) -> Result<u64> {
 		self.seek(SeekFrom::Current(-amount)).await
 	}
 
-	#[async_trait_impl]
 	async fn skip_exact(&mut self, amount: i64) -> Result<u64> {
 		self.seek(SeekFrom::Current(amount)).await
 	}
 }
 
-impl<Context: AsyncContext, T: ?Sized + Seek<Context>> SeekExt<Context> for T {}
+#[macro_export]
+macro_rules! seek_wrapper {
+	{
+		inner = $inner: expr;
+		mut inner = $inner_mut: expr;
+	} => {
+		$crate::macros::wrapper_functions! {
+			inner = self.$inner;
+			mut inner = self.$inner_mut;
+
+			#[async_trait_impl]
+			async fn seek(&mut self, seek: std::io::SeekFrom) -> Result<u64>;
+
+			#[async_trait_impl]
+			fn stream_len_fast(&self) -> bool;
+
+			#[async_trait_impl]
+			async fn stream_len(&mut self) -> Result<u64>;
+
+			#[async_trait_impl]
+			fn stream_position_fast(&self) -> bool;
+
+			#[async_trait_impl]
+			async fn stream_position(&mut self) -> Result<u64>;
+
+			#[async_trait_impl]
+			async fn rewind(&mut self) -> Result<()>;
+
+			#[async_trait_impl]
+			async fn rewind_exact(&mut self, amount: i64) -> Result<u64>;
+
+			#[async_trait_impl]
+			async fn skip_exact(&mut self, amount: i64) -> Result<u64>;
+		}
+	}
+}

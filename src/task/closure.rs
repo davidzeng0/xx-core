@@ -1,12 +1,15 @@
 use super::*;
-use crate::{closure::*, error::Result};
+use crate::closure::*;
 
 pub type TaskClosureWrap<Inner, Output, Cancel> =
 	ClosureWrap<Inner, RequestPtr<Output>, Progress<Output, Cancel>>;
 
-unsafe impl<Inner: FnOnce(RequestPtr<Output>) -> Progress<Output, C>, Output, C: Cancel>
-	Task<Output, C> for TaskClosureWrap<Inner, Output, C>
+unsafe impl<Inner: FnOnce(RequestPtr<Output>) -> Progress<Output, C>, Output, C: Cancel> Task
+	for TaskClosureWrap<Inner, Output, C>
 {
+	type Cancel = C;
+	type Output = Output;
+
 	#[inline(always)]
 	unsafe fn run(self, request: RequestPtr<Output>) -> Progress<Output, C> {
 		self.call(request)

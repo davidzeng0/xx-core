@@ -1,31 +1,30 @@
 use proc_macro::TokenStream;
 
-mod async_fn;
+mod async_trait;
 mod closure;
-mod sync_task;
-mod transform;
+mod wrap_function;
 
 #[proc_macro_attribute]
 pub fn sync_task(attr: TokenStream, item: TokenStream) -> TokenStream {
-	sync_task::sync_task(attr, item)
+	closure::sync_task(attr.into(), item.into()).into()
 }
 
 #[proc_macro_attribute]
 pub fn async_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
-	async_fn::async_fn(attr, item)
+	closure::async_fn(attr.into(), item.into()).into()
 }
 
 #[proc_macro_attribute]
-pub fn async_fn_typed(attr: TokenStream, item: TokenStream) -> TokenStream {
-	async_fn::async_fn_typed(attr, item)
+pub fn async_trait(attr: TokenStream, item: TokenStream) -> TokenStream {
+	async_trait::async_trait(attr.into(), item.into()).into()
 }
 
 #[proc_macro_attribute]
-pub fn async_fn_no_closure(attr: TokenStream, item: TokenStream) -> TokenStream {
-	async_fn::async_fn_no_closure(attr, item)
+pub fn async_trait_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
+	async_trait::async_trait_impl(attr.into(), item.into()).into()
 }
 
-#[proc_macro_attribute]
-pub fn async_fn_full(attr: TokenStream, item: TokenStream) -> TokenStream {
-	async_fn::async_fn_full(attr, item)
+#[proc_macro]
+pub fn wrapper_functions(item: TokenStream) -> TokenStream {
+	wrap_function::wrapper_functions(item.into()).into()
 }

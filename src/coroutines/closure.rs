@@ -1,22 +1,22 @@
-use super::{env::AsyncContext, task::AsyncTask};
-use crate::{closure::*, task::env::Handle};
+use super::*;
+use crate::closure;
 
-pub type AsyncClosureWrap<Inner, Context, Output> = ClosureWrap<Inner, Handle<Context>, Output>;
+pub type ClosureWrap<Inner, Output> = closure::ClosureWrap<Inner, Handle<Context>, Output>;
 
-impl<Inner: FnOnce(Handle<Context>) -> Output, Context: AsyncContext, Output>
-	AsyncTask<Context, Output> for AsyncClosureWrap<Inner, Context, Output>
-{
+impl<Inner: FnOnce(Handle<Context>) -> Output, Output> Task for ClosureWrap<Inner, Output> {
+	type Output = Output;
+
 	#[inline(always)]
 	fn run(self, context: Handle<Context>) -> Output {
 		self.call(context)
 	}
 }
 
-pub type AsyncClosure<Context, Capture, Output> = Closure<Capture, Handle<Context>, Output>;
+pub type Closure<Capture, Output> = closure::Closure<Capture, Handle<Context>, Output>;
 
-impl<Context: AsyncContext, Capture, Output> AsyncTask<Context, Output>
-	for AsyncClosure<Context, Capture, Output>
-{
+impl<Capture, Output> Task for Closure<Capture, Output> {
+	type Output = Output;
+
 	#[inline(always)]
 	fn run(self, context: Handle<Context>) -> Output {
 		self.call(context)

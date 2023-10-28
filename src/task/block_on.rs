@@ -1,7 +1,6 @@
 use std::mem::{ManuallyDrop, MaybeUninit};
 
 use super::*;
-use crate::pointer::*;
 
 type ResumeArg<Resume, Output> = (ManuallyDrop<Resume>, MaybeUninit<Output>);
 
@@ -16,15 +15,15 @@ fn block_resume<Resume: FnOnce(), Output>(_: RequestPtr<Output>, arg: *const (),
 
 /// Safety: memory leak if `resume` is not called
 #[inline]
-pub fn block_on<Block: FnOnce(C), Resume: FnOnce(), T: Task<Output, C>, C: Cancel, Output>(
+pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Task>(
 	block: Block, resume: Resume, task: T
-) -> Output {
-	let mut arg: ResumeArg<Resume, Output> = (ManuallyDrop::new(resume), MaybeUninit::uninit());
+) -> T::Output {
+	let mut arg: ResumeArg<Resume, T::Output> = (ManuallyDrop::new(resume), MaybeUninit::uninit());
 
 	unsafe {
 		let request = Request::new(
 			MutPtr::from(&mut arg).as_raw_ptr(),
-			block_resume::<Resume, Output>
+			block_resume::<Resume, T::Output>
 		);
 
 		match task.run(ConstPtr::from(&request)) {

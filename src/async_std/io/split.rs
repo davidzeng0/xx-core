@@ -1,8 +1,8 @@
-use super::{Read, ReadRef, Write, WriteRef};
-use crate::{coroutines::*, pointer::MutPtr};
+use super::*;
+use crate::pointer::MutPtr;
 
-pub trait Split<Context: AsyncContext>: Read<Context> + Write<Context> {
-	fn split(&mut self) -> (ReadRef<'_, Context, Self>, WriteRef<'_, Context, Self>) {
+pub trait Split: Read + Write {
+	fn split(&mut self) -> (ReadRef<'_, Self>, WriteRef<'_, Self>) {
 		let mut this = MutPtr::from(self);
 
 		(ReadRef::new(this.as_mut()), WriteRef::new(this.as_mut()))

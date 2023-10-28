@@ -1,9 +1,9 @@
 pub use crate::macros::sync_task;
-use crate::{error::Result, pointer::ConstPtr};
+use crate::{error::*, pointer::*};
 
-pub mod block_on;
-pub mod closure;
-pub mod env;
+mod block_on;
+mod closure;
+mod env;
 
 pub use block_on::*;
 pub use closure::*;
@@ -89,12 +89,15 @@ pub enum Progress<Output, C: Cancel> {
 	Done(Output)
 }
 
-pub unsafe trait Task<Output, C: Cancel = NoOpCancel> {
+pub unsafe trait Task {
+	type Output;
+	type Cancel: Cancel;
+
 	/// Run the task
 	///
 	/// The user is responsible for ensuring any pointers/references passed
 	/// to the task stays alive until the callback is called.
 	///
 	/// Which pointers need to stay valid will depend on the implementation
-	unsafe fn run(self, request: RequestPtr<Output>) -> Progress<Output, C>;
+	unsafe fn run(self, request: RequestPtr<Self::Output>) -> Progress<Self::Output, Self::Cancel>;
 }

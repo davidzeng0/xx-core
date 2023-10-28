@@ -1,19 +1,13 @@
-use self::ext::ext_func;
-use crate::{coroutines::*, xx_core};
-
-mod ext;
+use crate::{
+	macros::{async_fn, async_trait, async_trait_impl},
+	xx_core
+};
 
 pub mod io;
 
-pub trait AsyncIterator<Context: AsyncContext> {
+#[async_trait]
+pub trait AsyncIterator {
 	type Item;
 
-	#[async_trait_fn]
-	async fn async_next(&mut self) -> Option<Self::Item>;
+	async fn next(&mut self) -> Option<Self::Item>;
 }
-
-pub trait AsyncIteratorExt<Context: AsyncContext>: AsyncIterator<Context> {
-	ext_func!(next(self: &mut Self) -> Option<Self::Item>);
-}
-
-impl<Context: AsyncContext, T: AsyncIterator<Context>> AsyncIteratorExt<Context> for T {}

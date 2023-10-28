@@ -1,11 +1,8 @@
-use std::{io::SeekFrom, marker::PhantomData, ptr::copy};
-
 use memchr::memchr;
 
 use super::*;
-use crate::{coroutines::*, error::Result, opt::hint::*, xx_core};
 
-pub struct BufReader<Context: AsyncContext, R: Read<Context>> {
+pub struct BufReader<R: Read> {
 	inner: R,
 
 	buf: Vec<u8>,
@@ -15,7 +12,7 @@ pub struct BufReader<Context: AsyncContext, R: Read<Context>> {
 }
 
 #[async_fn]
-impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
+impl<R: Read> BufReader<R> {
 	/// Reads from our internal buffer into `buf`
 	#[inline]
 	fn read_into(&mut self, buf: &mut [u8]) -> usize {
@@ -90,10 +87,10 @@ impl<Context: AsyncContext, R: Read<Context>> BufReader<Context, R> {
 	}
 }
 
-#[async_trait_fn]
-impl<Context: AsyncContext, R: Read<Context>> Read<Context> for BufReader<Context, R> {
+#[async_trait_impl]
+impl<R: Read> Read for BufReader<R> {
 	#[inline]
-	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
+	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		if likely(self.buf.len() != self.pos) {
 			return Ok(self.read_into(buf));
 		}
@@ -110,9 +107,9 @@ impl<Context: AsyncContext, R: Read<Context>> Read<Context> for BufReader<Contex
 	}
 }
 
-#[async_trait_fn]
-impl<Context: AsyncContext, R: Read<Context>> BufRead<Context> for BufReader<Context, R> {
-	async fn async_fill_amount(&mut self, amount: usize) -> Result<usize> {
+#[async_trait_impl]
+impl<R: Read> BufRead for BufReader<R> {
+	async fn fill_amount(&mut self, amount: usize) -> Result<usize> {
 		let amount = amount.min(self.buf.capacity());
 		let mut end = self.pos + amount;
 
@@ -120,11 +117,15 @@ impl<Context: AsyncContext, R: Read<Context>> BufRead<Context> for BufReader<Con
 			return Ok(0);
 		}
 
-		if unlikely(end >= self.buf.capacity()) {
+		if unlikely(end > self.buf.capacity()) {
 			end = self.buf.capacity();
 
 			if self.pos != 0 {
-				self.move_data_to_beginning();
+				if self.buffer().len() == 0 {
+					self.discard();
+				} else {
+					self.move_data_to_beginning();
+				}
 			} else if self.buf.len() == end {
 				return Ok(0);
 			}
@@ -133,7 +134,7 @@ impl<Context: AsyncContext, R: Read<Context>> BufRead<Context> for BufReader<Con
 		self.fill_buf_offset(self.buf.len(), end).await
 	}
 
-	async fn async_read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
+	async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
 		let start_len = buf.len();
 
 		loop {
@@ -195,12 +196,12 @@ impl<Context: AsyncContext, R: Read<Context>> BufRead<Context> for BufReader<Con
 	}
 
 	unsafe fn consume_unchecked(&mut self, count: usize) {
-		self.pos += count;
+		self.pos = self.pos.wrapping_add(count);
 	}
 }
 
 #[async_fn]
-impl<Context: AsyncContext, R: Read<Context> + Seek<Context>> BufReader<Context, R> {
+impl<R: Read + Seek> BufReader<R> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
 		let pos = rel.wrapping_add_unsigned(self.pos as u64);
 
@@ -221,15 +222,13 @@ impl<Context: AsyncContext, R: Read<Context> + Seek<Context>> BufReader<Context,
 	}
 }
 
-#[async_trait_fn]
-impl<Context: AsyncContext, R: Read<Context> + Seek<Context>> Seek<Context>
-	for BufReader<Context, R>
-{
+#[async_trait_impl]
+impl<R: Read + Seek> Seek for BufReader<R> {
 	fn stream_len_fast(&self) -> bool {
 		self.inner.stream_len_fast()
 	}
 
-	async fn async_stream_len(&mut self) -> Result<u64> {
+	async fn stream_len(&mut self) -> Result<u64> {
 		self.inner.stream_len().await
 	}
 
@@ -237,14 +236,14 @@ impl<Context: AsyncContext, R: Read<Context> + Seek<Context>> Seek<Context>
 		self.inner.stream_position_fast()
 	}
 
-	async fn async_stream_position(&mut self) -> Result<u64> {
+	async fn stream_position(&mut self) -> Result<u64> {
 		let pos = self.inner.stream_position().await?;
 		let remaining = self.buf.len() - self.pos;
 
 		Ok(pos - remaining as u64)
 	}
 
-	async fn async_seek(&mut self, seek: SeekFrom) -> Result<u64> {
+	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		match seek {
 			SeekFrom::Current(pos) => self.seek_relative(pos).await,
 			SeekFrom::Start(pos) => {
@@ -263,21 +262,12 @@ impl<Context: AsyncContext, R: Read<Context> + Seek<Context>> Seek<Context>
 					return self.seek_inner(seek).await;
 				}
 
-				let pos = self.stream_len().await?.checked_add_signed(pos).unwrap() as i64;
+				let pos = self.stream_len().await?.checked_add_signed(pos).unwrap();
 				let stream_pos = self.stream_position().await?;
 
-				self.seek_relative(pos.wrapping_sub(stream_pos as i64))
+				self.seek_relative(pos.wrapping_sub(stream_pos) as i64)
 					.await
 			}
 		}
-	}
-}
-
-#[async_trait_fn]
-impl<Context: AsyncContext, R: Read<Context> + Close<Context>> Close<Context>
-	for BufReader<Context, R>
-{
-	async fn async_close(self) -> Result<()> {
-		self.inner.close().await
 	}
 }

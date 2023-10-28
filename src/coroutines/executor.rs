@@ -1,5 +1,5 @@
-use super::worker::Worker;
-use crate::{fiber::*, task::*};
+use super::*;
+use crate::fiber::*;
 
 /// Per thread executor, responsible for running worker threads
 pub struct Executor {
@@ -32,7 +32,7 @@ impl Executor {
 	/// Workers move themselves onto their own stack when
 	/// they get started. We have to update our current reference
 	/// when they get moved and pinned
-	pub(crate) fn worker_pinned(&mut self, worker: Handle<Worker>) {
+	pub(super) fn worker_pinned(&mut self, worker: Handle<Worker>) {
 		self.current = worker;
 	}
 
@@ -40,7 +40,7 @@ impl Executor {
 	///
 	/// Safety: the passed `worker` must be the current worker running
 	#[inline(always)]
-	pub unsafe fn suspend(&mut self, mut worker: Handle<Worker>) {
+	pub(super) unsafe fn suspend(&mut self, mut worker: Handle<Worker>) {
 		self.current = worker.from();
 
 		worker.inner().switch(self.current.inner());
@@ -51,7 +51,7 @@ impl Executor {
 	/// Safety: the passed `worker` must not exist on the worker call stack
 	/// Workers cannot resume each other recursively
 	#[inline(always)]
-	pub unsafe fn resume(&mut self, mut worker: Handle<Worker>) {
+	pub(super) unsafe fn resume(&mut self, mut worker: Handle<Worker>) {
 		let mut previous = self.current;
 
 		self.current = worker;
@@ -63,14 +63,14 @@ impl Executor {
 	/// Start a new worker
 	///
 	/// Safety: same as resume
-	pub unsafe fn start(&mut self, worker: Handle<Worker>) {
+	pub(super) unsafe fn start(&mut self, worker: Handle<Worker>) {
 		self.resume(worker);
 	}
 
 	/// Exit the worker and drop its stack
 	///
 	/// Safety: same as resume
-	pub unsafe fn exit(&mut self, worker: Worker) {
+	pub(super) unsafe fn exit(&mut self, worker: Worker) {
 		self.current = worker.from();
 
 		if self.pool.is_null() {

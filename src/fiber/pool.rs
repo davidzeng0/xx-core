@@ -20,18 +20,18 @@ impl Pool {
 		self.count += 1;
 
 		match pool.pop() {
-			None => {
-				trace!(target: self, "== Creating stack for worker");
-
-				Fiber::new(start)
-			}
-
 			Some(mut fiber) => {
 				trace!(target: self, "== Reusing stack for worker");
 
 				unsafe { fiber.set_start(start) }
 
 				return fiber;
+			}
+
+			None => {
+				trace!(target: self, "== Creating stack for worker");
+
+				Fiber::new_with_start(start)
 			}
 		}
 	}

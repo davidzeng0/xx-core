@@ -1,11 +1,11 @@
 use std::{
 	fmt::{self, Arguments},
-	marker::PhantomData,
+	mem::size_of,
 	ops::{Deref, DerefMut}
 };
 
-use super::{BufRead, ReadExt, Write, WriteExt};
-use crate::{coroutines::*, error::*, opt::hint::*, task::Handle, xx_core};
+use super::*;
+use crate::task::Handle;
 
 pub trait ToBytes<const N: usize> {
 	fn to_bytes(self) -> [u8; N];
@@ -28,27 +28,27 @@ impl<const N: usize> FromBytes<N> for [u8; N] {
 }
 
 macro_rules! impl_primitive_bytes_encoding_endian {
-	($type: ty, $bytes: expr, $endian: ident, $trait_endian: ident) => {
+	($type: ty, $endian: ident, $trait_endian: ident) => {
 		paste::paste! {
 			#[allow(non_camel_case_types)]
 			struct [<$type $endian>](pub $type);
 
-			impl ToBytes<{ $bytes }> for [<$type $endian>] {
+			impl ToBytes<{ size_of::<$type>() }> for [<$type $endian>] {
 				#[inline(always)]
-				fn to_bytes(self) -> [u8; $bytes] {
+				fn to_bytes(self) -> [u8; size_of::<$type>()] {
 					self.0.[<to_ $endian _bytes>]()
 				}
 			}
 
-			impl FromBytes<{ $bytes }> for [<$type $endian>] {
+			impl FromBytes<{ size_of::<$type>() }> for [<$type $endian>] {
 				#[inline(always)]
-				fn from_bytes(bytes: [u8; $bytes]) -> Self {
+				fn from_bytes(bytes: [u8; size_of::<$type>()]) -> Self {
 					Self($type::[<from_ $endian _bytes>](bytes))
 				}
 			}
 
 			impl [<$type $endian>] {
-				pub const BYTES: usize = $bytes;
+				pub const BYTES: usize = size_of::<$type>();
 			}
 		}
 	};
@@ -56,8 +56,10 @@ macro_rules! impl_primitive_bytes_encoding_endian {
 
 macro_rules! impl_primitive_type {
 	($type: ty, $bits: literal) => {
-		impl_primitive_bytes_encoding_endian!($type, $bits / 8 as usize, le, LittleEndian);
-		impl_primitive_bytes_encoding_endian!($type, $bits / 8 as usize, be, BigEndian);
+		paste::paste! {
+			impl_primitive_bytes_encoding_endian!($type, le, LittleEndian);
+			impl_primitive_bytes_encoding_endian!($type, be, BigEndian);
+		}
 	};
 }
 
@@ -79,33 +81,23 @@ impl_int!(128);
 impl_primitive_type!(f32, 32);
 impl_primitive_type!(f64, 64);
 
-pub struct TypedReader<Context: AsyncContext, R: BufRead<Context>> {
-	reader: R,
-	phantom: PhantomData<Context>
-}
-
-fn eof_error() -> Error {
-	Error::new(ErrorKind::UnexpectedEof, "Unexpected end of stream")
-}
-
-#[async_fn]
-async fn check_eof<Context: AsyncContext>() -> Error {
-	check_interrupt().await.err().unwrap_or(eof_error())
+pub struct TypedReader<R: BufRead> {
+	reader: R
 }
 
 macro_rules! read_num_type_endian {
-	($type: ty, $endian: ident) => {
+	($type: ty, $endian_type: ty, $endian: ident) => {
 		paste::paste! {
 			#[inline(always)]
 			#[async_fn]
-			pub async fn [<read_ $type _ $endian>](&mut self) -> Result<Option<$type>> {
+			pub async fn [<read_ $endian_type>](&mut self) -> Result<Option<$type>> {
 				self.read_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>().await.map(|c| c.map(|t| t.0))
 			}
 
 			#[inline(always)]
 			#[async_fn]
-			pub async fn [<read_ $type _ $endian _or_err>](&mut self) -> Result<$type> {
-				self.[<read_ $type _ $endian>]().await?.ok_or(eof_error())
+			pub async fn [<read_ $endian_type _or_err>](&mut self) -> Result<$type> {
+				self.[<read_ $endian_type>]().await?.ok_or_else(|| unexpected_end_of_stream())
 			}
 		}
 	}
@@ -113,8 +105,10 @@ macro_rules! read_num_type_endian {
 
 macro_rules! read_num_type {
 	($type: ty) => {
-		read_num_type_endian!($type, le);
-		read_num_type_endian!($type, be);
+		paste::paste! {
+			read_num_type_endian!($type, [<$type _le>], le);
+			read_num_type_endian!($type, [<$type _be>], be);
+		}
 	};
 }
 
@@ -128,8 +122,10 @@ macro_rules! read_int {
 }
 
 #[async_fn]
-impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
-	read_int!(8);
+impl<R: BufRead> TypedReader<R> {
+	read_num_type_endian!(i8, i8, le);
+
+	read_num_type_endian!(u8, u8, le);
 
 	read_int!(16);
 
@@ -144,7 +140,11 @@ impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
 	read_num_type!(f64);
 
 	pub fn new(reader: R) -> Self {
-		Self { reader, phantom: PhantomData }
+		Self { reader }
+	}
+
+	pub fn inner(&mut self) -> &mut R {
+		&mut self.reader
 	}
 
 	pub fn into_inner(self) -> R {
@@ -152,54 +152,51 @@ impl<Context: AsyncContext, R: BufRead<Context>> TypedReader<Context, R> {
 	}
 
 	#[inline(always)]
-	async fn read_bytes_slow<const N: usize>(&mut self) -> Result<Option<[u8; N]>> {
+	pub async fn read_bytes<const N: usize>(&mut self) -> Result<Option<[u8; N]>> {
 		let mut bytes = [0u8; N];
-		let read = self.reader.read_exact(&mut bytes).await?;
+		/* for some llvm reason, unlikely here does the actual job of
+		 * likely, and nets a performance gain on x64
+		 */
+		if unlikely(self.reader.buffer().len() >= N) {
+			/* this loop gets optimized to a single load instruction of size N */
+			for i in 0..N {
+				bytes[i] = unsafe { *self.reader.buffer().get_unchecked(i) };
+			}
 
-		if read == N {
-			Ok(Some(bytes))
-		} else if read == 0 {
-			Ok(None)
+			unsafe {
+				self.reader.consume_unchecked(N);
+			}
 		} else {
-			Err(check_eof().await)
-		}
-	}
+			let read = self.reader.read_exact(&mut bytes).await?;
 
-	#[inline(always)]
-	fn read_bytes<const N: usize>(&mut self) -> [u8; N] {
-		/* this function call gets optimized to a single load instruction of size N */
-		let mut bytes = [0u8; N];
-
-		for i in 0..N {
-			bytes[i] = unsafe { *self.reader.buffer().get_unchecked(i) };
+			if read != N {
+				return if read == 0 {
+					Ok(None)
+				} else {
+					Err(short_io_error().await)
+				};
+			}
 		}
 
-		unsafe {
-			self.reader.consume_unchecked(N);
-		}
-
-		bytes
+		Ok(Some(bytes))
 	}
 
 	#[inline(always)]
 	pub async fn read_type<T: FromBytes<N>, const N: usize>(&mut self) -> Result<Option<T>> {
-		/* for some llvm reason, unlikely here does the actual job of
-		 * likely, and nets a performance gain on x64
-		 */
-		Ok(if unlikely(self.reader.buffer().len() >= N) {
-			Some(T::from_bytes(self.read_bytes()))
-		} else {
-			self.read_bytes_slow().await?.map(T::from_bytes)
-		})
+		let bytes = self.read_bytes().await?;
+
+		Ok(bytes.map(T::from_bytes))
 	}
 
 	#[inline(always)]
 	pub async fn read_type_or_err<T: FromBytes<N>, const N: usize>(&mut self) -> Result<T> {
-		self.read_type().await?.ok_or(eof_error())
+		self.read_type()
+			.await?
+			.ok_or_else(|| unexpected_end_of_stream())
 	}
 }
 
-impl<Context: AsyncContext, R: BufRead<Context>> Deref for TypedReader<Context, R> {
+impl<R: BufRead> Deref for TypedReader<R> {
 	type Target = R;
 
 	fn deref(&self) -> &R {
@@ -207,18 +204,17 @@ impl<Context: AsyncContext, R: BufRead<Context>> Deref for TypedReader<Context, 
 	}
 }
 
-impl<Context: AsyncContext, R: BufRead<Context>> DerefMut for TypedReader<Context, R> {
+impl<R: BufRead> DerefMut for TypedReader<R> {
 	fn deref_mut(&mut self) -> &mut R {
 		&mut self.reader
 	}
 }
 
-pub struct TypedWriter<Context: AsyncContext, W: Write<Context>> {
-	writer: W,
-	phantom: PhantomData<Context>
+pub struct TypedWriter<W: Write> {
+	writer: W
 }
 
-struct FmtAdapter<'a, Context: AsyncContext, W: 'a> {
+struct FmtAdapter<'a, W: 'a> {
 	writer: &'a mut W,
 	context: Handle<Context>,
 	wrote: usize,
@@ -226,12 +222,8 @@ struct FmtAdapter<'a, Context: AsyncContext, W: 'a> {
 }
 
 #[async_fn]
-impl<'a, W: Write<Context>, Context: AsyncContext>
-	FmtAdapter<'a, Context, TypedWriter<Context, W>>
-{
-	pub async fn new(
-		writer: &'a mut TypedWriter<Context, W>
-	) -> FmtAdapter<'a, Context, TypedWriter<Context, W>> {
+impl<'a, W: Write> FmtAdapter<'a, TypedWriter<W>> {
+	pub async fn new(writer: &'a mut TypedWriter<W>) -> FmtAdapter<'a, TypedWriter<W>> {
 		Self {
 			writer,
 			context: get_context().await,
@@ -246,14 +238,12 @@ impl<'a, W: Write<Context>, Context: AsyncContext>
 			Err(_) => Err(self
 				.error
 				.take()
-				.unwrap_or(Error::new(ErrorKind::Other, "Formatter error")))
+				.unwrap_or_else(|| Error::new(ErrorKind::Other, "Formatter error")))
 		}
 	}
 }
 
-impl<W: Write<Context>, Context: AsyncContext> fmt::Write
-	for FmtAdapter<'_, Context, TypedWriter<Context, W>>
-{
+impl<W: Write> fmt::Write for FmtAdapter<'_, TypedWriter<W>> {
 	fn write_str(self: &mut Self, s: &str) -> fmt::Result {
 		match self.context.run(self.writer.write_string_exact_or_err(s)) {
 			Err(err) => {
@@ -300,7 +290,7 @@ macro_rules! write_int {
 }
 
 #[async_fn]
-impl<Context: AsyncContext, W: Write<Context>> TypedWriter<Context, W> {
+impl<W: Write> TypedWriter<W> {
 	write_int!(8);
 
 	write_int!(32);
@@ -316,7 +306,11 @@ impl<Context: AsyncContext, W: Write<Context>> TypedWriter<Context, W> {
 	write_num_type!(f64);
 
 	pub fn new(writer: W) -> Self {
-		Self { writer, phantom: PhantomData }
+		Self { writer }
+	}
+
+	pub fn inner(&mut self) -> &mut W {
+		&mut self.writer
 	}
 
 	pub fn into_inner(self) -> W {
@@ -351,7 +345,7 @@ impl<Context: AsyncContext, W: Write<Context>> TypedWriter<Context, W> {
 	}
 }
 
-impl<Context: AsyncContext, W: Write<Context>> Deref for TypedWriter<Context, W> {
+impl<W: Write> Deref for TypedWriter<W> {
 	type Target = W;
 
 	fn deref(&self) -> &W {
@@ -359,7 +353,7 @@ impl<Context: AsyncContext, W: Write<Context>> Deref for TypedWriter<Context, W>
 	}
 }
 
-impl<Context: AsyncContext, W: Write<Context>> DerefMut for TypedWriter<Context, W> {
+impl<W: Write> DerefMut for TypedWriter<W> {
 	fn deref_mut(&mut self) -> &mut W {
 		&mut self.writer
 	}

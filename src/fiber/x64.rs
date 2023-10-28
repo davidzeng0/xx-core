@@ -1,13 +1,12 @@
-use std::{arch::global_asm, mem::zeroed};
+use std::{
+	arch::{asm, global_asm},
+	mem::zeroed
+};
 
-use super::{Intercept, Start};
+use super::*;
 
 #[repr(C)]
-pub struct Context {
-	r12: u64,
-	r13: u64,
-	r14: u64,
-	r15: u64,
+pub(super) struct Context {
 	rip: u64,
 	rsp: u64,
 	rbx: u64,
@@ -27,11 +26,11 @@ impl Context {
 		unsafe { zeroed() }
 	}
 
-	pub(crate) fn set_stack(&mut self, stack: usize, len: usize) {
+	pub fn set_stack(&mut self, stack: usize, len: usize) {
 		self.rsp = (stack + len) as u64;
 	}
 
-	pub(crate) fn set_start(&mut self, start: Start) {
+	pub fn set_start(&mut self, start: Start) {
 		let ptr = unsafe { &mut *(self.rsp as *mut () as *mut Start).offset(-1) };
 
 		self.rip = xx_core_fiber_x64_start as u64;
@@ -39,7 +38,7 @@ impl Context {
 		*ptr = start;
 	}
 
-	pub(crate) fn set_intercept(&mut self, mut intercept: Intercept) {
+	pub fn set_intercept(&mut self, mut intercept: Intercept) {
 		let ptr = unsafe { &mut *(self.rsp as *mut () as *mut Intercept).offset(-1) };
 
 		if intercept.ret == 0 {
@@ -53,6 +52,18 @@ impl Context {
 }
 
 #[inline(always)]
-pub unsafe fn switch(from: &mut Context, to: &mut Context) {
-	xx_core_fiber_x64_switch(from, to);
+pub(super) unsafe fn switch(from: &mut Context, to: &mut Context) {
+	unsafe {
+		asm!(
+			"call {}",
+			sym xx_core_fiber_x64_switch,
+			in("rdi") from,
+			in("rsi") to,
+			lateout("r12") _,
+			lateout("r13") _,
+			lateout("r14") _,
+			lateout("r15") _,
+			clobber_abi("C")
+		)
+	}
 }

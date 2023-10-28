@@ -1,6 +1,7 @@
-use super::env::AsyncContext;
-use crate::task::env::Handle;
+use super::*;
 
-pub trait AsyncTask<Context: AsyncContext, Output> {
-	fn run(self, context: Handle<Context>) -> Output;
+pub trait Task {
+	type Output;
+
+	fn run(self, context: Handle<Context>) -> Self::Output;
 }
