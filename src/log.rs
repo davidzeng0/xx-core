@@ -153,7 +153,11 @@ pub fn get_struct_addr_low<T>(val: &T) -> usize {
 #[macro_export]
 macro_rules! log {
 	($level: expr, target: $target: expr, $($arg: tt)+) => {
-		{
+		loop {
+			if $crate::opt::hint::likely(!::log::log_enabled!($level)) {
+				break;
+			}
+
 			let mut __xx_core_log_fmt_buf = ::std::io::Cursor::new([0u8; 64]);
 
 			::std::io::Write::write_fmt(
@@ -172,7 +176,9 @@ macro_rules! log {
 				target: unsafe { ::std::str::from_utf8_unchecked(__xx_core_log_fmted_target) },
 				$level,
 				$($arg)+
-			)
+			);
+
+			break;
 		}
 	};
 

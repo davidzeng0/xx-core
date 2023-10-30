@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{
 	parse::{Parse, ParseStream},
 	punctuated::Punctuated,
@@ -8,14 +8,12 @@ use syn::{
 };
 
 use crate::{
-	closure::{async_fn::*, make_closure::RemoveRefMut},
+	closure::{async_fn::*, make_closure::RemoveRefMut, transform::Function},
 	wrap_function::get_pats
 };
 
 fn async_trait_ident(ident: &Ident) -> Ident {
-	let name = format!("async_trait_{}", ident.to_string());
-
-	Ident::new(&name, ident.span())
+	format_ident!("async_trait_{}", ident)
 }
 
 fn trait_ext(item: &ItemTrait) -> TokenStream {
@@ -38,7 +36,7 @@ fn trait_ext(item: &ItemTrait) -> TokenStream {
 	let supertrait: TypeParamBound = parse_quote_spanned! { ident.span() => #ident #generics };
 
 	item.supertraits.push(supertrait.clone());
-	item.ident = Ident::new(&format!("{}Ext", ident.to_string()), ident.span());
+	item.ident = format_ident!("{}Ext", ident);
 
 	let mut trait_items = Vec::new();
 
@@ -76,13 +74,13 @@ fn trait_ext(item: &ItemTrait) -> TokenStream {
 			func.attrs.push(parse_quote! { #[inline(always) ]});
 
 			if func.sig.asyncness.is_some() {
-				if let Err(err) = transform_typed_closure(
-					false,
-					&mut func.attrs,
-					Some(&item.generics),
-					&mut func.sig,
-					func.default.as_mut()
-				) {
+				if let Err(err) = transform_typed_closure(&mut Function {
+					is_item_fn: false,
+					attrs: &mut func.attrs,
+					env_generics: Some(&item.generics),
+					sig: &mut func.sig,
+					block: func.default.as_mut()
+				}) {
 					return err.to_compile_error();
 				}
 			}
@@ -121,13 +119,13 @@ pub fn async_trait(_: TokenStream, item: TokenStream) -> TokenStream {
 			func.sig.ident = async_trait_ident(&func.sig.ident);
 
 			if func.sig.asyncness.is_some() {
-				if let Err(err) = transform_no_closure(
-					false,
-					&mut func.attrs,
-					Some(&item.generics),
-					&mut func.sig,
-					func.default.as_mut()
-				) {
+				if let Err(err) = transform_no_closure(&mut Function {
+					is_item_fn: false,
+					attrs: &mut func.attrs,
+					env_generics: Some(&item.generics),
+					sig: &mut func.sig,
+					block: func.default.as_mut()
+				}) {
 					return err.to_compile_error();
 				}
 			}
@@ -142,13 +140,13 @@ fn transform_async_impl_func(
 ) -> Result<TokenStream> {
 	func.sig.ident = async_trait_ident(&func.sig.ident);
 
-	transform_no_closure(
-		false,
-		&mut func.attrs,
+	transform_no_closure(&mut Function {
+		is_item_fn: false,
+		attrs: &mut func.attrs,
 		env_generics,
-		&mut func.sig,
-		Some(&mut func.block)
-	)?;
+		sig: &mut func.sig,
+		block: Some(&mut func.block)
+	})?;
 
 	Ok(quote! { #func })
 }

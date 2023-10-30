@@ -29,7 +29,6 @@ pub async fn check_interrupt() -> Result<()> {
 }
 
 #[async_fn]
-#[inline(always)]
 pub async fn take_interrupt() -> bool {
 	let mut context = get_context().await;
 	let interrupted = context.interrupted();
@@ -42,7 +41,6 @@ pub async fn take_interrupt() -> bool {
 }
 
 #[async_fn]
-#[inline(always)]
 pub async fn check_interrupt_take() -> Result<()> {
 	if unlikely(take_interrupt().await) {
 		Err(Error::interrupted())

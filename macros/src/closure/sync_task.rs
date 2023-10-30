@@ -4,16 +4,13 @@ use syn::{visit_mut::VisitMut, *};
 
 use super::{make_closure::*, transform::*};
 
-fn transform_func(
-	_: bool, attrs: &mut Vec<Attribute>, env_generics: Option<&Generics>, sig: &mut Signature,
-	block: Option<&mut Block>
-) -> Result<()> {
-	attrs.push(parse_quote!( #[must_use] ));
+fn transform_func(func: &mut Function) -> Result<()> {
+	func.attrs.push(parse_quote!( #[must_use] ));
 
-	let return_type = get_return_type(&sig.output);
+	let return_type = get_return_type(&func.sig.output);
 	let mut default_cancel_capture = vec![quote! { xx_core::task::RequestPtr<#return_type> }];
 
-	if sig.inputs.iter().any(|arg| match arg {
+	if func.sig.inputs.iter().any(|arg| match arg {
 		FnArg::Receiver(_) => true,
 		FnArg::Typed(_) => false
 	}) {
@@ -26,56 +23,61 @@ fn transform_func(
 		xx_core::task::CancelClosure<#default_cancel_capture>
 	};
 
-	let block = if let Some(block) = block {
-		if let Some(stmt) = block.stmts.first_mut() {
-			if let Stmt::Item(Item::Fn(func)) = stmt {
-				if func.sig.ident == "cancel" {
-					func.sig.inputs.push(parse_quote! {
-						request: xx_core::task::RequestPtr<#return_type>
-					});
+	if let Some(block) = &mut func.block {
+		loop {
+			let Some(stmt) = (*block).stmts.first_mut() else {
+				break;
+			};
 
-					cancel_closure_type = into_typed_closure(
-						&mut func.attrs,
-						&env_generics,
-						&mut func.sig,
-						Some(&mut func.block),
-						vec![quote! { () }],
-						vec![quote! { () }],
-						quote! { xx_core::task::CancelClosure },
-						|capture, _| quote! { xx_core::task::CancelClosure<#capture> }
-					)?;
+			let Stmt::Item(Item::Fn(cancel)) = stmt else {
+				break;
+			};
 
-					let inputs = func.sig.inputs.clone();
-					let output = func.sig.output.clone();
-					let block = func.block.clone();
-
-					*stmt = parse_quote! {
-						let cancel = | #inputs | #output #block;
-					};
-
-					ReplaceSelf {}.visit_stmt_mut(stmt);
-				}
+			if cancel.sig.ident != "cancel" {
+				break;
 			}
+
+			cancel.sig.inputs.push(parse_quote! {
+				request: xx_core::task::RequestPtr<#return_type>
+			});
+
+			cancel_closure_type = into_typed_closure(
+				&mut Function {
+					is_item_fn: true,
+					attrs: &mut cancel.attrs,
+					env_generics: func.env_generics,
+					sig: &mut cancel.sig,
+					block: Some(&mut cancel.block)
+				},
+				vec![(quote! { () }, quote! { () })],
+				quote! { xx_core::task::CancelClosure },
+				|capture, _| quote! { xx_core::task::CancelClosure<#capture> }
+			)?;
+
+			let inputs = cancel.sig.inputs.clone();
+			let output = cancel.sig.output.clone();
+			let block = cancel.block.clone();
+
+			*stmt = parse_quote! {
+				let cancel = | #inputs | #output #block;
+			};
+
+			ReplaceSelf {}.visit_stmt_mut(stmt);
 		}
+	}
 
-		Some(block)
-	} else {
-		None
-	};
-
-	sig.output = parse_quote! {
+	func.sig.output = parse_quote! {
 		-> xx_core::task::Progress<#return_type, #cancel_closure_type>
 	};
 
 	into_opaque_closure(
-		attrs,
-		&env_generics,
-		sig,
-		block,
-		vec![quote! { request }],
-		vec![quote! { xx_core::task::RequestPtr<#return_type> }],
+		func,
+		vec![(
+			quote! { request },
+			quote! { xx_core::task::RequestPtr<#return_type> }
+		)],
 		|_| quote! { xx_core::task::Progress<#return_type, #cancel_closure_type> },
-		Some(|_| {
+		OpaqueClosureType::Custom(|_| {
 			(
 				quote! { xx_core::task::Task<Output = #return_type, Cancel = #cancel_closure_type> },
 				quote! { xx_core::task::TaskClosureWrap }
@@ -89,7 +91,7 @@ fn transform_func(
 /// ### Input
 /// ```
 /// #[sync_task]
-/// fn add<'a>(&'a mut self, a: i32, b: i32) -> i32 {
+/// fn add(&mut self, a: i32, b: i32) -> i32 {
 /// 	fn cancel(self: &'a mut Self, extra: i32) -> Result<()> {
 /// 		self.cancel_async_add(extra, request)?;
 ///
@@ -108,41 +110,58 @@ fn transform_func(
 ///
 /// ### Output
 /// ```
-/// fn add<'a>(&'a mut self, a: i32, b: i32) ->
-/// 	TaskClosure<
-/// 		(&'a mut Self, i32, i32),
-/// 		Progress<i32,
-/// 			CancelClosure<(&'a mut Self, extra: i32, RequestPtr<i32>)>
-/// 		>
-/// 	> {
-/// 	let run = |
-/// 		(__self, a, b): (&'a mut Self, i32, i32),
-/// 		request: RequestPtr<i32>
-/// 	| -> Progress<i32, CancelClosure<...>> {
-/// 		let cancel = |
-/// 			self: &'a mut Self, extra: i32
-/// 		| {
-/// 			let run = |
-/// 				(__self, extra, request): (&'a mut Self, i32, RequestPtr<i32>)
-/// 			| -> Result<()> {
-/// 				self.cancel_async_add(extra, request)?;
-///
-/// 				Ok(())
+/// #[must_use]
+/// fn add<'closure, 'life1>(
+/// 	&'life1 mut self, a: i32, b: i32
+/// ) -> impl xx_core::task::Task<
+/// 	Output = i32,
+/// 	Cancel = xx_core::task::CancelClosure<(
+/// 		&'life1 mut Self,
+/// 		i32,
+/// 		xx_core::task::RequestPtr<i32>
+/// 	)>
+/// > + 'closure
+/// where
+/// 	'life1: 'closure
+/// {
+/// 	xx_core::task::TaskClosureWrap::new(
+/// 		move |request: xx_core::task::RequestPtr<i32>| -> xx_core::task::Progress<
+/// 			i32,
+/// 			xx_core::task::CancelClosure<(
+/// 				&'life1 mut Self,
+/// 				i32,
+/// 				xx_core::task::RequestPtr<i32>
+/// 			)>
+/// 		> {
+/// 			let cancel = |__self: &'life1 mut Self,
+/// 			              extra: i32,
+/// 			              request: xx_core::task::RequestPtr<i32>|
+/// 			 -> xx_core::task::CancelClosure<(
+/// 				&'life1 mut Self,
+/// 				i32,
+/// 				xx_core::task::RequestPtr<i32>
+/// 			)> {
+/// 				let run = |(__self, extra, request): (
+/// 					&'life1 mut Self,
+/// 					i32,
+/// 					xx_core::task::RequestPtr<i32>
+/// 				),
+/// 				           (): ()|
+/// 				 -> Result<()> {
+/// 					__self.cancel_async_add(extra, request)?;
+/// 					Ok(())
+/// 				};
+/// 				xx_core::task::CancelClosure::new((__self, extra, request), run)
 /// 			};
 ///
-/// 			CancelClosure::new((self, a + b, request), cancel)
-/// 		}
-///
-/// 		if self.requires_async_add(a, b) {
-/// 			self.async_add(a, b, request);
-///
-/// 			Progress::Pending(cancel(self, a + b, request))
-/// 		} else {
+/// 			if self.requires_async_add(a, b) {
+/// 				self.async_add(a, b, request);
+/// 				Progress::Pending(cancel(self, a + b, request))
+/// 			} else {
 /// 				Progress::Done(a + b)
+/// 			}
 /// 		}
-/// 	};
-///
-/// 	TaskClosure::new((self, a, b), run)
+/// 	)
 /// }
 /// ```
 pub fn sync_task(_: TokenStream, item: TokenStream) -> TokenStream {

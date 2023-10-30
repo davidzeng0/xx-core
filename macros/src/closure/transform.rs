@@ -4,41 +4,43 @@ use syn::*;
 
 use crate::async_trait::MaybeImplOrFn;
 
-pub type TransformCallback = fn(
-	is_item_fn: bool,
-	&mut Vec<Attribute>,
-	env_generics: Option<&Generics>,
-	&mut Signature,
-	Option<&mut Block>
-) -> Result<()>;
+pub struct Function<'a> {
+	pub is_item_fn: bool,
+	pub attrs: &'a mut Vec<Attribute>,
+	pub env_generics: Option<&'a Generics>,
+	pub sig: &'a mut Signature,
+	pub block: Option<&'a mut Block>
+}
 
-fn transform_item_func(func: &mut ItemFn, callback: TransformCallback) -> Result<TokenStream> {
-	callback(
-		true,
-		&mut func.attrs,
-		None,
-		&mut func.sig,
-		Some(func.block.as_mut())
-	)?;
+type Callback = fn(&mut Function) -> Result<()>;
+
+fn transform_item_func(func: &mut ItemFn, callback: Callback) -> Result<TokenStream> {
+	callback(&mut Function {
+		is_item_fn: true,
+		attrs: &mut func.attrs,
+		env_generics: None,
+		sig: &mut func.sig,
+		block: Some(&mut func.block)
+	})?;
 
 	Ok(quote! { #func }.into())
 }
 
 fn transform_impl_func(
-	func: &mut ImplItemFn, env_generics: Option<&Generics>, callback: TransformCallback
+	func: &mut ImplItemFn, env_generics: Option<&Generics>, callback: Callback
 ) -> Result<TokenStream> {
-	callback(
-		false,
-		&mut func.attrs,
+	callback(&mut Function {
+		is_item_fn: false,
+		attrs: &mut func.attrs,
 		env_generics,
-		&mut func.sig,
-		Some(&mut func.block)
-	)?;
+		sig: &mut func.sig,
+		block: Some(&mut func.block)
+	})?;
 
 	Ok(quote! { #func }.into())
 }
 
-fn transform_impl(item: &mut ItemImpl, callback: TransformCallback) -> Result<TokenStream> {
+fn transform_impl(item: &mut ItemImpl, callback: Callback) -> Result<TokenStream> {
 	for impl_item in &mut item.items {
 		if let ImplItem::Fn(func) = impl_item {
 			transform_impl_func(func, Some(&item.generics), callback)?;
@@ -48,7 +50,7 @@ fn transform_impl(item: &mut ItemImpl, callback: TransformCallback) -> Result<To
 	Ok(quote! { #item }.into())
 }
 
-pub fn transform_fn(item: TokenStream, callback: TransformCallback) -> Result<TokenStream> {
+pub fn transform_fn(item: TokenStream, callback: Callback) -> Result<TokenStream> {
 	if let Ok(mut parsed) = parse2::<ItemFn>(item.clone()) {
 		return transform_item_func(&mut parsed, callback);
 	}

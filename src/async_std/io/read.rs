@@ -194,6 +194,7 @@ pub trait BufRead: Read {
 	/// Returns the number of bytes filled, which can be zero
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize>;
 
+	#[inline(never)]
 	async fn fill(&mut self) -> Result<usize> {
 		self.fill_amount(self.capacity()).await
 	}

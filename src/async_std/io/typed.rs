@@ -151,6 +151,19 @@ impl<R: BufRead> TypedReader<R> {
 		self.reader
 	}
 
+	#[inline(never)]
+	async fn read_bytes_slow<const N: usize>(&mut self, bytes: &mut [u8; N]) -> Result<usize> {
+		let read = self.reader.read_exact(bytes).await?;
+
+		if unlikely(read != N) {
+			if read != 0 {
+				return Err(short_io_error().await);
+			}
+		}
+
+		Ok(read)
+	}
+
 	#[inline(always)]
 	pub async fn read_bytes<const N: usize>(&mut self) -> Result<Option<[u8; N]>> {
 		let mut bytes = [0u8; N];
@@ -167,14 +180,10 @@ impl<R: BufRead> TypedReader<R> {
 				self.reader.consume_unchecked(N);
 			}
 		} else {
-			let read = self.reader.read_exact(&mut bytes).await?;
+			let read = self.read_bytes_slow(&mut bytes).await?;
 
-			if read != N {
-				return if read == 0 {
-					Ok(None)
-				} else {
-					Err(short_io_error().await)
-				};
+			if read == 0 {
+				return Ok(None);
 			}
 		}
 

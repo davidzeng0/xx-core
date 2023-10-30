@@ -27,6 +27,7 @@ impl<W: Write> BufWriter<W> {
 		buf.len()
 	}
 
+	#[inline(never)]
 	/// Flushes the buffer without flushing downstream
 	async fn flush_buf(&mut self) -> Result<()> {
 		while self.pos < self.buf.len() {

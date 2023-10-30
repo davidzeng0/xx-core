@@ -1,6 +1,8 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, ToTokens};
+use quote::{format_ident, quote, ToTokens};
 use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, visit_mut::*, *};
+
+use super::transform::Function;
 
 pub struct ReplaceSelf;
 
@@ -9,7 +11,7 @@ impl VisitMut for ReplaceSelf {
 		visit_ident_mut(self, ident);
 
 		if ident == "self" {
-			*ident = Ident::new("__xx_internal_closure_self", ident.span());
+			*ident = format_ident!("__xx_internal_closure_self", span = ident.span());
 		}
 	}
 }
@@ -57,9 +59,9 @@ impl VisitMut for AddLifetime {
 			return;
 		}
 
-		if let Type::ImplTrait(_) = reference.elem.as_ref() {
-		} else {
-			visit_type_reference_mut(self, reference);
+		match reference.elem.as_ref() {
+			Type::ImplTrait(_) => (),
+			_ => visit_type_reference_mut(self, reference)
 		}
 
 		reference.lifetime = Some(self.next_lifetime(reference.span()));
@@ -70,13 +72,11 @@ impl VisitMut for AddLifetime {
 	fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
 		visit_lifetime_mut(self, lifetime);
 
-		if lifetime.ident != "_" {
-			return;
+		if lifetime.ident == "_" {
+			*lifetime = self.next_lifetime(lifetime.span());
+
+			self.modified = true;
 		}
-
-		*lifetime = self.next_lifetime(lifetime.span());
-
-		self.modified = true;
 	}
 
 	fn visit_receiver_mut(&mut self, rec: &mut Receiver) {
@@ -88,12 +88,10 @@ impl VisitMut for AddLifetime {
 
 				self.modified = true;
 			}
+		} else if let Type::Reference(reference) = rec.ty.as_mut() {
+			self.visit_type_reference_mut(reference);
 		} else {
-			if let Type::Reference(reference) = rec.ty.as_mut() {
-				self.visit_type_reference_mut(reference);
-			} else {
-				visit_type_mut(self, rec.ty.as_mut());
-			}
+			visit_type_mut(self, rec.ty.as_mut());
 		}
 	}
 
@@ -135,21 +133,18 @@ impl VisitMut for AddLifetime {
 fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&Generics>) -> TokenStream {
 	let mut addl_bounds = Punctuated::<TypeParamBound, Token![+]>::new();
 
-	if let Some(generics) = env_generics {
-		for param in &generics.params {
-			match param {
-				GenericParam::Const(_) => (),
-				GenericParam::Type(_) => (),
-				GenericParam::Lifetime(param) => {
-					let lifetime = &param.lifetime;
+	env_generics.map(|generics| {
+		generics.params.iter().for_each(|param| match param {
+			GenericParam::Const(_) => (),
+			GenericParam::Type(_) => (),
+			GenericParam::Lifetime(param) => {
+				let lifetime = &param.lifetime;
 
-					addl_bounds.push(
-						parse_quote! { xx_core::macros::closure::lifetime::Captures<#lifetime> }
-					);
-				}
+				addl_bounds
+					.push(parse_quote! { xx_core::macros::closure::lifetime::Captures<#lifetime> });
 			}
-		}
-	}
+		})
+	});
 
 	/* this is apparently necessary */
 	for param in sig.generics.lifetimes() {
@@ -206,22 +201,20 @@ pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&Generics>) -> To
 
 	let mut self_bounds = Punctuated::<Lifetime, Token![+]>::new();
 
-	if let Some(generics) = env_generics {
-		for param in &generics.params {
-			match param {
-				GenericParam::Const(_) => (),
-				GenericParam::Type(_) => (),
-				GenericParam::Lifetime(param) => {
-					let lifetime = &param.lifetime;
+	env_generics.map(|generics| {
+		generics.params.iter().for_each(|param| match param {
+			GenericParam::Const(_) => (),
+			GenericParam::Type(_) => (),
+			GenericParam::Lifetime(param) => {
+				let lifetime = &param.lifetime;
 
-					clause
-						.predicates
-						.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime });
-					self_bounds.push(lifetime.clone());
-				}
+				clause
+					.predicates
+					.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime });
+				self_bounds.push(lifetime.clone());
 			}
-		}
-	}
+		})
+	});
 
 	for lifetime in &op.added_lifetimes {
 		sig.generics.params.push(parse_quote! { #lifetime });
@@ -269,37 +262,31 @@ pub fn get_return_type(ret: &ReturnType) -> TokenStream {
 	}
 }
 
-fn make_args(
-	args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>
-) -> (TokenStream, TokenStream) {
+fn make_args(args_pat_type: Vec<(TokenStream, TokenStream)>) -> (TokenStream, TokenStream) {
 	let mut args = Vec::new();
+	let mut types = Vec::new();
 
-	for i in 0..args_vars.len() {
-		let var = &args_vars[i];
-		let ty = &args_types[i];
-
-		args.push(quote! { #var: #ty });
+	for (pat, ty) in &args_pat_type {
+		args.push(quote! { #pat: #ty });
+		types.push(ty.clone());
 	}
 
-	(quote! { #(#args),* }, quote! { #(#args_types),* })
+	(quote! { #(#args),* }, quote! { #(#types),* })
 }
 
 pub fn into_typed_closure(
-	attrs: &mut Vec<Attribute>, env_generics: &Option<&Generics>, sig: &mut Signature,
-	block: Option<&mut Block>, args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
-	closure_type: TokenStream, transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
+	func: &mut Function, args: Vec<(TokenStream, TokenStream)>, closure_type: TokenStream,
+	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
 ) -> Result<TokenStream> {
-	add_lifetime(sig, env_generics);
+	add_lifetime(&mut func.sig, &func.env_generics);
 
-	let return_type = get_return_type(&sig.output);
-
-	let (types, construct, destruct) = build_tuples(&mut sig.inputs, |arg| match arg {
+	let (types, construct, destruct) = build_tuples(&mut func.sig.inputs, |arg| match arg {
 		FnArg::Typed(pat) => {
-			let mut constr = pat.pat.as_ref().clone();
+			let destr = pat.pat.as_ref().clone();
 
-			RemoveRefMut {}.visit_pat_mut(&mut constr);
+			RemoveRefMut {}.visit_pat_mut(pat.pat.as_mut());
 
-			(pat.ty.as_ref().clone(), constr, pat.pat.as_ref().clone())
+			(pat.ty.as_ref().clone(), pat.pat.as_ref().clone(), destr)
 		}
 
 		FnArg::Receiver(rec) => {
@@ -308,7 +295,7 @@ pub fn into_typed_closure(
 					attrs: rec.attrs.clone(),
 					by_ref: None,
 					mutability: None,
-					ident: Ident::new(ident, rec.span()),
+					ident: format_ident!("{}", ident, span = rec.span()),
 					subpat: None
 				})
 			};
@@ -321,22 +308,19 @@ pub fn into_typed_closure(
 		}
 	});
 
-	RemoveRefMut {}.visit_signature_mut(sig);
+	let (args, _) = make_args(args);
 
+	let return_type = get_return_type(&func.sig.output);
 	let closure_return_type = transform_return(types.clone(), return_type.clone());
 
-	let (args, _) = make_args(args_vars, args_types);
+	func.sig.output = parse_quote! { -> #closure_return_type };
 
-	sig.output = parse_quote! {
-		-> #closure_return_type
-	};
+	if let Some(block) = &mut func.block {
+		func.attrs.push(parse_quote!( #[inline(always)] ));
 
-	if let Some(block) = block {
-		attrs.push(parse_quote!( #[inline(always)] ));
+		ReplaceSelf {}.visit_block_mut(*block);
 
-		ReplaceSelf {}.visit_block_mut(block);
-
-		*block = parse_quote! {{
+		**block = parse_quote! {{
 			let run = |
 				#destruct: #types,
 				#args
@@ -349,42 +333,47 @@ pub fn into_typed_closure(
 	Ok(closure_return_type)
 }
 
+#[allow(dead_code)]
+pub enum OpaqueClosureType<T> {
+	Fn(),
+	Custom(T)
+}
+
 pub fn into_opaque_closure(
-	_: &mut Vec<Attribute>, env_generics: &Option<&Generics>, sig: &mut Signature,
-	block: Option<&mut Block>, args_vars: Vec<TokenStream>, args_types: Vec<TokenStream>,
+	func: &mut Function, args: Vec<(TokenStream, TokenStream)>,
 	transform_return: impl Fn(TokenStream) -> TokenStream,
-	wrap: Option<impl Fn(TokenStream) -> (TokenStream, TokenStream)>
+	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>
 ) -> Result<TokenStream> {
-	let addl_lifetimes = add_lifetime(sig, env_generics);
-	let return_type = &mut sig.output;
+	let addl_lifetimes = add_lifetime(&mut func.sig, &func.env_generics);
 
-	let (args, args_types) = make_args(args_vars, args_types);
+	let (args, args_types) = make_args(args);
 
-	let return_tokens = transform_return(get_return_type(&return_type));
-	let wrap = wrap.map(|transform| transform(return_tokens.clone()));
-	let return_tokens = if let Some(wrap) = wrap.clone() {
-		let trait_type = wrap.0;
+	let return_type = &mut func.sig.output;
+	let closure_return_type = transform_return(get_return_type(&return_type));
+	let (closure_return_type, trait_impl_wrap) = match closure_type {
+		OpaqueClosureType::Custom(transform) => {
+			let (trait_type, trait_impl) = transform(closure_return_type);
 
-		quote! { impl #trait_type }
-	} else {
-		quote! { impl FnOnce( #args_types ) -> #return_tokens }
-	};
-
-	if let Some(block) = block {
-		let mut closure = quote! { move |#args| #return_type #block };
-
-		if wrap.is_some() {
-			let trait_impl = wrap.unwrap().1;
-
-			closure = quote! { #trait_impl::new(#closure) }
+			(quote! { impl #trait_type }, Some(trait_impl))
 		}
 
-		*block = parse_quote! {{
-			#closure
-		}};
+		OpaqueClosureType::Fn() => (
+			quote! { impl FnOnce( #args_types ) -> #closure_return_type },
+			None
+		)
+	};
+
+	if let Some(block) = &mut func.block {
+		let mut closure = quote! { move | #args | #return_type #block };
+
+		if let Some(wrap) = trait_impl_wrap {
+			closure = quote! { #wrap::new(#closure) }
+		}
+
+		**block = parse_quote! {{ #closure }};
 	}
 
-	sig.output = parse_quote! { -> #return_tokens #addl_lifetimes };
+	func.sig.output = parse_quote! { -> #closure_return_type #addl_lifetimes };
 
-	Ok(return_tokens)
+	Ok(closure_return_type)
 }

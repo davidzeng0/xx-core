@@ -14,7 +14,7 @@ fn block_resume<Resume: FnOnce(), Output>(_: RequestPtr<Output>, arg: *const (),
 }
 
 /// Safety: memory leak if `resume` is not called
-#[inline]
+#[inline(always)]
 pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Task>(
 	block: Block, resume: Resume, task: T
 ) -> T::Output {
