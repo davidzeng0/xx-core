@@ -54,7 +54,7 @@ pub fn unexpected_end_of_stream() -> Error {
 }
 
 #[async_fn]
-pub async fn short_io_error() -> Error {
+pub async fn short_io_error_unless_interrupt() -> Error {
 	check_interrupt()
 		.await
 		.err()
@@ -78,5 +78,14 @@ macro_rules! read_into {
 
 			buf
 		};
+	};
+}
+
+#[macro_export]
+macro_rules! write_from {
+	($buf: ident) => {
+		if $crate::opt::hint::unlikely($buf.len() == 0) {
+			return Ok(0);
+		}
 	};
 }

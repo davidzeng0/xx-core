@@ -39,12 +39,15 @@ pub trait Seek {
 		Ok(())
 	}
 
-	async fn rewind_exact(&mut self, amount: i64) -> Result<u64> {
+	async fn rewind_exact(&mut self, amount: u64) -> Result<u64> {
+		let amount: i64 = amount.try_into().unwrap();
+
 		self.seek(SeekFrom::Current(-amount)).await
 	}
 
-	async fn skip_exact(&mut self, amount: i64) -> Result<u64> {
-		self.seek(SeekFrom::Current(amount)).await
+	async fn skip_exact(&mut self, amount: u64) -> Result<u64> {
+		self.seek(SeekFrom::Current(amount.try_into().unwrap()))
+			.await
 	}
 }
 
@@ -77,10 +80,10 @@ macro_rules! seek_wrapper {
 			async fn rewind(&mut self) -> Result<()>;
 
 			#[async_trait_impl]
-			async fn rewind_exact(&mut self, amount: i64) -> Result<u64>;
+			async fn rewind_exact(&mut self, amount: u64) -> Result<u64>;
 
 			#[async_trait_impl]
-			async fn skip_exact(&mut self, amount: i64) -> Result<u64>;
+			async fn skip_exact(&mut self, amount: u64) -> Result<u64>;
 		}
 	}
 }

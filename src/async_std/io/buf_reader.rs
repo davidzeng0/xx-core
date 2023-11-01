@@ -1,6 +1,7 @@
 use memchr::memchr;
 
 use super::*;
+use crate::impls::UIntExtensions;
 
 pub struct BufReader<R: Read> {
 	inner: R,
@@ -26,6 +27,7 @@ impl<R: Read> BufReader<R> {
 	#[inline]
 	async fn fill_buf_offset(&mut self, start: usize, end: usize) -> Result<usize> {
 		Ok(unsafe {
+			/* bounds checking done by callers */
 			let spare = self.buf.get_unchecked_mut(start..end);
 			let read = self.inner.read(spare).await?;
 
@@ -54,6 +56,8 @@ impl<R: Read> BufReader<R> {
 	}
 
 	pub fn from_parts(inner: R, buf: Vec<u8>, pos: usize) -> Self {
+		assert!(pos <= buf.len());
+
 		BufReader { inner, buf, pos, phantom: PhantomData }
 	}
 
@@ -126,7 +130,7 @@ impl<R: Read> BufRead for BufReader<R> {
 				} else {
 					self.move_data_to_beginning();
 				}
-			} else if self.buf.len() == end {
+			} else if self.spare_capacity() == 0 {
 				return Ok(0);
 			}
 		}
@@ -182,7 +186,11 @@ impl<R: Read> BufRead for BufReader<R> {
 	}
 
 	fn consume(&mut self, count: usize) {
-		self.pos = self.buf.len().min(self.pos + count);
+		let new_pos = self.pos.checked_add(count).unwrap();
+
+		assert!(new_pos <= self.buf.len());
+
+		self.pos = new_pos;
 	}
 
 	/// Discard all data in the buffer
@@ -203,7 +211,7 @@ impl<R: Read> BufRead for BufReader<R> {
 #[async_fn]
 impl<R: Read + Seek> BufReader<R> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
-		let pos = rel.wrapping_add_unsigned(self.pos as u64);
+		let pos = rel.checked_add_unsigned(self.pos as u64).unwrap();
 
 		if pos >= 0 && pos as usize <= self.buf.len() {
 			self.pos = pos as usize;
@@ -216,9 +224,23 @@ impl<R: Read + Seek> BufReader<R> {
 	async fn seek_inner(&mut self, seek: SeekFrom) -> Result<u64> {
 		let off = self.inner.seek(seek).await?;
 
+		/* seek functions should not be retried on error,
+		 * so it's okay to discard only after a successfull seek
+		 */
 		self.discard();
 
 		Ok(off)
+	}
+
+	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
+		let stream_pos = self.stream_position().await?;
+		let (rel, overflow) = abs.overflowing_difference_signed(stream_pos);
+
+		if !overflow {
+			self.seek_relative(rel).await
+		} else {
+			self.seek_inner(seek).await
+		}
 	}
 }
 
@@ -238,7 +260,7 @@ impl<R: Read + Seek> Seek for BufReader<R> {
 
 	async fn stream_position(&mut self) -> Result<u64> {
 		let pos = self.inner.stream_position().await?;
-		let remaining = self.buf.len() - self.pos;
+		let remaining = self.buffer().len();
 
 		Ok(pos - remaining as u64)
 	}
@@ -247,26 +269,21 @@ impl<R: Read + Seek> Seek for BufReader<R> {
 		match seek {
 			SeekFrom::Current(pos) => self.seek_relative(pos).await,
 			SeekFrom::Start(pos) => {
-				if !self.stream_position_fast() {
-					return self.seek_inner(seek).await;
+				if self.stream_position_fast() {
+					self.seek_abs(pos, seek).await
+				} else {
+					self.seek_inner(seek).await
 				}
-
-				let stream_pos = self.stream_position().await?;
-
-				self.seek_relative(pos.wrapping_sub(stream_pos) as i64)
-					.await
 			}
 
 			SeekFrom::End(pos) => {
-				if !self.stream_len_fast() || !self.stream_position_fast() {
-					return self.seek_inner(seek).await;
+				if self.stream_len_fast() && self.stream_position_fast() {
+					let new_pos = self.stream_len().await?.checked_add_signed(pos).unwrap();
+
+					self.seek_abs(new_pos, seek).await
+				} else {
+					self.seek_inner(seek).await
 				}
-
-				let pos = self.stream_len().await?.checked_add_signed(pos).unwrap();
-				let stream_pos = self.stream_position().await?;
-
-				self.seek_relative(pos.wrapping_sub(stream_pos) as i64)
-					.await
 			}
 		}
 	}

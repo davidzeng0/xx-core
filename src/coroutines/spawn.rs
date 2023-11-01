@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ptr::null};
 
 use super::*;
 use crate::{fiber::Start, pin_local_mut, task::Boxed, trace};
@@ -29,6 +29,12 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 		let mut is_async = false;
 		let context = runtime.context();
 
+		/* pass back a pointer to is_async. only the caller will know
+		 * if we've suspended from this function
+		 *
+		 * cannot call Request::complete when synchronous,
+		 * as that double resumes the calling worker
+		 */
 		this.is_async = MutPtr::from(&mut is_async);
 		this.context = context.into();
 
@@ -58,7 +64,7 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 		let mut data = Self {
 			move_to_worker: None,
 			request,
-			context: unsafe { Handle::new_null() },
+			context: unsafe { Handle::null() },
 			result: None,
 			is_async: MutPtr::null(),
 			phantom: PhantomData
@@ -77,6 +83,7 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 		if data.result.is_some() {
 			Progress::Done(data.result.take().unwrap())
 		} else {
+			/* worker suspended without producing a result (aka completing) */
 			*data.is_async.as_mut() = true;
 
 			Progress::Pending(cancel(data.context, request))
@@ -151,7 +158,7 @@ impl<Output> Spawn<Output> {
 	pub fn new() -> Self {
 		unsafe {
 			Self {
-				request: Request::new(ConstPtr::<()>::null().as_ptr(), Self::spawn_complete),
+				request: Request::new(null(), Self::spawn_complete),
 				cancel: None,
 				waiter: RequestPtr::null(),
 				output: None,
@@ -218,6 +225,9 @@ unsafe impl<Output> SyncTask for JoinTask<Output> {
 	unsafe fn run(mut self, request: RequestPtr<Output>) -> Progress<Output, Self::Cancel> {
 		self.task.waiter = request;
 
+		/* we could make JoinTask return Progress::Done instead of checking below,
+		 * but block_on is somewhat expensive
+		 */
 		Progress::Pending(JoinCancel { task: self.task })
 	}
 }
@@ -233,6 +243,7 @@ impl<Output> Task for JoinHandle<Output> {
 
 	fn run(mut self, context: Handle<Context>) -> Output {
 		if let Some(output) = self.task.output.take() {
+			/* task finished inbetween spawn and await */
 			return output;
 		}
 

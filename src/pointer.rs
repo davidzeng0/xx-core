@@ -64,6 +64,7 @@ impl<T: ?Sized> MutPtr<T> {
 	}
 }
 
+/* derive Clone requires that T: Clone */
 impl<T: ?Sized, const MUTABLE: bool> Clone for Pointer<T, MUTABLE> {
 	fn clone(&self) -> Self {
 		Self { ptr: self.ptr }

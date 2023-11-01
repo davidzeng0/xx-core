@@ -1,4 +1,5 @@
 use super::*;
+use crate::write_from;
 
 #[async_trait]
 pub trait Write {
@@ -17,6 +18,9 @@ pub trait Write {
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
 	async fn write_all(&mut self, buf: &[u8]) -> Result<usize> {
+		/* see Read::read_exact */
+		write_from!(buf);
+
 		let mut wrote = 0;
 
 		while wrote < buf.len() {
@@ -35,9 +39,7 @@ pub trait Write {
 		let wrote = self.write_all(buf).await?;
 
 		if unlikely(wrote != buf.len()) {
-			check_interrupt().await?;
-
-			return Err(Error::new(ErrorKind::UnexpectedEof, "Short write"));
+			return Err(short_io_error_unless_interrupt().await);
 		}
 
 		Ok(())

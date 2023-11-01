@@ -1,4 +1,4 @@
-use std::result;
+use std::{ptr::null, result};
 
 use super::*;
 use crate::{pin_local_mut, warn};
@@ -134,17 +134,16 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 	}
 
 	fn new(task_1: T1, task_2: T2) -> Self {
-		let null = ConstPtr::<()>::null().as_raw_ptr();
-
 		unsafe {
+			/* request args are assigned once pinned */
 			Self {
 				task_1: Some(task_1),
-				req_1: Request::new(null, Self::complete_1),
+				req_1: Request::new(null(), Self::complete_1),
 				cancel_1: None,
 				result_1: None,
 
 				task_2: Some(task_2),
-				req_2: Request::new(null, Self::complete_2),
+				req_2: Request::new(null(), Self::complete_2),
 				cancel_2: None,
 				result_2: None,
 

@@ -67,7 +67,7 @@ pub struct Parameters {
 	pub wq_fd: u32,
 	pub resv: [u32; 3],
 	pub sq_off: SubmissionRingOffsets,
-	pub cq_off: CompletinRingOffsets
+	pub cq_off: CompletionRingOffsets
 }
 
 impl Parameters {
@@ -346,7 +346,7 @@ pub enum SubmissionRingFlag {
 }
 
 #[repr(C)]
-pub struct CompletinRingOffsets {
+pub struct CompletionRingOffsets {
 	pub head: u32,
 	pub tail: u32,
 	pub ring_mask: u32,

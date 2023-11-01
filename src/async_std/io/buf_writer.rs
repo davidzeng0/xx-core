@@ -1,4 +1,5 @@
 use super::*;
+use crate::impls::UIntExtensions;
 
 pub struct BufWriter<W: Write> {
 	inner: W,
@@ -102,7 +103,7 @@ impl<W: Write> Write for BufWriter<W> {
 #[async_fn]
 impl<W: Write + Seek> BufWriter<W> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
-		let pos = rel.wrapping_add_unsigned(self.buf.len() as u64);
+		let pos = rel.checked_add_unsigned(self.buf.len() as u64).unwrap();
 
 		/*
 		 * as long as the seek is within our written buffer,
@@ -128,6 +129,17 @@ impl<W: Write + Seek> BufWriter<W> {
 		let off = self.inner.seek(seek).await?;
 
 		Ok(off)
+	}
+
+	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
+		let stream_pos = self.stream_position().await?;
+		let (rel, overflow) = abs.overflowing_difference_signed(stream_pos);
+
+		if !overflow {
+			self.seek_relative(rel).await
+		} else {
+			self.seek_inner(seek).await
+		}
 	}
 }
 
@@ -156,26 +168,21 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 		match seek {
 			SeekFrom::Current(pos) => self.seek_relative(pos).await,
 			SeekFrom::Start(pos) => {
-				if !self.stream_position_fast() {
-					return self.seek_inner(seek).await;
+				if self.stream_position_fast() {
+					self.seek_abs(pos, seek).await
+				} else {
+					self.seek_inner(seek).await
 				}
-
-				let stream_pos = self.stream_position().await?;
-
-				self.seek_relative(pos.wrapping_sub(stream_pos) as i64)
-					.await
 			}
 
 			SeekFrom::End(pos) => {
-				if !self.stream_len_fast() || !self.stream_position_fast() {
-					return self.seek_inner(seek).await;
+				if self.stream_len_fast() && self.stream_position_fast() {
+					let new_pos = self.stream_len().await?.checked_add_signed(pos).unwrap();
+
+					self.seek_abs(new_pos, seek).await
+				} else {
+					self.seek_inner(seek).await
 				}
-
-				let pos = self.stream_len().await?.checked_add_signed(pos).unwrap();
-				let stream_pos = self.stream_position().await?;
-
-				self.seek_relative(pos.wrapping_sub(stream_pos) as i64)
-					.await
 			}
 		}
 	}

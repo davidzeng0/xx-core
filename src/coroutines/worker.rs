@@ -10,7 +10,7 @@ pub struct Worker {
 
 impl Worker {
 	pub fn main() -> Self {
-		Self::from_fiber(unsafe { Handle::new_null() }, Fiber::main())
+		Self::from_fiber(unsafe { Handle::null() }, Fiber::main())
 	}
 
 	pub fn new(executor: Handle<Executor>, start: Start) -> Self {
@@ -20,7 +20,9 @@ impl Worker {
 	pub fn from_fiber(executor: Handle<Executor>, fiber: Fiber) -> Self {
 		Self {
 			executor,
-			from: unsafe { Handle::new_null() },
+
+			/* from is initialized later */
+			from: unsafe { Handle::null() },
 			fiber
 		}
 	}

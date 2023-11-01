@@ -1,13 +1,13 @@
 use std::sync::Mutex;
 
-use crate::{fiber::*, task::*, trace};
+use crate::{fiber::*, trace};
 
 pub struct Pool {
 	pool: Mutex<Vec<Fiber>>,
+
+	/* count does not need to be atomic as it's only modified with the lock */
 	count: u64
 }
-
-impl Global for Pool {}
 
 impl Pool {
 	pub const fn new() -> Self {
@@ -17,7 +17,7 @@ impl Pool {
 	pub fn new_fiber(&mut self, start: Start) -> Fiber {
 		let mut pool = self.pool.lock().unwrap();
 
-		self.count += 1;
+		self.count = self.count.checked_add(1).unwrap();
 
 		match pool.pop() {
 			Some(mut fiber) => {
@@ -45,7 +45,7 @@ impl Pool {
 	pub fn exit_fiber(&mut self, fiber: Fiber) {
 		let mut pool = self.pool.lock().unwrap();
 
-		self.count -= 1;
+		self.count = self.count.checked_sub(1).unwrap();
 
 		let ideal = Self::calculate_ideal(self.count);
 

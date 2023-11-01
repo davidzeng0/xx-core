@@ -1,39 +1,24 @@
 use std::{
 	any::type_name,
 	fmt,
-	io::{stderr, BufWriter, Result, Stderr, Write},
-	ops::{Deref, DerefMut},
+	io::{stderr, BufWriter, Cursor, Result, Stderr, Write},
+	str::from_utf8_unchecked,
 	sync::{Mutex, MutexGuard}
 };
 
 use ctor::ctor;
+use lazy_static::lazy_static;
 use log::{set_boxed_logger, set_max_level, Level, LevelFilter, Log, Metadata, Record};
 
 struct Logger;
 
-struct Output {
-	data: Option<BufWriter<Stderr>>
+lazy_static! {
+	static ref STDERR: Mutex<BufWriter<Stderr>> =
+		Mutex::new(BufWriter::with_capacity(1024, stderr()));
 }
 
-impl Deref for Output {
-	type Target = BufWriter<Stderr>;
-
-	fn deref(&self) -> &Self::Target {
-		self.data.as_ref().unwrap()
-	}
-}
-
-impl DerefMut for Output {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		self.data
-			.get_or_insert_with(|| BufWriter::with_capacity(1024, stderr()))
-	}
-}
-
-static mut STDERR: Mutex<Output> = Mutex::new(Output { data: None });
-
-fn get_stderr() -> MutexGuard<'static, Output> {
-	unsafe { &STDERR }.lock().unwrap()
+fn get_stderr() -> MutexGuard<'static, BufWriter<Stderr>> {
+	STDERR.lock().unwrap()
 }
 
 macro_rules! ansi_color {
@@ -51,7 +36,7 @@ macro_rules! ansi_color {
 }
 
 struct Adapter<'a> {
-	output: MutexGuard<'a, Output>,
+	output: MutexGuard<'a, BufWriter<Stderr>>,
 	record: &'a Record<'a>,
 	wrote_prefix: bool
 }
@@ -138,47 +123,45 @@ fn init() {
 	set_max_level(LevelFilter::Info)
 }
 
-pub fn get_struct_name<T>(_: &T) -> &str {
+fn get_struct_name<T>(_: &T) -> &str {
 	type_name::<T>().split("::").last().unwrap()
 }
 
-pub fn get_struct_addr<T>(val: &T) -> usize {
+fn get_struct_addr<T>(val: &T) -> usize {
 	val as *const _ as usize
 }
 
-pub fn get_struct_addr_low<T>(val: &T) -> usize {
-	val as *const _ as usize & 0xffffffff
+fn get_struct_addr_low<T>(val: &T) -> usize {
+	get_struct_addr(val) & 0xffffffff
+}
+
+#[inline(never)]
+pub fn log_target<T>(level: Level, target: &T, args: fmt::Arguments<'_>) {
+	let mut fmt_buf = Cursor::new([0u8; 64]);
+
+	fmt_buf
+		.write_fmt(format_args!(
+			"@ {:0>8x} {: >13}",
+			get_struct_addr_low(target),
+			get_struct_name(target)
+		))
+		.expect("Log struct name too long");
+
+	let pos = fmt_buf.position() as usize;
+
+	log::log!(
+		target: unsafe { from_utf8_unchecked(&fmt_buf.get_ref()[0..pos]) },
+		level,
+		"{}",
+		args
+	);
 }
 
 #[macro_export]
 macro_rules! log {
 	($level: expr, target: $target: expr, $($arg: tt)+) => {
-		loop {
-			if $crate::opt::hint::likely(!::log::log_enabled!($level)) {
-				break;
-			}
-
-			let mut __xx_core_log_fmt_buf = ::std::io::Cursor::new([0u8; 64]);
-
-			::std::io::Write::write_fmt(
-				&mut __xx_core_log_fmt_buf,
-				format_args!(
-					"@ {:0>8x} {: >13}",
-					$crate::log::get_struct_addr_low($target),
-					$crate::log::get_struct_name($target)
-				)
-			).expect("Log struct name too long");
-
-			let __xx_core_log_fmted_pos = __xx_core_log_fmt_buf.position() as usize;
-			let __xx_core_log_fmted_target = &__xx_core_log_fmt_buf.get_ref()[0..__xx_core_log_fmted_pos];
-
-			::log::log!(
-				target: unsafe { ::std::str::from_utf8_unchecked(__xx_core_log_fmted_target) },
-				$level,
-				$($arg)+
-			);
-
-			break;
+		if $crate::opt::hint::unlikely(::log::log_enabled!($level)) {
+			$crate::log::log_target($level, $target, format_args!($($arg)+));
 		}
 	};
 

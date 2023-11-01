@@ -3,7 +3,7 @@ use crate::fiber::*;
 
 /// Per thread executor, responsible for running worker threads
 pub struct Executor {
-	pool: Handle<Pool>,
+	pool: MutPtr<Pool>,
 	main: Worker,
 	current: Handle<Worker>
 }
@@ -11,13 +11,16 @@ pub struct Executor {
 impl Executor {
 	pub fn new() -> Self {
 		Self {
-			pool: unsafe { Handle::new_null() },
+			/* pool can be null, if the user doesn't want to use a pool */
+			pool: MutPtr::null(),
 			main: Worker::main(),
-			current: unsafe { Handle::new_null() }
+
+			/* current cannot be null, is assigned once pinned */
+			current: unsafe { Handle::null() }
 		}
 	}
 
-	pub fn set_pool(&mut self, pool: Handle<Pool>) {
+	pub fn set_pool(&mut self, pool: MutPtr<Pool>) {
 		self.pool = pool;
 	}
 

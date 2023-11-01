@@ -44,6 +44,11 @@ pub struct Context {
 fn type_for<R: PerContextRuntime>() -> u32 {
 	let id: i128 = unsafe { std::mem::transmute(TypeId::of::<R>()) };
 
+	/* comparing i128s is generally slower than u32
+	 *
+	 * u32 is enough to ensure that two different runtimes
+	 * are in fact different
+	 */
 	id as u32
 }
 
@@ -93,6 +98,17 @@ impl Context {
 
 		block_on(
 			|cancel| {
+				/* hold variably sized cancel on the stack,
+				 * in an option so that we know it's been
+				 * moved when `interrupt` is called
+				 *
+				 * we have to use a specialized function for each
+				 * cancel type
+				 *
+				 * this removes the need to allocate memory
+				 * to box this cancel, potentially causing
+				 * significant slowdowns
+				 */
 				let mut cancel = Some(cancel);
 
 				handle.clone().cancel = Some(Closure::new(

@@ -6,7 +6,7 @@ use super::{
 	os::{mman::*, resource::*},
 	sysdep::import_sysdeps
 };
-use crate::{pointer::*, task::Handle};
+use crate::pointer::*;
 
 import_sysdeps!();
 
@@ -68,7 +68,7 @@ extern "C" fn exit_fiber(arg: *const ()) {
 }
 
 extern "C" fn exit_fiber_to_pool(arg: *const ()) {
-	let mut arg: MutPtr<(ManuallyDrop<Fiber>, Handle<Pool>)> = ConstPtr::from(arg).cast();
+	let mut arg: MutPtr<(ManuallyDrop<Fiber>, MutPtr<Pool>)> = ConstPtr::from(arg).cast();
 	let fiber = unsafe { ManuallyDrop::take(&mut arg.0) };
 
 	arg.1.exit_fiber(fiber);
@@ -81,6 +81,9 @@ impl Fiber {
 
 	pub fn new() -> Self {
 		Self {
+			/* fiber context. stores to-be-preserved registers,
+			 * including any that cannot be corrupted by inline asm
+			 */
 			context: Context::new(),
 			stack: map_memory(
 				0,
@@ -105,6 +108,8 @@ impl Fiber {
 	}
 
 	pub unsafe fn set_start(&mut self, start: Start) {
+		/* set the stack back to the beginning. unuse all the stack that the previous
+		 * worker used */
 		self.context
 			.set_stack(self.stack.addr(), self.stack.length());
 		self.context.set_start(start);
@@ -115,6 +120,14 @@ impl Fiber {
 	/// Safety: `self` must be currently running
 	#[inline(always)]
 	pub unsafe fn switch(&mut self, to: &mut Fiber) {
+		/* note for arch specific implementation:
+		 * all registers must be declared clobbered
+		 *
+		 * it's faster to let the compiler preserve the
+		 * registers it knows it uses rather than
+		 * having the functions written in assembly
+		 * store them for us
+		 */
 		switch(&mut self.context, &mut to.context);
 	}
 
@@ -133,7 +146,7 @@ impl Fiber {
 		fiber.switch(to);
 	}
 
-	pub unsafe fn exit_to_pool(self, to: &mut Fiber, pool: Handle<Pool>) {
+	pub unsafe fn exit_to_pool(self, to: &mut Fiber, pool: MutPtr<Pool>) {
 		let mut arg = (ManuallyDrop::new(self), pool);
 
 		to.context.set_intercept(Intercept {

@@ -7,19 +7,19 @@ use crate::{
 };
 
 pub enum Resource {
-	///Per-process CPU limit, in seconds.
+	/// Per-process CPU limit, in seconds.
 	Cpu,
 
-	///Largest file that can be created, in bytes.
+	/// Largest file that can be created, in bytes.
 	FSize,
 
-	///Maximum size of data segment, in bytes.
+	/// Maximum size of data segment, in bytes.
 	Data,
 
-	///Maximum size of stack segment, in bytes.
+	/// Maximum size of stack segment, in bytes.
 	Stack,
 
-	///Largest core file that can be created, in bytes.
+	/// Largest core file that can be created, in bytes.
 	Core,
 
 	/// Largest resident set size, in bytes.
@@ -28,25 +28,25 @@ pub enum Resource {
 	/// taken from them.
 	Rss,
 
-	///Number of processes.
+	/// Number of processes.
 	NProc,
 
-	///Number of open files.
+	/// Number of open files.
 	NoFile,
 
-	///Locked-in-memory address space.
+	/// Locked-in-memory address space.
 	MemLock,
 
-	///Address space limit.
+	/// Address space limit.
 	As,
 
-	///Maximum number of file locks.
+	/// Maximum number of file locks.
 	Locks,
 
-	///Maximum number of pending signals.
+	/// Maximum number of pending signals.
 	SigPending,
 
-	///Maximum bytes in POSIX message queues.
+	/// Maximum bytes in POSIX message queues.
 	MsgQueue,
 
 	/// Maximum nice priority allowed to raise to.
@@ -54,7 +54,7 @@ pub enum Resource {
 	/// values of this resource limit.
 	Nice,
 
-	///Maximum realtime priority allowed for non-priviledged processes.
+	/// Maximum realtime priority allowed for non-priviledged processes.
 	RtPrio,
 
 	/// Maximum CPU time in microseconds that a process scheduled under a

@@ -4,7 +4,10 @@ use super::*;
 
 /// A type that implements [`Global`] declares it
 /// as a type which can be infinitely (and simultaneously)
-/// mutably borrowed
+/// mutably borrowed (limited to same thread mutability)
+///
+/// If the object can be mutably borrowed across threads,
+/// use MutPtr instead
 pub trait Global {
 	/// Called when the type implementing Global gets pinned
 	unsafe fn pinned(&mut self) {}
@@ -61,7 +64,7 @@ pub struct Handle<T: Global + ?Sized> {
 }
 
 impl<T: Global + Sized> Handle<T> {
-	pub unsafe fn new_null() -> Self {
+	pub unsafe fn null() -> Self {
 		Self { ptr: MutPtr::<T>::null() }
 	}
 

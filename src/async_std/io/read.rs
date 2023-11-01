@@ -1,13 +1,14 @@
 use std::ptr::copy_nonoverlapping;
 
 use super::*;
+use crate::read_into;
 
 #[inline(always)]
 pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	let len = dest.len().min(src.len());
 
 	/* adding any checks for small lengths only worsens performance
-	 * it seems like llvm can't do branching properly
+	 * it seems like llvm or rustc can't do branching properly
 	 *
 	 * a call to memcpy should do those checks anyway
 	 */
@@ -29,6 +30,12 @@ pub trait Read {
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
 	async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+		/* if the buffer's length is zero and we're interrupted,
+		 * we technically completed the read without error,
+		 * so return early here
+		 */
+		read_into!(buf);
+
 		let mut read = 0;
 
 		while read < buf.len() {
@@ -47,7 +54,7 @@ pub trait Read {
 		let read = self.read_exact(buf).await?;
 
 		if unlikely(read != buf.len()) {
-			return Err(short_io_error().await);
+			return Err(short_io_error_unless_interrupt().await);
 		}
 
 		Ok(())
@@ -59,6 +66,7 @@ pub trait Read {
 	async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
 		let start_len = buf.len();
 
+		/* avoid doubling the capacity if we're interrupted */
 		while !is_interrupted().await {
 			let mut capacity = buf.capacity();
 			let len = buf.len();
@@ -79,6 +87,7 @@ pub trait Read {
 			}
 
 			if buf.len() == capacity {
+				/* avoid doubling the capacity if EOF. try probing for more data */
 				let mut probe = [0u8; 32];
 
 				match self.read(&mut probe).await {

@@ -156,8 +156,10 @@ impl<R: BufRead> TypedReader<R> {
 		let read = self.reader.read_exact(bytes).await?;
 
 		if unlikely(read != N) {
+			check_interrupt().await?;
+
 			if read != 0 {
-				return Err(short_io_error().await);
+				return Err(short_io_error_unless_interrupt().await);
 			}
 		}
 
@@ -167,10 +169,11 @@ impl<R: BufRead> TypedReader<R> {
 	#[inline(always)]
 	pub async fn read_bytes<const N: usize>(&mut self) -> Result<Option<[u8; N]>> {
 		let mut bytes = [0u8; N];
-		/* for some llvm reason, unlikely here does the actual job of
+		/* for some llvm or rustc reason, unlikely here does the actual job of
 		 * likely, and nets a performance gain on x64
 		 */
 		if unlikely(self.reader.buffer().len() >= N) {
+			/* this should get optimized to a single load instruction of size N */
 			/* this loop gets optimized to a single load instruction of size N */
 			for i in 0..N {
 				bytes[i] = unsafe { *self.reader.buffer().get_unchecked(i) };
@@ -179,12 +182,8 @@ impl<R: BufRead> TypedReader<R> {
 			unsafe {
 				self.reader.consume_unchecked(N);
 			}
-		} else {
-			let read = self.read_bytes_slow(&mut bytes).await?;
-
-			if read == 0 {
-				return Ok(None);
-			}
+		} else if self.read_bytes_slow(&mut bytes).await? == 0 {
+			return Ok(None);
 		}
 
 		Ok(Some(bytes))
