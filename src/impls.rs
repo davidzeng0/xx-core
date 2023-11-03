@@ -1,8 +1,8 @@
 pub trait UIntExtensions {
 	type Signed;
 
-	fn overflowing_difference_signed(self, rhs: Self) -> (Self::Signed, bool);
-	fn saturating_difference_signed(self, rhs: Self) -> Self::Signed;
+	fn overflowing_signed_difference(self, rhs: Self) -> (Self::Signed, bool);
+	fn saturating_signed_difference(self, rhs: Self) -> Self::Signed;
 }
 
 macro_rules! uint_impl {
@@ -10,15 +10,15 @@ macro_rules! uint_impl {
 		impl UIntExtensions for $type {
 			type Signed = $signed;
 
-			fn overflowing_difference_signed(self, rhs: Self) -> ($signed, bool) {
+			fn overflowing_signed_difference(self, rhs: Self) -> ($signed, bool) {
 				let res = self.wrapping_sub(rhs) as $signed;
 				let overflow = (self >= rhs) == (res < 0);
 
 				(res, overflow)
 			}
 
-			fn saturating_difference_signed(self, rhs: Self) -> $signed {
-				let (res, overflow) = self.overflowing_difference_signed(rhs);
+			fn saturating_signed_difference(self, rhs: Self) -> $signed {
+				let (res, overflow) = self.overflowing_signed_difference(rhs);
 
 				if !overflow {
 					res

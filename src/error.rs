@@ -61,10 +61,7 @@ impl Error {
 	}
 
 	pub fn os_error(&self) -> Option<ErrorCodes> {
-		match self {
-			Self::Os(code) => Some(ErrorCodes::from_raw_os_error(*code)),
-			_ => None
-		}
+		self.raw_os_error().map(ErrorCodes::from_raw_os_error)
 	}
 
 	pub fn kind(&self) -> ErrorKind {

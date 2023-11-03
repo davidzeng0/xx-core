@@ -133,7 +133,7 @@ impl<W: Write + Seek> BufWriter<W> {
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
 		let stream_pos = self.stream_position().await?;
-		let (rel, overflow) = abs.overflowing_difference_signed(stream_pos);
+		let (rel, overflow) = abs.overflowing_signed_difference(stream_pos);
 
 		if !overflow {
 			self.seek_relative(rel).await

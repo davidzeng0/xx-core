@@ -50,6 +50,8 @@ pub trait Read {
 		check_interrupt_if_zero(read).await
 	}
 
+	/// Same as above, except returns err on partial reads, even
+	/// when interrupted
 	async fn read_exact_or_err(&mut self, buf: &mut [u8]) -> Result<()> {
 		let read = self.read_exact(buf).await?;
 
@@ -262,10 +264,9 @@ pub trait BufRead: Read {
 
 	fn buffer(&self) -> &[u8];
 
-	fn buffer_mut(&mut self) -> &mut [u8];
-
 	fn consume(&mut self, count: usize);
 
+	/// Discard all data in the buffer
 	fn discard(&mut self);
 
 	unsafe fn consume_unchecked(&mut self, count: usize);
@@ -312,9 +313,6 @@ macro_rules! bufread_wrapper {
 
 			#[async_trait_impl]
 			fn buffer(&self) -> &[u8];
-
-			#[async_trait_impl]
-			fn buffer_mut(&mut self) -> &mut [u8];
 
 			#[async_trait_impl]
 			fn consume(&mut self, count: usize);

@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, mem::transmute};
 
 use super::*;
 use crate::{closure::Closure, task::block_on};
@@ -9,21 +9,28 @@ fn run_cancel<C: Cancel>(arg: *const (), _: ()) -> Result<()> {
 	unsafe { cancel.take().unwrap_unchecked().run() }
 }
 
+/// The environment for a async worker
 pub trait PerContextRuntime: Global + 'static {
+	/// Gets the context associated with the worker
 	fn context(&mut self) -> &mut Context;
 
+	/// Returns the PerContextRuntime that owns the Context
 	fn from_context(context: &mut Context) -> &mut Self;
 
+	/// Creates a new environment for a new worker
 	fn new_from_worker(&mut self, worker: Handle<Worker>) -> Self;
 
+	/// The worker's executor
 	fn executor(&mut self) -> Handle<Executor> {
 		self.context().executor()
 	}
 
+	/// Manually suspend the worker
 	unsafe fn suspend(&mut self) {
 		self.context().suspend()
 	}
 
+	/// Manually resume the worker
 	unsafe fn resume(&mut self) {
 		self.context().resume()
 	}
@@ -42,7 +49,7 @@ pub struct Context {
 }
 
 fn type_for<R: PerContextRuntime>() -> u32 {
-	let id: i128 = unsafe { std::mem::transmute(TypeId::of::<R>()) };
+	let id: i128 = unsafe { transmute(TypeId::of::<R>()) };
 
 	/* comparing i128s is generally slower than u32
 	 *
@@ -81,7 +88,7 @@ impl Context {
 	#[inline(always)]
 	fn resume(&mut self) {
 		unsafe {
-			self.executor.resume(self.worker);
+			self.worker.resume();
 		}
 	}
 

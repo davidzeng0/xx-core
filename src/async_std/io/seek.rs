@@ -33,18 +33,21 @@ pub trait Seek {
 		self.seek(SeekFrom::Current(0)).await
 	}
 
+	/// Rewinds the stream to the beginning
 	async fn rewind(&mut self) -> Result<()> {
 		self.seek(SeekFrom::Start(0)).await?;
 
 		Ok(())
 	}
 
+	/// Rewind `amount` bytes on the stream
 	async fn rewind_exact(&mut self, amount: u64) -> Result<u64> {
 		let amount: i64 = amount.try_into().unwrap();
 
 		self.seek(SeekFrom::Current(-amount)).await
 	}
 
+	/// Skips `amount` bytes from the stream
 	async fn skip_exact(&mut self, amount: u64) -> Result<u64> {
 		self.seek(SeekFrom::Current(amount.try_into().unwrap()))
 			.await

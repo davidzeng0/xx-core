@@ -28,7 +28,7 @@ impl Executor {
 		if self.pool.is_null() {
 			Worker::new(self.into(), start)
 		} else {
-			Worker::from_fiber(self.into(), self.pool.new_fiber(start))
+			unsafe { Worker::from_fiber(self.into(), self.pool.new_fiber(start)) }
 		}
 	}
 

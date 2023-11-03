@@ -13,10 +13,8 @@ import_sysdeps!();
 pub mod pool;
 pub use self::pool::Pool;
 
-#[allow(dead_code)]
 pub struct Fiber {
 	context: Context,
-
 	stack: MemoryMap<'static>
 }
 
@@ -30,11 +28,11 @@ pub struct Start {
 }
 
 impl Start {
-	pub fn new(start: extern "C" fn(*const ()), arg: *const ()) -> Self {
+	pub fn new(start: fn(*const ()), arg: *const ()) -> Self {
 		Self { start: start as usize, arg }
 	}
 
-	pub fn set_start(&mut self, start: extern "C" fn(*const ())) {
+	pub fn set_start(&mut self, start: fn(*const ())) {
 		self.start = start as usize;
 	}
 
@@ -58,16 +56,20 @@ struct Intercept {
 	ret: usize
 }
 
-extern "C" fn exit_fiber(arg: *const ()) {
+fn exit_fiber(arg: *const ()) {
 	let mut fiber: MutPtr<ManuallyDrop<Fiber>> = ConstPtr::from(arg).cast();
 
-	/* Safety: move worker off of its own stack then drop */
+	/* Safety: move worker off of its own stack then drop,
+	 * in case the fiber accesses its own fields after dropping
+	 * the stack, which for now it doesn't, unless you're exiting
+	 * the fiber to a pool
+	 */
 	unsafe {
 		drop(ManuallyDrop::take(&mut fiber));
 	};
 }
 
-extern "C" fn exit_fiber_to_pool(arg: *const ()) {
+fn exit_fiber_to_pool(arg: *const ()) {
 	let mut arg: MutPtr<(ManuallyDrop<Fiber>, MutPtr<Pool>)> = ConstPtr::from(arg).cast();
 	let fiber = unsafe { ManuallyDrop::take(&mut arg.0) };
 
@@ -107,6 +109,9 @@ impl Fiber {
 		this
 	}
 
+	/// Set the entry point of the fiber
+	///
+	/// Safety: fiber is exited, or wasn't started
 	pub unsafe fn set_start(&mut self, start: Start) {
 		/* set the stack back to the beginning. unuse all the stack that the previous
 		 * worker used */
@@ -146,6 +151,8 @@ impl Fiber {
 		fiber.switch(to);
 	}
 
+	/// Exits the fiber, storing the stack into a pool
+	/// to be reused when a new fiber is spawned
 	pub unsafe fn exit_to_pool(self, to: &mut Fiber, pool: MutPtr<Pool>) {
 		let mut arg = (ManuallyDrop::new(self), pool);
 

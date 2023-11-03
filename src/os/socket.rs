@@ -6,6 +6,7 @@ use std::{
 use enumflags2::bitflags;
 
 use super::{
+	inet::Address,
 	iovec::IoVec,
 	syscall::{syscall_int, SyscallNumber::*},
 	tcp::TcpOption
@@ -370,6 +371,13 @@ pub fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	bind_raw(socket, ConstPtr::from(addr).cast(), size_of::<A>() as u32)
 }
 
+pub fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
+	match &addr {
+		Address::V4(addr) => bind(socket, addr),
+		Address::V6(addr) => bind(socket, addr)
+	}
+}
+
 pub fn connect_raw(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()> {
 	syscall_int!(Connect, socket.as_raw_fd(), addr.as_raw_int(), addrlen)?;
 
@@ -378,6 +386,13 @@ pub fn connect_raw(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> 
 
 pub fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	connect_raw(socket, ConstPtr::from(addr).cast(), size_of::<A>() as u32)
+}
+
+pub fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
+	match &addr {
+		Address::V4(addr) => connect(socket, addr),
+		Address::V6(addr) => connect(socket, addr)
+	}
 }
 
 pub fn accept_raw(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32) -> Result<OwnedFd> {

@@ -1,5 +1,6 @@
 use super::*;
 
+/// An async task
 pub trait Task {
 	type Output;
 

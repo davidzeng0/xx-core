@@ -168,27 +168,32 @@ impl<R: BufRead> TypedReader<R> {
 
 	#[inline(always)]
 	pub async fn read_bytes<const N: usize>(&mut self) -> Result<Option<[u8; N]>> {
-		let mut bytes = [0u8; N];
 		/* for some llvm or rustc reason, unlikely here does the actual job of
 		 * likely, and nets a performance gain on x64
 		 */
-		if unlikely(self.reader.buffer().len() >= N) {
-			/* this should get optimized to a single load instruction of size N */
-			/* this loop gets optimized to a single load instruction of size N */
-			for i in 0..N {
-				bytes[i] = unsafe { *self.reader.buffer().get_unchecked(i) };
-			}
-
+		Ok(if unlikely(self.reader.buffer().len() >= N) {
+			/* bytes variable is separated to improve optimizations */
+			let mut bytes = [0u8; N];
+			/* this gets optimized to a single load instruction of size N */
 			unsafe {
+				read_into_slice(&mut bytes, self.reader.buffer().get_unchecked(0..N));
+
 				self.reader.consume_unchecked(N);
 			}
-		} else if self.read_bytes_slow(&mut bytes).await? == 0 {
-			return Ok(None);
-		}
 
-		Ok(Some(bytes))
+			Some(bytes)
+		} else {
+			let mut bytes = [0u8; N];
+
+			if self.read_bytes_slow(&mut bytes).await? != 0 {
+				Some(bytes)
+			} else {
+				None
+			}
+		})
 	}
 
+	/// Read a type, returning None if EOF and no bytes were read
 	#[inline(always)]
 	pub async fn read_type<T: FromBytes<N>, const N: usize>(&mut self) -> Result<Option<T>> {
 		let bytes = self.read_bytes().await?;
@@ -196,6 +201,7 @@ impl<R: BufRead> TypedReader<R> {
 		Ok(bytes.map(T::from_bytes))
 	}
 
+	/// Read a type, assuming EOF is an error
 	#[inline(always)]
 	pub async fn read_type_or_err<T: FromBytes<N>, const N: usize>(&mut self) -> Result<T> {
 		self.read_type()
@@ -331,22 +337,29 @@ impl<W: Write> TypedWriter<W> {
 		FmtAdapter::new(self).await.write_args(args).await
 	}
 
+	/// Attempts to write the entire string, returning the number of bytes
+	/// written which may be short if interrupted or eof
 	pub async fn write_string(&mut self, buf: &str) -> Result<usize> {
 		self.writer.write_all(buf.as_bytes()).await
 	}
 
+	/// Same as above but returns error on partial writes
 	pub async fn write_string_exact_or_err(&mut self, buf: &str) -> Result<usize> {
 		self.writer.write_all_or_err(buf.as_bytes()).await?;
 
 		Ok(buf.as_bytes().len())
 	}
 
+	/// Attemps to write an entire char, returning the number of bytes written
+	/// which may be short if interrupted or eof
 	pub async fn write_char(&mut self, ch: char) -> Result<usize> {
 		let mut buf = [0u8; 4];
 
 		self.write_string(ch.encode_utf8(&mut buf)).await
 	}
 
+	/// Attempts to write an entire type, returning the number of bytes written
+	/// which may be short if interrupted or eof
 	#[inline(always)]
 	pub async fn write_type<T: ToBytes<N>, const N: usize>(&mut self, val: T) -> Result<usize> {
 		self.writer.write_all(&val.to_bytes()).await

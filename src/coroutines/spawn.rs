@@ -16,7 +16,7 @@ struct SpawnWorker<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: 
 }
 
 impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWorker<R, Entry, T> {
-	extern "C" fn worker_start(arg: *const ()) {
+	fn worker_start(arg: *const ()) {
 		let mut this: MutPtr<Self> = ConstPtr::from(arg).cast();
 
 		let (entry, task, worker) = this.move_to_worker.take().unwrap();
@@ -106,6 +106,8 @@ pub fn spawn_sync<R: PerContextRuntime, T: Task>(
 	unsafe { SpawnWorker::spawn(executor, entry, task).run(request) }
 }
 
+/// Utility function that calls the above with the
+/// executor and runtime passed to this function
 #[sync_task]
 pub fn spawn_sync_with_runtime<R: PerContextRuntime, T: Task>(
 	mut runtime: Handle<R>, task: T
@@ -115,8 +117,9 @@ pub fn spawn_sync_with_runtime<R: PerContextRuntime, T: Task>(
 	}
 
 	let executor = runtime.executor();
+	let new_runtime = |worker| runtime.new_from_worker(worker);
 
-	unsafe { spawn_sync(executor, |worker| runtime.new_from_worker(worker), task).run(request) }
+	unsafe { spawn_sync(executor, new_runtime, task).run(request) }
 }
 
 struct Spawn<Output> {
@@ -226,7 +229,8 @@ unsafe impl<Output> SyncTask for JoinTask<Output> {
 		self.task.waiter = request;
 
 		/* we could make JoinTask return Progress::Done instead of checking below,
-		 * but block_on is somewhat expensive
+		 * but block_on is somewhat expensive, so only want to block on if
+		 * it's necessary
 		 */
 		Progress::Pending(JoinCancel { task: self.task })
 	}

@@ -13,7 +13,16 @@ fn block_resume<Resume: FnOnce(), Output>(_: RequestPtr<Output>, arg: *const (),
 	resume();
 }
 
-/// Safety: memory leak if `resume` is not called
+/// Block on a sync task
+///
+/// `block` is a function that doesn't return until the task finishes,
+/// and is called with the task's cancel handle
+///
+/// `resume` is a function that is called when the task finishes,
+/// to signal to the `block`ing function that it should return
+///
+/// Safety: memory leak if `resume` is not called, aka the blocking function
+/// exits and the task never finishes
 #[inline(always)]
 pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Task>(
 	block: Block, resume: Resume, task: T

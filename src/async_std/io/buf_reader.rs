@@ -24,6 +24,7 @@ impl<R: Read> BufReader<R> {
 		len
 	}
 
+	/// Utility function for filling start..end in the capacity of our buffer
 	#[inline]
 	async fn fill_buf_offset(&mut self, start: usize, end: usize) -> Result<usize> {
 		Ok(unsafe {
@@ -74,7 +75,12 @@ impl<R: Read> BufReader<R> {
 		(self.inner, self.buf, self.pos)
 	}
 
+	/// Moves unconsumed data to the beginning of the buffer
 	pub fn move_data_to_beginning(&mut self) {
+		if self.pos == 0 {
+			return;
+		}
+
 		let len = self.buffer().len();
 
 		unsafe {
@@ -86,6 +92,7 @@ impl<R: Read> BufReader<R> {
 		self.pos = 0;
 	}
 
+	/// The read head
 	pub fn position(&self) -> usize {
 		self.pos
 	}
@@ -138,6 +145,7 @@ impl<R: Read> BufRead for BufReader<R> {
 		self.fill_buf_offset(self.buf.len(), end).await
 	}
 
+	/// Preserves buffer on EOF
 	async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
 		let start_len = buf.len();
 
@@ -149,7 +157,7 @@ impl<R: Read> BufRead for BufReader<R> {
 				None => (available.len(), false)
 			};
 
-			buf.extend_from_slice(unsafe { available.get_unchecked(0..used) });
+			buf.extend_from_slice(&available[0..used]);
 
 			self.pos += used;
 
@@ -181,10 +189,6 @@ impl<R: Read> BufRead for BufReader<R> {
 		unsafe { self.buf.get_unchecked(self.pos..) }
 	}
 
-	fn buffer_mut(&mut self) -> &mut [u8] {
-		unsafe { self.buf.get_unchecked_mut(self.pos..) }
-	}
-
 	fn consume(&mut self, count: usize) {
 		let new_pos = self.pos.checked_add(count).unwrap();
 
@@ -193,7 +197,6 @@ impl<R: Read> BufRead for BufReader<R> {
 		self.pos = new_pos;
 	}
 
-	/// Discard all data in the buffer
 	#[inline]
 	fn discard(&mut self) {
 		self.pos = 0;
@@ -234,7 +237,7 @@ impl<R: Read + Seek> BufReader<R> {
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
 		let stream_pos = self.stream_position().await?;
-		let (rel, overflow) = abs.overflowing_difference_signed(stream_pos);
+		let (rel, overflow) = abs.overflowing_signed_difference(stream_pos);
 
 		if !overflow {
 			self.seek_relative(rel).await

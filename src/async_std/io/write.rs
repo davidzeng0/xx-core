@@ -35,6 +35,7 @@ pub trait Write {
 		check_interrupt_if_zero(wrote).await
 	}
 
+	/// Same as above, except partial writes are treated as an error
 	async fn write_all_or_err(&mut self, buf: &[u8]) -> Result<()> {
 		let wrote = self.write_all(buf).await?;
 
