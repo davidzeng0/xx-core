@@ -12,7 +12,7 @@ In order to resume a future N function calls deep, it has to be resumed from the
 ### Memory
 Rust coroutines are stackless, and each new future needs memory in order to run. Async functions return sized futures, allowing the rust compiler to allocate all the memory it needs at the root future (effectively acting as a stackful coroutine), saving on allocation costs. However, recursive (and extern async functions, however a much rarer case) require a new memory allocation per level and don't receive pre-allocated benefits.
 
-Due to a [#99504](https://github.com/rust-lang/rust/issues/99504), memory is also copied for every nested future and incurs significant overhead.
+Due to [#99504](https://github.com/rust-lang/rust/issues/99504), memory is also copied for every nested future and incurs significant overhead.
 
 ### Advantages of fibers
 
