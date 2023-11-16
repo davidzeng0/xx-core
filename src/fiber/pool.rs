@@ -2,24 +2,32 @@ use std::sync::Mutex;
 
 use crate::{fiber::*, trace};
 
-pub struct Pool {
-	pool: Mutex<Vec<Fiber>>,
+struct Data {
+	pool: Vec<Fiber>,
+	active: u64
+}
 
-	/* count does not need to be atomic as it's only modified with the lock */
-	count: u64
+impl Data {
+	const fn new() -> Self {
+		Self { pool: Vec::new(), active: 0 }
+	}
+}
+
+pub struct Pool {
+	data: Mutex<Data>
 }
 
 impl Pool {
 	pub const fn new() -> Self {
-		Self { pool: Mutex::new(Vec::new()), count: 0 }
+		Self { data: Mutex::new(Data::new()) }
 	}
 
 	pub fn new_fiber(&mut self, start: Start) -> Fiber {
-		let mut pool = self.pool.lock().unwrap();
+		let mut data = self.data.lock().unwrap();
 
-		self.count = self.count.checked_add(1).unwrap();
+		data.active = data.active.checked_add(1).unwrap();
 
-		match pool.pop() {
+		match data.pool.pop() {
 			Some(mut fiber) => {
 				trace!(target: self, "== Reusing stack for worker");
 
@@ -43,16 +51,18 @@ impl Pool {
 	}
 
 	pub fn exit_fiber(&mut self, fiber: Fiber) {
-		let mut pool = self.pool.lock().unwrap();
+		let mut data = self.data.lock().unwrap();
 
-		self.count = self.count.checked_sub(1).unwrap();
+		data.active = data.active.checked_sub(1).unwrap();
 
-		let ideal = Self::calculate_ideal(self.count);
+		let ideal = Self::calculate_ideal(data.active);
 
-		if pool.len() < ideal as usize {
+		if data.pool.len() < ideal as usize {
 			trace!(target: self, "== Preserving worker stack");
 
-			pool.push(fiber);
+			data.pool.push(fiber);
+		} else {
+			trace!(target: self, "== Dropping worker stack");
 		}
 	}
 }

@@ -1,69 +1,63 @@
-use proc_macro2::TokenStream;
-use quote::quote;
-use syn::{visit_mut::VisitMut, *};
-
-use super::{make_closure::*, transform::*};
+use super::*;
 
 fn transform_func(func: &mut Function) -> Result<()> {
 	func.attrs.push(parse_quote!( #[must_use] ));
 
 	let return_type = get_return_type(&func.sig.output);
-	let mut default_cancel_capture = vec![quote! { xx_core::task::RequestPtr<#return_type> }];
 
-	if func.sig.inputs.iter().any(|arg| match arg {
-		FnArg::Receiver(_) => true,
-		FnArg::Typed(_) => false
-	}) {
-		default_cancel_capture.insert(0, quote! { &mut Self });
-	}
+	let mut cancel_closure_type = {
+		let mut types = vec![quote! { xx_core::task::RequestPtr<#return_type> }];
 
-	let default_cancel_capture = make_tuple_type(default_cancel_capture);
+		if func.sig.receiver().is_some() {
+			types.insert(0, quote! { &mut Self });
+		}
 
-	let mut cancel_closure_type = quote! {
-		xx_core::task::CancelClosure<#default_cancel_capture>
+		let default_cancel_capture = make_tuple_type(types);
+
+		quote! {
+			xx_core::task::CancelClosure<#default_cancel_capture>
+		}
 	};
 
-	if let Some(block) = &mut func.block {
-		loop {
-			let Some(stmt) = (*block).stmts.first_mut() else {
-				break;
-			};
+	loop {
+		let Some(block) = &mut func.block else {
+			break;
+		};
 
-			let Stmt::Item(Item::Fn(cancel)) = stmt else {
-				break;
-			};
+		let Some(stmt) = (*block).stmts.first_mut() else {
+			break;
+		};
 
-			if cancel.sig.ident != "cancel" {
-				break;
-			}
+		let Stmt::Item(Item::Fn(cancel)) = stmt else {
+			break;
+		};
 
-			cancel.sig.inputs.push(parse_quote! {
-				request: xx_core::task::RequestPtr<#return_type>
-			});
-
-			cancel_closure_type = into_typed_closure(
-				&mut Function {
-					is_item_fn: true,
-					attrs: &mut cancel.attrs,
-					env_generics: func.env_generics,
-					sig: &mut cancel.sig,
-					block: Some(&mut cancel.block)
-				},
-				vec![(quote! { () }, quote! { () })],
-				quote! { xx_core::task::CancelClosure },
-				|capture, _| quote! { xx_core::task::CancelClosure<#capture> }
-			)?;
-
-			let inputs = cancel.sig.inputs.clone();
-			let output = cancel.sig.output.clone();
-			let block = cancel.block.clone();
-
-			*stmt = parse_quote! {
-				let cancel = | #inputs | #output #block;
-			};
-
-			ReplaceSelf {}.visit_stmt_mut(stmt);
+		if cancel.sig.ident != "cancel" {
+			break;
 		}
+
+		cancel.sig.inputs.push(parse_quote! {
+			request: xx_core::task::RequestPtr<#return_type>
+		});
+
+		cancel_closure_type = into_typed_closure(
+			&mut Function {
+				is_item_fn: true,
+				attrs: &mut cancel.attrs,
+				env_generics: func.env_generics,
+				sig: &mut cancel.sig,
+				block: Some(&mut cancel.block)
+			},
+			vec![(quote! { () }, quote! { () })],
+			quote! { xx_core::task::CancelClosure },
+			|capture, _| quote! { xx_core::task::CancelClosure<#capture> }
+		)?;
+
+		let (inputs, output, block) = (&cancel.sig.inputs, &cancel.sig.output, &cancel.block);
+
+		*stmt = parse_quote! { let cancel = | #inputs | #output #block; };
+
+		ReplaceSelf {}.visit_stmt_mut(stmt);
 	}
 
 	func.sig.output = parse_quote! {

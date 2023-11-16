@@ -1,7 +1,4 @@
-use proc_macro2::TokenStream;
-use quote::quote;
-use syn::*;
-
+use super::*;
 use crate::async_trait::MaybeImplOrFn;
 
 pub struct Function<'a> {

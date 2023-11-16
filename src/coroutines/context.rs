@@ -1,12 +1,12 @@
 use std::{any::TypeId, mem::transmute};
 
 use super::*;
-use crate::{closure::Closure, task::block_on};
+use crate::closure::Closure;
 
-fn run_cancel<C: Cancel>(arg: *const (), _: ()) -> Result<()> {
-	let mut cancel: MutPtr<Option<C>> = ConstPtr::from(arg).cast();
+fn run_cancel<C: Cancel>(arg: MutPtr<()>, _: ()) -> Result<()> {
+	let cancel = arg.cast::<Option<C>>().as_mut();
 
-	unsafe { cancel.take().unwrap_unchecked().run() }
+	unsafe { cancel.take().unwrap().run() }
 }
 
 /// The environment for a async worker
@@ -40,12 +40,11 @@ pub struct Context {
 	executor: Handle<Executor>,
 	worker: Handle<Worker>,
 
-	cancel: Option<Closure<*const (), (), Result<()>>>,
+	cancel: Option<Closure<MutPtr<()>, (), Result<()>>>,
 
+	runtime_type: u32,
 	guards: u32,
-	interrupted: bool,
-
-	runtime_type: u32
+	interrupted: bool
 }
 
 fn type_for<R: PerContextRuntime>() -> u32 {
@@ -68,9 +67,8 @@ impl Context {
 			cancel: None,
 
 			guards: 0,
-			interrupted: false,
-
-			runtime_type: type_for::<R>()
+			runtime_type: type_for::<R>(),
+			interrupted: false
 		}
 	}
 
@@ -103,7 +101,7 @@ impl Context {
 	pub fn block_on<T: SyncTask>(&mut self, task: T) -> T::Output {
 		let handle = Handle::from(self);
 
-		block_on(
+		sync_block_on(
 			|cancel| {
 				/* hold variably sized cancel on the stack,
 				 * in an option so that we know it's been
@@ -117,13 +115,14 @@ impl Context {
 				 * significant slowdowns
 				 */
 				let mut cancel = Some(cancel);
+				let this = handle.clone().as_mut();
 
-				handle.clone().cancel = Some(Closure::new(
-					MutPtr::from(&mut cancel).as_raw_ptr(),
+				this.cancel = Some(Closure::new(
+					MutPtr::from(&mut cancel).as_unit(),
 					run_cancel::<T::Cancel>
 				));
 
-				handle.clone().suspend();
+				this.suspend();
 			},
 			|| {
 				handle.clone().resume();
@@ -186,6 +185,8 @@ impl InterruptGuard {
 			.context
 			.guards
 			.checked_add_signed(rel)
+			/* this can never happen unless memory corruption. useful to check anyway as it
+			 * doesn't have to be fast */
 			.expect("Interrupt guards count overflowed");
 	}
 

@@ -1,5 +1,4 @@
 use super::*;
-use crate::fiber::*;
 
 /// A worker thread capable of running async operations via fibers
 pub struct Worker {

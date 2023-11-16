@@ -9,7 +9,9 @@ pub use block_on::*;
 pub use closure::*;
 pub use env::*;
 
-pub type RequestPtr<T> = ConstPtr<Request<T>>;
+pub type RequestPtr<T> = Ptr<Request<T>>;
+
+pub type RequestCallback<T> = fn(RequestPtr<T>, Ptr<()>, T);
 
 /// A pointer of a [`Request`] will be passed to a [`Task`] when [`Task::run`]
 /// is called
@@ -26,21 +28,21 @@ pub type RequestPtr<T> = ConstPtr<Request<T>>;
 /// The lifetime of the request must last until the callback is executed
 pub struct Request<T> {
 	/// The user data to be passed back.
-	pub arg: *const (),
-	pub callback: fn(ConstPtr<Self>, *const (), T)
+	pub arg: Ptr<()>,
+	pub callback: RequestCallback<T>
 }
 
 impl<T> Request<T> {
-	pub const unsafe fn new(arg: *const (), callback: fn(ConstPtr<Self>, *const (), T)) -> Self {
+	pub const unsafe fn new(arg: Ptr<()>, callback: RequestCallback<T>) -> Self {
 		Self { arg, callback }
 	}
 
-	pub fn set_arg(&mut self, arg: *const ()) {
+	pub fn set_arg(&mut self, arg: Ptr<()>) {
 		self.arg = arg;
 	}
 
 	#[inline(always)]
-	pub fn complete(request: ConstPtr<Self>, value: T) {
+	pub fn complete(request: Ptr<Self>, value: T) {
 		(request.callback)(request, request.arg, value);
 	}
 }
@@ -63,6 +65,10 @@ pub unsafe trait Cancel {
 	///
 	/// After cancelling, you must wait for the callback
 	/// to be called before releasing the [`Request`]
+	///
+	/// Cancel operations must not expect captured references to
+	/// live until the cancel finishes, only until the task callback
+	/// is called
 	///
 	/// It is possible that the callback is
 	/// immediately executed in the call to cancel

@@ -1,10 +1,4 @@
-use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
-use syn::{
-	parse::{Parse, ParseStream},
-	punctuated::Punctuated,
-	*
-};
+use super::*;
 
 struct Function {
 	attrs: Vec<Attribute>,
@@ -118,7 +112,6 @@ impl WrapperFunctions {
 				.receiver()
 				.is_some_and(|rec| rec.mutability.is_some());
 			let pats = get_pats(&function.sig);
-
 			let ident = &function.sig.ident;
 
 			let maybe_await = if function.sig.asyncness.is_some() {
@@ -134,13 +127,10 @@ impl WrapperFunctions {
 			};
 
 			let mut sig = function.sig.clone();
-
-			sig.ident = function.ident.clone();
-
+			let mut attrs = function.attrs.clone();
 			let call = quote! { (#inner).#ident (#pats) #maybe_await };
 
-			let mut attrs = function.attrs.clone();
-
+			sig.ident = function.ident.clone();
 			attrs.push(parse_quote! { #[inline(always )] });
 
 			fns.push(ItemFn {
@@ -151,13 +141,7 @@ impl WrapperFunctions {
 			});
 		}
 
-		let mut ts = TokenStream::new();
-
-		for func in fns {
-			func.to_tokens(&mut ts);
-		}
-
-		ts
+		quote! { #(#fns)* }
 	}
 }
 

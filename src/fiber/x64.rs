@@ -31,23 +31,23 @@ impl Context {
 	}
 
 	pub fn set_start(&mut self, start: Start) {
-		let ptr = unsafe { &mut *(self.rsp as *mut () as *mut Start).offset(-1) };
+		let ptr = MutPtr::<Start>::from_int_addr(self.rsp as usize).wrapping_sub(1);
+
+		ptr.as_uninit().write(start);
 
 		self.rip = xx_core_fiber_x64_start as u64;
-
-		*ptr = start;
 	}
 
 	pub fn set_intercept(&mut self, mut intercept: Intercept) {
-		let ptr = unsafe { &mut *(self.rsp as *mut () as *mut Intercept).offset(-1) };
+		let ptr = MutPtr::<Intercept>::from_int_addr(self.rsp as usize).wrapping_sub(1);
 
 		if intercept.ret == 0 {
 			intercept.ret = self.rip as usize;
 		}
 
-		self.rip = xx_core_fiber_x64_intercept as u64;
+		ptr.as_uninit().write(intercept);
 
-		*ptr = intercept;
+		self.rip = xx_core_fiber_x64_intercept as u64;
 	}
 }
 

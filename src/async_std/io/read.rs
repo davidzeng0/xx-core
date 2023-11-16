@@ -1,7 +1,8 @@
 use std::ptr::copy_nonoverlapping;
 
+use memchr::memchr;
+
 use super::*;
-use crate::read_into;
 
 #[inline(always)]
 pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
@@ -9,6 +10,7 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 
 	/* adding any checks for small lengths only worsens performance
 	 * it seems like llvm or rustc can't do branching properly
+	 * (unlikely branches should be placed at the end, but that doesn't happen)
 	 *
 	 * a call to memcpy should do those checks anyway
 	 */
@@ -68,8 +70,12 @@ pub trait Read {
 	async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
 		let start_len = buf.len();
 
-		/* avoid doubling the capacity if we're interrupted */
-		while !is_interrupted().await {
+		loop {
+			if is_interrupted().await {
+				/* avoid doubling the capacity if we're interrupted */
+				break;
+			}
+
 			let mut capacity = buf.capacity();
 			let len = buf.len();
 
@@ -82,7 +88,7 @@ pub trait Read {
 
 				match self.read(buf.get_unchecked_mut(len..capacity)).await {
 					Ok(0) => break,
-					Ok(read) => buf.set_len(len + read),
+					Ok(n) => buf.set_len(len + n),
 					Err(err) if err.is_interrupted() => break,
 					Err(err) => return Err(err)
 				}
@@ -94,10 +100,7 @@ pub trait Read {
 
 				match self.read(&mut probe).await {
 					Ok(0) => break,
-					Ok(read) => {
-						buf.extend_from_slice(&probe[0..read]);
-					}
-
+					Ok(n) => buf.extend_from_slice(&probe[0..n]),
 					Err(err) if err.is_interrupted() => break,
 					Err(err) => return Err(err)
 				}
@@ -111,19 +114,19 @@ pub trait Read {
 		let vec = unsafe { buf.as_mut_vec() };
 		let start_len = vec.len();
 
-		match self.read_to_end(vec).await {
-			Err(err) => {
-				unsafe { vec.set_len(start_len) };
+		let mut result = self.read_to_end(vec).await;
 
-				Err(err)
-			}
+		result = result.and_then(|read| {
+			check_utf8(&vec[start_len..])?;
 
-			Ok(read) => {
-				check_utf8(&vec[start_len..])?;
+			Ok(read)
+		});
 
-				Ok(read)
-			}
+		if result.is_err() {
+			unsafe { vec.set_len(start_len) }
 		}
+
+		return result;
 	}
 
 	fn is_read_vectored(&self) -> bool {
@@ -214,7 +217,38 @@ pub trait BufRead: Read {
 	///
 	/// On interrupted, the read bytes can be calculated using the difference in
 	/// length of `buf` and can be called again with a new slice
-	async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>;
+	async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
+		let start_len = buf.len();
+
+		loop {
+			let available = self.buffer();
+
+			let (used, done) = match memchr(byte, available) {
+				Some(index) => (index + 1, true),
+				None => (available.len(), false)
+			};
+
+			buf.extend_from_slice(&available[0..used]);
+
+			unsafe {
+				self.consume_unchecked(used);
+			}
+
+			if done {
+				break;
+			}
+
+			if self.fill().await? == 0 {
+				if buf.len() == start_len {
+					return Ok(None);
+				}
+
+				break;
+			}
+		}
+
+		Ok(Some(buf.len() - start_len))
+	}
 
 	/// See `read_until`
 	///
@@ -227,35 +261,37 @@ pub trait BufRead: Read {
 		let mut result = self.read_until(b'\n', vec).await;
 
 		result = result.and_then(|read| match read {
-			None => Ok(None),
 			Some(read) => {
 				check_utf8(&vec[start_len..])?;
 
 				Ok(Some(read))
 			}
+
+			None => Ok(None)
 		});
 
 		match result {
+			Ok(Some(_)) => {
+				if buf.ends_with('\n') {
+					buf.pop();
+
+					if buf.ends_with('\r') {
+						buf.pop();
+					}
+				}
+
+				Ok(Some(buf.len() - start_len))
+			}
+
+			Ok(None) => Ok(None),
 			Err(err) => {
 				unsafe {
 					vec.set_len(start_len);
 				}
 
-				return Err(err);
-			}
-			Ok(None) => return Ok(None),
-			Ok(Some(_)) => ()
-		}
-
-		if buf.ends_with('\n') {
-			buf.pop();
-
-			if buf.ends_with('\r') {
-				buf.pop();
+				Err(err)
 			}
 		}
-
-		Ok(Some(buf.len() - start_len))
 	}
 
 	fn capacity(&self) -> usize;

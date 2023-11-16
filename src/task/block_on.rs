@@ -4,8 +4,8 @@ use super::*;
 
 type ResumeArg<Resume, Output> = (ManuallyDrop<Resume>, MaybeUninit<Output>);
 
-fn block_resume<Resume: FnOnce(), Output>(_: RequestPtr<Output>, arg: *const (), value: Output) {
-	let mut arg: MutPtr<ResumeArg<Resume, Output>> = ConstPtr::from(arg).cast();
+fn block_resume<Resume: FnOnce(), Output>(_: RequestPtr<Output>, arg: Ptr<()>, value: Output) {
+	let arg = arg.cast::<ResumeArg<Resume, Output>>().make_mut().as_mut();
 	let resume = unsafe { ManuallyDrop::take(&mut arg.0) };
 
 	arg.1.write(value);
@@ -31,11 +31,11 @@ pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Task>(
 
 	unsafe {
 		let request = Request::new(
-			MutPtr::from(&mut arg).as_raw_ptr(),
+			MutPtr::from(&mut arg).as_unit().into(),
 			block_resume::<Resume, T::Output>
 		);
 
-		match task.run(ConstPtr::from(&request)) {
+		match task.run(Ptr::from(&request)) {
 			Progress::Pending(cancel) => block(cancel),
 			Progress::Done(value) => return value
 		};

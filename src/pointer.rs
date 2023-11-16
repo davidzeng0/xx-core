@@ -1,13 +1,16 @@
 use std::{
 	cmp::Ordering,
-	ops::{Deref, DerefMut}
+	mem::MaybeUninit,
+	ops::{Deref, DerefMut},
+	ptr::null
 };
 
+#[repr(transparent)]
 pub struct Pointer<T: ?Sized, const MUTABLE: bool> {
 	ptr: *const T
 }
 
-pub type ConstPtr<T> = Pointer<T, false>;
+pub type Ptr<T> = Pointer<T, false>;
 pub type MutPtr<T> = Pointer<T, true>;
 
 impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
@@ -15,52 +18,84 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 		self.ptr
 	}
 
-	pub fn as_raw_ptr(&self) -> *const () {
-		self.ptr as *const _
+	pub fn cast<T2>(&self) -> Pointer<T2, MUTABLE> {
+		Pointer { ptr: self.ptr as *const () as *const _ }
 	}
 
-	pub fn as_raw_int(&self) -> usize {
+	pub fn as_unit(&self) -> Pointer<(), MUTABLE> {
+		self.cast()
+	}
+
+	pub fn as_uninit(self) -> Pointer<MaybeUninit<T>, MUTABLE>
+	where
+		T: Sized
+	{
+		self.cast()
+	}
+
+	pub fn int_addr(&self) -> usize {
 		self.ptr as *const () as usize
 	}
 
-	pub fn cast<T2, const M2: bool>(&self) -> Pointer<T2, M2> {
-		Pointer { ptr: self.ptr as *const () as *const _ }
+	pub fn from_int_addr(value: usize) -> Self
+	where
+		T: Sized
+	{
+		Self { ptr: value as *const _ }
 	}
 
 	pub fn is_null(&self) -> bool {
 		self.ptr.is_null()
 	}
 
-	pub fn into_ptr(self) -> *const T {
-		self.as_ptr()
-	}
-
+	/// Aliasing rules must be enforced. See std::ptr::as_ref
 	pub fn as_ref<'a>(&self) -> &'a T {
 		unsafe { &*self.ptr }
 	}
+
+	pub fn wrapping_offset(&self, offset: isize) -> Self
+	where
+		T: Sized
+	{
+		Self { ptr: self.ptr.wrapping_offset(offset) }
+	}
+
+	pub fn wrapping_add(&self, count: usize) -> Self
+	where
+		T: Sized
+	{
+		Self { ptr: self.ptr.wrapping_add(count) }
+	}
+
+	pub fn wrapping_sub(&self, count: usize) -> Self
+	where
+		T: Sized
+	{
+		Self { ptr: self.ptr.wrapping_sub(count) }
+	}
+
+	pub fn null() -> Self
+	where
+		T: Sized
+	{
+		Self { ptr: null() }
+	}
 }
 
-impl<T, const MUTABLE: bool> Pointer<T, MUTABLE> {
-	pub fn null() -> Self {
-		Self { ptr: std::ptr::null() }
+impl<T: ?Sized> Ptr<T> {
+	pub fn make_mut(self) -> MutPtr<T> {
+		MutPtr { ptr: self.ptr }
 	}
 }
 
 impl<T: ?Sized> MutPtr<T> {
-	pub fn as_ptr_mut(&self) -> *mut T {
+	pub fn as_mut_ptr(&self) -> *mut T {
 		self.ptr as *mut _
 	}
 
-	pub fn as_raw_ptr_mut(&self) -> *mut () {
-		self.ptr as *mut _
-	}
-
-	pub fn into_ptr_mut(self) -> *mut T {
-		self.as_ptr_mut()
-	}
-
+	/// Aliasing rules must be enforced. See std::ptr::as_mut
 	pub fn as_mut<'a>(&mut self) -> &'a mut T {
-		unsafe { &mut *self.as_ptr_mut() }
+		unsafe { &mut *MutPtr::as_mut_ptr(self) }
 	}
 }
 
@@ -76,18 +111,20 @@ impl<T: ?Sized, const MUTABLE: bool> Copy for Pointer<T, MUTABLE> {}
 impl<T: ?Sized, const MUTABLE: bool> Deref for Pointer<T, MUTABLE> {
 	type Target = T;
 
+	/// Aliasing rules must be enforced. See as_ref
 	fn deref(&self) -> &T {
 		self.as_ref()
 	}
 }
 
 impl<T: ?Sized> DerefMut for MutPtr<T> {
+	/// Aliasing rules must be enforced. See as_mut
 	fn deref_mut(&mut self) -> &mut T {
 		self.as_mut()
 	}
 }
 
-impl<T: ?Sized> From<MutPtr<T>> for ConstPtr<T> {
+impl<T: ?Sized> From<MutPtr<T>> for Ptr<T> {
 	fn from(value: MutPtr<T>) -> Self {
 		Self { ptr: value.ptr }
 	}
@@ -99,25 +136,19 @@ impl<T: ?Sized> From<*mut T> for MutPtr<T> {
 	}
 }
 
-impl<T, const MUTABLE: bool> From<usize> for Pointer<T, MUTABLE> {
-	fn from(value: usize) -> Self {
-		Self { ptr: value as *const _ }
-	}
-}
-
 impl<T: ?Sized> From<&mut T> for MutPtr<T> {
 	fn from(ptr: &mut T) -> Self {
 		Self { ptr }
 	}
 }
 
-impl<T: ?Sized> From<*const T> for ConstPtr<T> {
+impl<T: ?Sized> From<*const T> for Ptr<T> {
 	fn from(ptr: *const T) -> Self {
 		Self { ptr }
 	}
 }
 
-impl<T: ?Sized> From<&T> for ConstPtr<T> {
+impl<T: ?Sized> From<&T> for Ptr<T> {
 	fn from(ptr: &T) -> Self {
 		Self { ptr }
 	}

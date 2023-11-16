@@ -1,5 +1,4 @@
 use super::*;
-use crate::fiber::*;
 
 /// Per thread executor, responsible for running worker threads
 pub struct Executor {

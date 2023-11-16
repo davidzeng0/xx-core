@@ -1,5 +1,4 @@
 use super::*;
-use crate::write_from;
 
 #[async_trait]
 pub trait Write {
@@ -8,7 +7,7 @@ pub trait Write {
 	/// Returning zero strictly means EOF, unless the buffer's size was zero
 	async fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
-	/// Flush buffered data
+	/// Flush (if any) buffered data
 	async fn flush(&mut self) -> Result<()> {
 		Ok(())
 	}

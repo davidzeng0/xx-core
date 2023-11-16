@@ -1,7 +1,7 @@
-use std::{marker::PhantomData, ptr::null};
+use std::marker::PhantomData;
 
 use super::*;
-use crate::{fiber::Start, pin_local_mut, task::Boxed, trace};
+use crate::{trace, warn};
 
 struct SpawnWorker<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> {
 	move_to_worker: Option<(Entry, T, Worker)>,
@@ -16,8 +16,8 @@ struct SpawnWorker<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: 
 }
 
 impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWorker<R, Entry, T> {
-	fn worker_start(arg: *const ()) {
-		let mut this: MutPtr<Self> = ConstPtr::from(arg).cast();
+	fn worker_start(arg: Ptr<()>) {
+		let this = arg.cast::<Self>().make_mut().as_mut();
 
 		let (entry, task, worker) = this.move_to_worker.take().unwrap();
 		let request = this.request;
@@ -48,7 +48,7 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 			this.result = Some(result);
 		}
 
-		trace!(target: &worker, "-- Exited");
+		trace!(target: &worker, "-- Completed");
 
 		unsafe {
 			worker.exit();
@@ -70,11 +70,9 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 			phantom: PhantomData
 		};
 
-		let start = Start::new(Self::worker_start, MutPtr::from(&mut data).as_raw_ptr());
-
-		data.move_to_worker = Some((entry, task, executor.new_worker(start)));
-
-		let worker = &mut data.move_to_worker.as_mut().unwrap().2;
+		let start = Start::new(Self::worker_start, MutPtr::from(&mut data).as_unit().into());
+		let pass = (entry, task, executor.new_worker(start));
+		let worker = &mut data.move_to_worker.insert(pass).2;
 
 		unsafe {
 			executor.start(worker.into());
@@ -135,10 +133,7 @@ impl<Output> Spawn<Output> {
 		self.refs -= 1;
 
 		if self.refs == 0 {
-			let this = MutPtr::from(self);
-			let this = unsafe { Boxed::from_raw(this.as_ptr_mut()) };
-
-			drop(this);
+			drop(unsafe { Boxed::from_raw(self.into()) });
 		}
 	}
 
@@ -146,8 +141,8 @@ impl<Output> Spawn<Output> {
 		self.refs += 1;
 	}
 
-	fn spawn_complete(_: RequestPtr<Output>, arg: *const (), output: Output) {
-		let mut this: MutPtr<Spawn<Output>> = ConstPtr::from(arg).cast();
+	fn spawn_complete(_: RequestPtr<Output>, arg: Ptr<()>, output: Output) {
+		let this = arg.cast::<Self>().make_mut().as_mut();
 
 		if this.waiter.is_null() {
 			this.output = Some(output);
@@ -161,7 +156,7 @@ impl<Output> Spawn<Output> {
 	pub fn new() -> Self {
 		unsafe {
 			Self {
-				request: Request::new(null(), Self::spawn_complete),
+				request: Request::new(Ptr::null(), Self::spawn_complete),
 				cancel: None,
 				waiter: RequestPtr::null(),
 				output: None,
@@ -177,7 +172,7 @@ impl<Output> Spawn<Output> {
 		let mut this = Boxed::new(Spawn::new());
 
 		unsafe {
-			match spawn_sync_with_runtime(runtime, task).run(ConstPtr::from(&this.request)) {
+			match spawn_sync_with_runtime(runtime, task).run(Ptr::from(&this.request)) {
 				Progress::Pending(cancel) => {
 					this.cancel = Some(cancel);
 					this.inc_ref();
@@ -191,9 +186,7 @@ impl<Output> Spawn<Output> {
 
 		this.inc_ref();
 
-		JoinHandle {
-			task: MutPtr::from(unsafe { Boxed::into_raw(this) })
-		}
+		JoinHandle { task: unsafe { Boxed::into_raw(this) }.into() }
 	}
 
 	pub fn cancel(&mut self) -> Result<()> {
@@ -203,9 +196,10 @@ impl<Output> Spawn<Output> {
 
 impl<Output> Global for Spawn<Output> {
 	unsafe fn pinned(&mut self) {
-		let arg: MutPtr<Self> = self.into();
+		let mut this = MutPtr::from(self);
+		let arg = this.as_unit().into();
 
-		self.request.set_arg(arg.as_raw_ptr());
+		this.request.set_arg(arg);
 	}
 }
 
@@ -239,6 +233,29 @@ unsafe impl<Output> SyncTask for JoinTask<Output> {
 unsafe impl<Output> Cancel for JoinCancel<Output> {
 	unsafe fn run(mut self) -> Result<()> {
 		self.task.cancel()
+	}
+}
+
+#[async_fn]
+impl<Output> JoinHandle<Output> {
+	pub fn request_cancel(mut self) -> Result<()> {
+		if self.task.output.is_some() {
+			Ok(())
+		} else {
+			self.task.cancel()
+		}
+	}
+
+	pub async fn cancel(mut self) -> Output {
+		if self.task.output.is_none() {
+			let result = self.task.cancel();
+
+			if result.is_err() {
+				warn!("Cancel returned an {:?}", result);
+			}
+		}
+
+		self.await
 	}
 }
 

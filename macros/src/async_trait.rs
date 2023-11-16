@@ -1,12 +1,4 @@
-use proc_macro2::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
-use syn::{
-	parse::{Parse, ParseStream},
-	punctuated::Punctuated,
-	visit_mut::VisitMut,
-	*
-};
-
+use super::*;
 use crate::{
 	closure::{async_fn::*, make_closure::RemoveRefMut, transform::Function},
 	wrap_function::get_pats
@@ -27,7 +19,7 @@ fn trait_ext(item: &ItemTrait) -> TokenStream {
 			GenericParam::Const(cg) => {
 				let ident = &cg.ident;
 
-				*generic = GenericParam::Type(parse_quote! { #ident });
+				*generic = parse_quote! { #ident };
 			}
 		}
 	}
@@ -41,52 +33,54 @@ fn trait_ext(item: &ItemTrait) -> TokenStream {
 	let mut trait_items = Vec::new();
 
 	for trait_item in item.items {
-		if let TraitItem::Fn(mut func) = trait_item {
-			let mut args: Punctuated<Expr, Token![,]> = get_pats(&func.sig)
-				.iter()
-				.map(|pat| -> Expr {
-					let mut pat = pat.clone();
+		let TraitItem::Fn(mut func) = trait_item else {
+			continue;
+		};
 
-					RemoveRefMut {}.visit_pat_mut(&mut pat);
+		let mut args: Punctuated<Expr, Token![,]> = get_pats(&func.sig)
+			.iter()
+			.map(|pat| -> Expr {
+				let mut pat = pat.clone();
 
-					parse_quote! { #pat }
-				})
-				.collect();
+				RemoveRefMut {}.visit_pat_mut(&mut pat);
 
-			if func.sig.asyncness.is_some() {
-				args.push(parse_quote! {
-					xx_core::coroutines::get_context().await
-				});
-			}
+				parse_quote! { #pat }
+			})
+			.collect();
 
-			let ident = async_trait_ident(&func.sig.ident);
-
-			if func.sig.receiver().is_some() {
-				func.default = Some(parse_quote! {{
-					self.#ident (#args)
-				}});
-			} else {
-				func.default = Some(parse_quote! {{
-					Self::#ident (#args)
-				}});
-			}
-
-			func.attrs.push(parse_quote! { #[inline(always) ]});
-
-			if func.sig.asyncness.is_some() {
-				if let Err(err) = transform_typed_closure(&mut Function {
-					is_item_fn: false,
-					attrs: &mut func.attrs,
-					env_generics: Some(&item.generics),
-					sig: &mut func.sig,
-					block: func.default.as_mut()
-				}) {
-					return err.to_compile_error();
-				}
-			}
-
-			trait_items.push(TraitItem::Fn(func));
+		if func.sig.asyncness.is_some() {
+			args.push(parse_quote! {
+				xx_core::coroutines::get_context().await
+			});
 		}
+
+		let ident = async_trait_ident(&func.sig.ident);
+
+		if func.sig.receiver().is_some() {
+			func.default = Some(parse_quote! {{
+				self.#ident (#args)
+			}});
+		} else {
+			func.default = Some(parse_quote! {{
+				Self::#ident (#args)
+			}});
+		}
+
+		func.attrs.push(parse_quote! { #[inline(always) ]});
+
+		if func.sig.asyncness.is_some() {
+			if let Err(err) = transform_typed_closure(&mut Function {
+				is_item_fn: false,
+				attrs: &mut func.attrs,
+				env_generics: Some(&item.generics),
+				sig: &mut func.sig,
+				block: func.default.as_mut()
+			}) {
+				return err.to_compile_error();
+			}
+		}
+
+		trait_items.push(TraitItem::Fn(func));
 	}
 
 	item.items = trait_items;
@@ -115,20 +109,24 @@ pub fn async_trait(_: TokenStream, item: TokenStream) -> TokenStream {
 	let ext = trait_ext(&item);
 
 	for trait_item in &mut item.items {
-		if let TraitItem::Fn(func) = trait_item {
-			func.sig.ident = async_trait_ident(&func.sig.ident);
+		let TraitItem::Fn(func) = trait_item else {
+			continue;
+		};
 
-			if func.sig.asyncness.is_some() {
-				if let Err(err) = transform_no_closure(&mut Function {
-					is_item_fn: false,
-					attrs: &mut func.attrs,
-					env_generics: Some(&item.generics),
-					sig: &mut func.sig,
-					block: func.default.as_mut()
-				}) {
-					return err.to_compile_error();
-				}
-			}
+		func.sig.ident = async_trait_ident(&func.sig.ident);
+
+		if func.sig.asyncness.is_none() {
+			continue;
+		}
+
+		if let Err(err) = transform_no_closure(&mut Function {
+			is_item_fn: false,
+			attrs: &mut func.attrs,
+			env_generics: Some(&item.generics),
+			sig: &mut func.sig,
+			block: func.default.as_mut()
+		}) {
+			return err.to_compile_error();
 		}
 	}
 

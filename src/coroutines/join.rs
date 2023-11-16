@@ -1,7 +1,6 @@
-use std::{ptr::null, result};
+use std::result;
 
 use super::*;
-use crate::pin_local_mut;
 
 pub struct Join<O1, O2>(pub O1, pub O2);
 
@@ -34,18 +33,18 @@ struct JoinData<T1: SyncTask, T2: SyncTask> {
 }
 
 impl<T1: SyncTask, T2: SyncTask> JoinData<T1, T2> {
-	fn complete_1(_: RequestPtr<T1::Output>, arg: *const (), value: T1::Output) {
-		let mut data: MutPtr<Self> = ConstPtr::from(arg).cast();
+	fn complete_1(_: RequestPtr<T1::Output>, arg: Ptr<()>, value: T1::Output) {
+		let this = arg.cast::<Self>().make_mut().as_mut();
 
-		data.result_1 = Some(value);
-		data.check_complete();
+		this.result_1 = Some(value);
+		this.check_complete();
 	}
 
-	fn complete_2(_: RequestPtr<T2::Output>, arg: *const (), value: T2::Output) {
-		let mut data: MutPtr<Self> = ConstPtr::from(arg).cast();
+	fn complete_2(_: RequestPtr<T2::Output>, arg: Ptr<()>, value: T2::Output) {
+		let this = arg.cast::<Self>().make_mut().as_mut();
 
-		data.result_2 = Some(value);
-		data.check_complete();
+		this.result_2 = Some(value);
+		this.check_complete();
 	}
 
 	fn new(task_1: T1, task_2: T2) -> Self {
@@ -53,16 +52,16 @@ impl<T1: SyncTask, T2: SyncTask> JoinData<T1, T2> {
 			/* request arg ptrs are assigned once pinned */
 			Self {
 				task_1: Some(task_1),
-				req_1: Request::new(null(), Self::complete_1),
+				req_1: Request::new(Ptr::null(), Self::complete_1),
 				cancel_1: None,
 				result_1: None,
 
 				task_2: Some(task_2),
-				req_2: Request::new(null(), Self::complete_2),
+				req_2: Request::new(Ptr::null(), Self::complete_2),
 				cancel_2: None,
 				result_2: None,
 
-				request: ConstPtr::null()
+				request: Ptr::null()
 			}
 		}
 	}
@@ -104,12 +103,12 @@ impl<T1: SyncTask, T2: SyncTask> JoinData<T1, T2> {
 		}
 
 		unsafe {
-			match self.task_1.take().unwrap().run(ConstPtr::from(&self.req_1)) {
+			match self.task_1.take().unwrap().run(Ptr::from(&self.req_1)) {
 				Progress::Pending(cancel) => self.cancel_1 = Some(cancel),
 				Progress::Done(value) => self.result_1 = Some(value)
 			}
 
-			match self.task_2.take().unwrap().run(ConstPtr::from(&self.req_2)) {
+			match self.task_2.take().unwrap().run(Ptr::from(&self.req_2)) {
 				Progress::Pending(cancel) => self.cancel_2 = Some(cancel),
 				Progress::Done(value) => {
 					if self.result_1.is_some() {
@@ -129,10 +128,11 @@ impl<T1: SyncTask, T2: SyncTask> JoinData<T1, T2> {
 
 impl<T1: SyncTask, T2: SyncTask> Global for JoinData<T1, T2> {
 	unsafe fn pinned(&mut self) {
-		let arg: MutPtr<Self> = self.into();
+		let mut this = MutPtr::from(self);
+		let arg = this.as_unit().into();
 
-		self.req_1.set_arg(arg.as_raw_ptr());
-		self.req_2.set_arg(arg.as_raw_ptr());
+		this.req_1.set_arg(arg);
+		this.req_2.set_arg(arg);
 	}
 }
 

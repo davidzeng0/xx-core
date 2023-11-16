@@ -1,5 +1,7 @@
+use crate::pointer::MutPtr;
+
 #[repr(C)]
 pub struct IoVec {
-	pub base: *const (),
+	pub base: MutPtr<()>,
 	pub len: usize
 }

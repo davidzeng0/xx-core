@@ -10,8 +10,8 @@ use crate::pointer::*;
 
 import_sysdeps!();
 
-pub mod pool;
-pub use self::pool::Pool;
+mod pool;
+pub use pool::*;
 
 pub struct Fiber {
 	context: Context,
@@ -24,19 +24,19 @@ pub struct Fiber {
 #[derive(Clone, Copy)]
 pub struct Start {
 	start: usize,
-	arg: *const ()
+	arg: Ptr<()>
 }
 
 impl Start {
-	pub fn new(start: fn(*const ()), arg: *const ()) -> Self {
+	pub fn new(start: fn(Ptr<()>), arg: Ptr<()>) -> Self {
 		Self { start: start as usize, arg }
 	}
 
-	pub fn set_start(&mut self, start: fn(*const ())) {
+	pub fn set_start(&mut self, start: fn(Ptr<()>)) {
 		self.start = start as usize;
 	}
 
-	pub fn set_arg(&mut self, arg: *const ()) {
+	pub fn set_arg(&mut self, arg: Ptr<()>) {
 		self.arg = arg;
 	}
 }
@@ -52,12 +52,12 @@ impl Start {
 #[derive(Clone, Copy)]
 struct Intercept {
 	intercept: usize,
-	arg: *const (),
+	arg: Ptr<()>,
 	ret: usize
 }
 
-fn exit_fiber(arg: *const ()) {
-	let mut fiber: MutPtr<ManuallyDrop<Fiber>> = ConstPtr::from(arg).cast();
+fn exit_fiber(arg: Ptr<()>) {
+	let fiber = arg.cast::<ManuallyDrop<Fiber>>().make_mut().as_mut();
 
 	/* Safety: move worker off of its own stack then drop,
 	 * in case the fiber accesses its own fields after dropping
@@ -65,12 +65,15 @@ fn exit_fiber(arg: *const ()) {
 	 * the fiber to a pool
 	 */
 	unsafe {
-		drop(ManuallyDrop::take(&mut fiber));
+		drop(ManuallyDrop::take(fiber));
 	};
 }
 
-fn exit_fiber_to_pool(arg: *const ()) {
-	let mut arg: MutPtr<(ManuallyDrop<Fiber>, MutPtr<Pool>)> = ConstPtr::from(arg).cast();
+fn exit_fiber_to_pool(arg: Ptr<()>) {
+	let arg = arg
+		.cast::<(ManuallyDrop<Fiber>, MutPtr<Pool>)>()
+		.make_mut()
+		.as_mut();
 	let fiber = unsafe { ManuallyDrop::take(&mut arg.0) };
 
 	arg.1.exit_fiber(fiber);
@@ -144,7 +147,7 @@ impl Fiber {
 
 		to.context.set_intercept(Intercept {
 			intercept: exit_fiber as usize,
-			arg: MutPtr::from(&mut fiber).as_raw_ptr(),
+			arg: MutPtr::from(&mut fiber).as_unit().into(),
 			ret: 0
 		});
 
@@ -158,7 +161,7 @@ impl Fiber {
 
 		to.context.set_intercept(Intercept {
 			intercept: exit_fiber_to_pool as usize,
-			arg: MutPtr::from(&mut arg).as_raw_ptr(),
+			arg: MutPtr::from(&mut arg).as_unit().into(),
 			ret: 0
 		});
 

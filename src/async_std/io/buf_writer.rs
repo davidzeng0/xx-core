@@ -110,7 +110,7 @@ impl<W: Write + Seek> BufWriter<W> {
 		 * we can fask seek
 		 *
 		 * otherwise, we'd have to fill in the blanks with the
-		 * underlying stream data
+		 * underlying stream data, if we want to seek within the entire buffer
 		 */
 		if pos >= 0 && pos as usize <= self.buf.len() {
 			unsafe {
@@ -125,10 +125,7 @@ impl<W: Write + Seek> BufWriter<W> {
 
 	async fn seek_inner(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.flush_buf().await?;
-
-		let off = self.inner.seek(seek).await?;
-
-		Ok(off)
+		self.inner.seek(seek).await
 	}
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {

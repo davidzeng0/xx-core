@@ -2,10 +2,7 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 
 use enumflags2::bitflags;
 
-use super::{
-	poll::PollFlag,
-	syscall::{syscall_int, SyscallNumber::*}
-};
+use super::{poll::PollFlag, syscall::*};
 use crate::{error::Result, pointer::MutPtr};
 
 #[bitflags]
@@ -67,13 +64,7 @@ pub struct EpollEvent {
 	pub data: u64
 }
 
-pub fn create(size: i32) -> Result<OwnedFd> {
-	let fd = syscall_int!(EpollCreate, size)?;
-
-	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
-}
-
-pub fn create1(flags: u32) -> Result<OwnedFd> {
+pub fn create(flags: u32) -> Result<OwnedFd> {
 	let fd = syscall_int!(EpollCreate1, flags)?;
 
 	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
@@ -85,7 +76,7 @@ pub fn ctl(ep: BorrowedFd<'_>, op: CtlOp, fd: i32, event: &mut EpollEvent) -> Re
 		ep.as_raw_fd(),
 		op,
 		fd,
-		MutPtr::from(event).as_raw_int()
+		MutPtr::from(event).int_addr()
 	)?;
 
 	Ok(())
@@ -94,13 +85,7 @@ pub fn ctl(ep: BorrowedFd<'_>, op: CtlOp, fd: i32, event: &mut EpollEvent) -> Re
 pub fn wait_raw(
 	ep: BorrowedFd<'_>, events: MutPtr<EpollEvent>, count: usize, timeout: i32
 ) -> Result<u32> {
-	let events = syscall_int!(
-		EpollWait,
-		ep.as_raw_fd(),
-		events.as_raw_int(),
-		count,
-		timeout
-	)?;
+	let events = syscall_int!(EpollWait, ep.as_raw_fd(), events.int_addr(), count, timeout)?;
 
 	Ok(events as u32)
 }

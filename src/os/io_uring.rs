@@ -9,10 +9,7 @@ use super::{
 	syscall::{syscall_int, SyscallNumber::*},
 	time::TimeSpec
 };
-use crate::{
-	error::Result,
-	pointer::{ConstPtr, MutPtr}
-};
+use crate::{error::Result, pointer::*};
 
 #[bitflags]
 #[repr(u32)]
@@ -611,7 +608,7 @@ pub fn io_uring_enter_timeout(
 	};
 
 	args.sig_mask_size = SIGSET_SIZE as u32;
-	args.ts = ConstPtr::from(&ts).as_raw_int() as u64;
+	args.ts = Ptr::from(&ts).int_addr() as u64;
 	flags |= EnterFlag::ExtArg as u32;
 
 	io_uring_enter2(
@@ -619,13 +616,13 @@ pub fn io_uring_enter_timeout(
 		submit,
 		min_complete,
 		flags,
-		MutPtr::from(&mut args).as_raw_int(),
+		MutPtr::from(&mut args).int_addr(),
 		size_of::<GetEventsArg>()
 	)
 }
 
 pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd> {
-	let fd = syscall_int!(IoUringSetup, entries, MutPtr::from(params).as_raw_int())?;
+	let fd = syscall_int!(IoUringSetup, entries, MutPtr::from(params).int_addr())?;
 
 	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
 }

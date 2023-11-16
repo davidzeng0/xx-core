@@ -1,5 +1,3 @@
-use memchr::memchr;
-
 use super::*;
 use crate::impls::UIntExtensions;
 
@@ -34,7 +32,6 @@ impl<R: Read> BufReader<R> {
 
 			if likely(read != 0) {
 				self.buf.set_len(start + read);
-				self.pos = start;
 			}
 
 			read
@@ -45,7 +42,13 @@ impl<R: Read> BufReader<R> {
 	/// If zero is returned, internal data is not modified
 	#[inline]
 	async fn fill_buf(&mut self) -> Result<usize> {
-		self.fill_buf_offset(0, self.buf.capacity()).await
+		let read = self.fill_buf_offset(0, self.buf.capacity()).await?;
+
+		if likely(read != 0) {
+			self.pos = 0;
+		}
+
+		Ok(read)
 	}
 
 	pub fn new(inner: R) -> Self {
@@ -78,6 +81,12 @@ impl<R: Read> BufReader<R> {
 	/// Moves unconsumed data to the beginning of the buffer
 	pub fn move_data_to_beginning(&mut self) {
 		if self.pos == 0 {
+			return;
+		}
+
+		if self.buffer().len() == 0 {
+			self.discard();
+
 			return;
 		}
 
@@ -128,53 +137,32 @@ impl<R: Read> BufRead for BufReader<R> {
 			return Ok(0);
 		}
 
-		if unlikely(end > self.buf.capacity()) {
-			end = self.buf.capacity();
+		let mut start = self.buf.len();
 
+		if unlikely(end > self.buf.capacity()) {
 			if self.pos != 0 {
 				if self.buffer().len() == 0 {
-					self.discard();
+					start = 0;
+					end = amount;
 				} else {
 					self.move_data_to_beginning();
+
+					start = self.buf.len();
 				}
 			} else if self.spare_capacity() == 0 {
 				return Ok(0);
 			}
+
+			end = end.min(self.buf.capacity());
 		}
 
-		self.fill_buf_offset(self.buf.len(), end).await
-	}
+		let read = self.fill_buf_offset(start, end).await?;
 
-	/// Preserves buffer on EOF
-	async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
-		let start_len = buf.len();
-
-		loop {
-			let available = self.buffer();
-
-			let (used, done) = match memchr(byte, available) {
-				Some(index) => (index + 1, true),
-				None => (available.len(), false)
-			};
-
-			buf.extend_from_slice(&available[0..used]);
-
-			self.pos += used;
-
-			if done {
-				break;
-			}
-
-			if self.fill_buf().await? == 0 {
-				if buf.len() == start_len {
-					return Ok(None);
-				}
-
-				break;
-			}
+		if unlikely(start == 0 && read != 0) {
+			self.pos = 0;
 		}
 
-		Ok(Some(buf.len() - start_len))
+		Ok(read)
 	}
 
 	fn capacity(&self) -> usize {
@@ -227,7 +215,7 @@ impl<R: Read + Seek> BufReader<R> {
 	async fn seek_inner(&mut self, seek: SeekFrom) -> Result<u64> {
 		let off = self.inner.seek(seek).await?;
 
-		/* seek functions should not be retried on error,
+		/* read should not be called after error,
 		 * so it's okay to discard only after a successfull seek
 		 */
 		self.discard();

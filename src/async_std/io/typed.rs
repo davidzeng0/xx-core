@@ -100,7 +100,7 @@ macro_rules! read_num_type_endian {
 				self.[<read_ $endian_type>]().await?.ok_or_else(|| unexpected_end_of_stream())
 			}
 		}
-	}
+	};
 }
 
 macro_rules! read_num_type {
@@ -284,7 +284,7 @@ macro_rules! write_num_type_endian {
 				self.write_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>([<$type $endian>](val)).await
 			}
 		}
-	}
+	};
 }
 
 macro_rules! write_num_type {

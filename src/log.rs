@@ -123,20 +123,20 @@ fn init() {
 	set_max_level(LevelFilter::Info)
 }
 
-fn get_struct_name<T>(_: &T) -> &str {
+fn get_struct_name<T>(_: *const T) -> &'static str {
 	type_name::<T>().split("::").last().unwrap()
 }
 
-fn get_struct_addr<T>(val: &T) -> usize {
-	val as *const _ as usize
+fn get_struct_addr<T>(val: *const T) -> usize {
+	val as usize
 }
 
-fn get_struct_addr_low<T>(val: &T) -> usize {
+fn get_struct_addr_low<T>(val: *const T) -> usize {
 	get_struct_addr(val) & 0xffffffff
 }
 
 #[inline(never)]
-pub fn log_target<T>(level: Level, target: &T, args: fmt::Arguments<'_>) {
+pub fn log_target<T>(level: Level, target: *const T, args: fmt::Arguments<'_>) {
 	let mut fmt_buf = Cursor::new([0u8; 64]);
 
 	fmt_buf
@@ -161,7 +161,7 @@ pub fn log_target<T>(level: Level, target: &T, args: fmt::Arguments<'_>) {
 macro_rules! log {
 	($level: expr, target: $target: expr, $($arg: tt)+) => {
 		if $crate::opt::hint::unlikely(::log::log_enabled!($level)) {
-			$crate::log::log_target($level, $target, format_args!($($arg)+));
+			$crate::log::log_target($level, $target as *const _, format_args!($($arg)+));
 		}
 	};
 

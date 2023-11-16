@@ -37,3 +37,4 @@ uint_impl!(u16, i16);
 uint_impl!(u32, i32);
 uint_impl!(u64, i64);
 uint_impl!(u128, i128);
+uint_impl!(usize, isize);

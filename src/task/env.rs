@@ -33,12 +33,12 @@ impl<T: Global> Boxed<T> {
 		self.data.as_mut().into()
 	}
 
-	pub unsafe fn into_raw(b: Self) -> *mut T {
-		Box::into_raw(b.data)
+	pub unsafe fn into_raw(b: Self) -> MutPtr<T> {
+		Box::into_raw(b.data).into()
 	}
 
-	pub unsafe fn from_raw(raw: *mut T) -> Self {
-		Self { data: Box::from_raw(raw) }
+	pub unsafe fn from_raw(raw: MutPtr<T>) -> Self {
+		Self { data: Box::from_raw(raw.as_mut_ptr()) }
 	}
 }
 
@@ -74,19 +74,11 @@ impl<T: Global + Sized> Handle<T> {
 }
 
 impl<T: Global + ?Sized> Handle<T> {
-	pub fn as_raw_ptr(&self) -> *const () {
-		self.ptr.as_raw_ptr()
-	}
-
-	pub fn as_raw_ptr_mut(&mut self) -> *mut () {
-		self.ptr.as_raw_ptr_mut()
-	}
-
-	pub fn as_ref(&self) -> &T {
+	pub fn as_ref<'a>(&self) -> &'a T {
 		self.ptr.as_ref()
 	}
 
-	pub fn as_mut(&mut self) -> &mut T {
+	pub fn as_mut<'a>(&mut self) -> &'a mut T {
 		self.ptr.as_mut()
 	}
 }
@@ -136,3 +128,5 @@ macro_rules! pin_local_mut {
 		}
 	};
 }
+
+pub(crate) use pin_local_mut;

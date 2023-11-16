@@ -1,11 +1,11 @@
 use std::{
 	mem::zeroed,
-	net::{IpAddr, SocketAddr},
+	net::{IpAddr, SocketAddr, SocketAddrV6},
 	ptr::copy
 };
 
 use super::socket::AddressFamily;
-use crate::pointer::ConstPtr;
+use crate::pointer::*;
 
 #[repr(u32)]
 pub enum IpProtocol {
@@ -147,9 +147,9 @@ impl From<SocketAddr> for Address {
 			SocketAddr::V6(addr) => Address::V6(AddressV6 {
 				common: AddressCommon { family: AddressFamily::INet6 as u16 },
 				port: addr.port().to_be(),
-				flow_info: addr.flowinfo(),
+				flow_info: addr.flowinfo().to_be(),
 				addr: addr.ip().octets(),
-				scope_id: addr.scope_id()
+				scope_id: addr.scope_id().to_be()
 			})
 		}
 	}
@@ -166,7 +166,7 @@ impl TryFrom<AddressStorage> for Address {
 			INET => {
 				let addr = unsafe {
 					let mut addr: AddressV4 = zeroed();
-					let ptr: ConstPtr<AddressV4> = ConstPtr::from(&value).cast();
+					let ptr = Ptr::from(&value).cast::<AddressV4>();
 
 					copy(ptr.as_ptr(), &mut addr, 1);
 
@@ -179,7 +179,7 @@ impl TryFrom<AddressStorage> for Address {
 			INET6 => {
 				let addr = unsafe {
 					let mut addr: AddressV6 = zeroed();
-					let ptr: ConstPtr<AddressV6> = ConstPtr::from(&value).cast();
+					let ptr = Ptr::from(&value).cast::<AddressV6>();
 
 					copy(ptr.as_ptr(), &mut addr, 1);
 
@@ -200,12 +200,14 @@ impl TryFrom<AddressStorage> for SocketAddr {
 	fn try_from(value: AddressStorage) -> Result<Self, ()> {
 		let addr: Address = value.try_into()?;
 
-		let (addr, port) = match addr {
-			Address::V4(addr) => (IpAddr::V4(addr.addr.into()), addr.port.to_le()),
-
-			Address::V6(addr) => (IpAddr::V6(addr.addr.into()), addr.port.to_le())
-		};
-
-		Ok(SocketAddr::new(addr, port))
+		Ok(match addr {
+			Address::V4(addr) => SocketAddr::new(IpAddr::V4(addr.addr.into()), addr.port.to_be()),
+			Address::V6(addr) => SocketAddr::V6(SocketAddrV6::new(
+				addr.addr.into(),
+				addr.port.to_be(),
+				addr.flow_info.to_be(),
+				addr.scope_id.to_be()
+			))
+		})
 	}
 }

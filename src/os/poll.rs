@@ -53,7 +53,7 @@ pub struct PollFd {
 pub fn poll(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
 	let events = syscall_int!(
 		Poll,
-		MutPtr::from(fds.as_mut_ptr()).as_raw_int(),
+		MutPtr::from(fds.as_mut_ptr()).int_addr(),
 		fds.len(),
 		timeout
 	)?;

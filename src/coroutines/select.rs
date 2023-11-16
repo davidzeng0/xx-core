@@ -1,7 +1,7 @@
-use std::{ptr::null, result};
+use std::result;
 
 use super::*;
-use crate::{pin_local_mut, warn};
+use crate::warn;
 
 pub enum Select<O1, O2> {
 	First(O1, Option<O2>),
@@ -98,14 +98,18 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 		 * as it may be freed by the callee
 		 */
 		if self.result_1.is_none() || self.result_2.is_none() {
-			let result = if is_first {
-				unsafe { self.cancel_2.take().unwrap().run() }
-			} else {
-				unsafe { self.cancel_1.take().unwrap().run() }
+			let result = unsafe {
+				if is_first {
+					self.cancel_2.take().map(|cancel| cancel.run())
+				} else {
+					self.cancel_1.take().map(|cancel| cancel.run())
+				}
 			};
 
-			if result.is_err() {
-				warn!("Cancel returned an {:?}", result);
+			if let Some(result) = result {
+				if result.is_err() {
+					warn!("Cancel returned an {:?}", result);
+				}
 			}
 		} else {
 			/* reverse order, because this is the last task to complete */
@@ -119,18 +123,18 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 		}
 	}
 
-	fn complete_1(_: RequestPtr<T1::Output>, arg: *const (), value: T1::Output) {
-		let mut data: MutPtr<Self> = ConstPtr::from(arg).cast();
+	fn complete_1(_: RequestPtr<T1::Output>, arg: Ptr<()>, value: T1::Output) {
+		let this = arg.cast::<Self>().make_mut().as_mut();
 
-		data.result_1 = Some(value);
-		data.complete(true);
+		this.result_1 = Some(value);
+		this.complete(true);
 	}
 
-	fn complete_2(_: RequestPtr<T2::Output>, arg: *const (), value: T2::Output) {
-		let mut data: MutPtr<Self> = ConstPtr::from(arg).cast();
+	fn complete_2(_: RequestPtr<T2::Output>, arg: Ptr<()>, value: T2::Output) {
+		let this = arg.cast::<Self>().make_mut().as_mut();
 
-		data.result_2 = Some(value);
-		data.complete(false);
+		this.result_2 = Some(value);
+		this.complete(false);
 	}
 
 	fn new(task_1: T1, task_2: T2) -> Self {
@@ -138,16 +142,16 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 			/* request args are assigned once pinned */
 			Self {
 				task_1: Some(task_1),
-				req_1: Request::new(null(), Self::complete_1),
+				req_1: Request::new(Ptr::null(), Self::complete_1),
 				cancel_1: None,
 				result_1: None,
 
 				task_2: Some(task_2),
-				req_2: Request::new(null(), Self::complete_2),
+				req_2: Request::new(Ptr::null(), Self::complete_2),
 				cancel_2: None,
 				result_2: None,
 
-				request: ConstPtr::null(),
+				request: Ptr::null(),
 				sync_done: false
 			}
 		}
@@ -157,9 +161,12 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 	fn select(&mut self) -> Select<T1::Output, T2::Output> {
 		fn cancel(self: &mut Self) -> Result<()> {
 			let (cancel_1, cancel_2) = unsafe {
+				/* must prevent cancel 1 from calling cancel 2 in callback */
+				let cancel = (self.cancel_1.take(), self.cancel_2.take());
+
 				(
-					self.cancel_1.take().map(|cancel| cancel.run()),
-					self.cancel_2.take().map(|cancel| cancel.run())
+					cancel.0.map(|cancel| cancel.run()),
+					cancel.1.map(|cancel| cancel.run())
 				)
 			};
 
@@ -175,12 +182,12 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 		}
 
 		unsafe {
-			match self.task_1.take().unwrap().run(ConstPtr::from(&self.req_1)) {
+			match self.task_1.take().unwrap().run(Ptr::from(&self.req_1)) {
 				Progress::Pending(cancel) => self.cancel_1 = Some(cancel),
 				Progress::Done(value) => return Progress::Done(Select::First(value, None))
 			}
 
-			match self.task_2.take().unwrap().run(ConstPtr::from(&self.req_2)) {
+			match self.task_2.take().unwrap().run(Ptr::from(&self.req_2)) {
 				Progress::Pending(cancel) => self.cancel_2 = Some(cancel),
 				Progress::Done(value) => {
 					self.result_2 = Some(value);
@@ -212,10 +219,11 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 
 impl<T1: SyncTask, T2: SyncTask> Global for SelectData<T1, T2> {
 	unsafe fn pinned(&mut self) {
-		let arg: MutPtr<Self> = self.into();
+		let mut this = MutPtr::from(self);
+		let arg = this.as_unit().into();
 
-		self.req_1.set_arg(arg.as_raw_ptr());
-		self.req_2.set_arg(arg.as_raw_ptr());
+		this.req_1.set_arg(arg);
+		this.req_2.set_arg(arg);
 	}
 }
 

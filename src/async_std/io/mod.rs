@@ -72,7 +72,7 @@ macro_rules! read_into {
 	($buf: ident, $limit: expr) => {
 		let $buf = {
 			let min = $buf.len().min($limit);
-			let buf = unsafe { $buf.get_unchecked_mut(0..min) };
+			let buf = &mut $buf[0..min];
 
 			read_into!(buf);
 
@@ -80,6 +80,8 @@ macro_rules! read_into {
 		};
 	};
 }
+
+pub(crate) use read_into;
 
 #[macro_export]
 macro_rules! write_from {
@@ -89,3 +91,5 @@ macro_rules! write_from {
 		}
 	};
 }
+
+pub(crate) use write_from;

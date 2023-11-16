@@ -1,10 +1,12 @@
 use std::{
 	error,
 	fmt::{self, Debug, Display, Formatter},
-	io, result
+	io,
+	mem::transmute,
+	result
 };
 
-use crate::{os::error::ErrorCodes, pointer::ConstPtr};
+use crate::os::error::ErrorCodes;
 
 pub type Result<T> = result::Result<T, Error>;
 pub use io::ErrorKind;
@@ -79,23 +81,23 @@ impl Error {
 		self.kind() == ErrorKind::Interrupted
 	}
 
-	pub fn custom(kind: ErrorKind, err: Box<dyn error::Error + Send + Sync>) -> Self {
+	pub fn map_as(kind: ErrorKind, err: Box<dyn error::Error + Send + Sync>) -> Self {
 		match err.downcast() {
 			Ok(this) => *this,
 			Err(err) => Self::Custom(kind, err)
 		}
 	}
 
-	pub fn other<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
-		Self::custom(ErrorKind::Other, value.into())
+	pub fn map_as_other<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
+		Self::map_as(ErrorKind::Other, value.into())
 	}
 
-	pub fn invalid_input_error<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
-		Self::custom(ErrorKind::InvalidInput, value.into())
+	pub fn map_as_invalid_input<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
+		Self::map_as(ErrorKind::InvalidInput, value.into())
 	}
 
-	pub fn invalid_data_error<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
-		Self::custom(ErrorKind::InvalidData, value.into())
+	pub fn map_as_invalid_data<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
+		Self::map_as(ErrorKind::InvalidData, value.into())
 	}
 
 	pub fn interrupted() -> Self {
@@ -111,7 +113,7 @@ impl From<io::Error> for Error {
 			let kind = value.kind();
 			let err = value.into_inner().unwrap();
 
-			Self::custom(kind, err)
+			Self::map_as(kind, err)
 		} else {
 			Self::Io(value)
 		}
@@ -172,7 +174,8 @@ impl error::Error for Error {
 		match self {
 			Error::Os(code) => ErrorCodes::from_raw_os_error(*code).as_str(),
 			Error::SimpleMessage(_, message) => message.as_ref(),
-			Error::Simple(kind) => ConstPtr::from(io::Error::from(*kind).description()).as_ref(),
+			/* io error desc is a static str */
+			Error::Simple(kind) => unsafe { transmute(io::Error::from(*kind).description()) },
 			Error::Custom(_, error) => error.description(),
 			Error::Io(io) => io.description()
 		}

@@ -1,8 +1,6 @@
-use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, ToTokens};
-use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, visit_mut::*, *};
+use super::*;
 
-use super::transform::Function;
+const SELF_IDENT: &str = "__xx_internal_closure_self";
 
 pub struct ReplaceSelf;
 
@@ -11,7 +9,7 @@ impl VisitMut for ReplaceSelf {
 		visit_ident_mut(self, ident);
 
 		if ident == "self" {
-			*ident = format_ident!("__xx_internal_closure_self", span = ident.span());
+			*ident = format_ident!("{}", SELF_IDENT, span = ident.span());
 		}
 	}
 }
@@ -303,7 +301,7 @@ pub fn into_typed_closure(
 			(
 				rec.ty.as_ref().clone(),
 				make_pat_ident("self"),
-				make_pat_ident("__xx_internal_closure_self")
+				make_pat_ident(SELF_IDENT)
 			)
 		}
 	});
