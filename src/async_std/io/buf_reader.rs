@@ -62,7 +62,7 @@ impl<R: Read> BufReader<R> {
 	pub fn from_parts(inner: R, buf: Vec<u8>, pos: usize) -> Self {
 		assert!(pos <= buf.len());
 
-		#[cfg(test)]
+		#[cfg(any(test, feature = "test"))]
 		let buf = {
 			let mut buf = buf;
 
