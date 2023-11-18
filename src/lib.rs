@@ -17,3 +17,6 @@ pub use macros::*;
 pub mod xx_core {
 	pub use super::*;
 }
+
+#[cfg(any(test, feature = "test"))]
+pub mod test;

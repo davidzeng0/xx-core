@@ -62,6 +62,17 @@ impl<R: Read> BufReader<R> {
 	pub fn from_parts(inner: R, buf: Vec<u8>, pos: usize) -> Self {
 		assert!(pos <= buf.len());
 
+		#[cfg(test)]
+		let buf = {
+			let mut buf = buf;
+
+			for b in buf.spare_capacity_mut() {
+				b.write(0);
+			}
+
+			buf
+		};
+
 		BufReader { inner, buf, pos, phantom: PhantomData }
 	}
 

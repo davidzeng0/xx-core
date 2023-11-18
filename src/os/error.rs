@@ -6,7 +6,7 @@ use num_traits::FromPrimitive;
 use crate::error::{Error, ErrorKind, Result};
 
 #[repr(i32)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
 pub enum ErrorCodes {
 	/// Unknown error
 	Unknown = -1,
@@ -586,5 +586,5 @@ pub fn result_from_ptr(result: isize) -> Result<usize> {
 		return Ok(result as usize);
 	}
 
-	Err(Error::from_raw_os_error(result as i32))
+	Err(Error::from_raw_os_error(-result as i32))
 }

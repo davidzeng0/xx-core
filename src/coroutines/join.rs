@@ -5,14 +5,14 @@ use super::*;
 pub struct Join<O1, O2>(pub O1, pub O2);
 
 impl<O1, O2, E> Join<result::Result<O1, E>, result::Result<O2, E>> {
-	/// Flatten the `Join``, returning the first error it encounters
+	/// Flatten the `Join`, returning the first error it encounters
 	pub fn flatten(self) -> result::Result<Join<O1, O2>, E> {
 		Ok(Join(self.0?, self.1?))
 	}
 }
 
 impl<O1, O2> Join<Option<O1>, Option<O2>> {
-	/// Flatten the `Join``, returning none if there are any
+	/// Flatten the `Join`, returning none if there are any
 	pub fn flatten(self) -> Option<Join<O1, O2>> {
 		Some(Join(self.0?, self.1?))
 	}

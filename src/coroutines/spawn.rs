@@ -238,7 +238,7 @@ unsafe impl<Output> Cancel for JoinCancel<Output> {
 
 #[async_fn]
 impl<Output> JoinHandle<Output> {
-	pub fn request_cancel(mut self) -> Result<()> {
+	pub unsafe fn request_cancel(&mut self) -> Result<()> {
 		if self.task.output.is_some() {
 			Ok(())
 		} else {
@@ -246,13 +246,15 @@ impl<Output> JoinHandle<Output> {
 		}
 	}
 
-	pub async fn cancel(mut self) -> Output {
-		if self.task.output.is_none() {
-			let result = self.task.cancel();
+	pub fn async_cancel(mut self) -> Result<()> {
+		unsafe { self.request_cancel() }
+	}
 
-			if result.is_err() {
-				warn!("Cancel returned an {:?}", result);
-			}
+	pub async fn cancel(mut self) -> Output {
+		let result = unsafe { self.request_cancel() };
+
+		if result.is_err() {
+			warn!("Cancel returned an {:?}", result);
 		}
 
 		self.await

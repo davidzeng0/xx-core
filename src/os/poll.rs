@@ -1,4 +1,6 @@
-use enumflags2::bitflags;
+use std::os::fd::{AsRawFd, BorrowedFd};
+
+use enumflags2::{bitflags, BitFlags};
 
 use super::syscall::*;
 use crate::{error::Result, pointer::MutPtr};
@@ -48,6 +50,20 @@ pub struct PollFd {
 	pub fd: i32,
 	pub events: u16,
 	pub returned_events: u16
+}
+
+impl PollFd {
+	pub fn new(fd: BorrowedFd<'_>, events: BitFlags<PollFlag>) -> PollFd {
+		PollFd {
+			fd: fd.as_raw_fd(),
+			events: events.bits() as u16,
+			returned_events: 0
+		}
+	}
+
+	pub fn returned_events(&self) -> BitFlags<PollFlag> {
+		unsafe { BitFlags::from_bits_unchecked(self.returned_events as u32) }
+	}
 }
 
 pub fn poll(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
