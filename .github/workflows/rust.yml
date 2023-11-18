@@ -16,8 +16,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Install cargo valgrind
-      run: cargo install cargo-valgrind
+    - name: Use valgrind
+      run: |
+        cargo install cargo-valgrind
+        sudo apt install valgrind
     - name: Build
       run: cargo build --verbose
     - name: Run tests
