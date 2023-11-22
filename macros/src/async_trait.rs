@@ -1,11 +1,19 @@
 use super::*;
 use crate::{
-	closure::{async_fn::*, make_closure::RemoveRefMut, transform::Function},
+	closure::{
+		async_fn::*,
+		make_closure::RemoveRefMut,
+		transform::{Function, MaybeImplOrFn}
+	},
 	wrap_function::get_pats
 };
 
-fn async_trait_ident(ident: &Ident) -> Ident {
+fn format_fn_ident(ident: &Ident) -> Ident {
 	format_ident!("async_trait_{}", ident)
+}
+
+fn format_trait_ident(ident: &Ident) -> Ident {
+	format_ident!("{}Ext", ident)
 }
 
 fn trait_ext(item: &ItemTrait) -> TokenStream {
@@ -28,7 +36,7 @@ fn trait_ext(item: &ItemTrait) -> TokenStream {
 	let supertrait: TypeParamBound = parse_quote_spanned! { ident.span() => #ident #generics };
 
 	item.supertraits.push(supertrait.clone());
-	item.ident = format_ident!("{}Ext", ident);
+	item.ident = format_trait_ident(ident);
 
 	let mut trait_items = Vec::new();
 
@@ -54,7 +62,7 @@ fn trait_ext(item: &ItemTrait) -> TokenStream {
 			});
 		}
 
-		let ident = async_trait_ident(&func.sig.ident);
+		let ident = format_fn_ident(&func.sig.ident);
 
 		if func.sig.receiver().is_some() {
 			func.default = Some(parse_quote! {{
@@ -67,6 +75,8 @@ fn trait_ext(item: &ItemTrait) -> TokenStream {
 		}
 
 		func.attrs.push(parse_quote! { #[inline(always) ]});
+
+		RemoveRefMut {}.visit_signature_mut(&mut func.sig);
 
 		if func.sig.asyncness.is_some() {
 			if let Err(err) = transform_typed_closure(&mut Function {
@@ -113,7 +123,7 @@ pub fn async_trait(_: TokenStream, item: TokenStream) -> TokenStream {
 			continue;
 		};
 
-		func.sig.ident = async_trait_ident(&func.sig.ident);
+		func.sig.ident = format_fn_ident(&func.sig.ident);
 
 		if func.sig.asyncness.is_none() {
 			continue;
@@ -136,7 +146,7 @@ pub fn async_trait(_: TokenStream, item: TokenStream) -> TokenStream {
 fn transform_async_impl_func(
 	func: &mut ImplItemFn, env_generics: Option<&Generics>
 ) -> Result<TokenStream> {
-	func.sig.ident = async_trait_ident(&func.sig.ident);
+	func.sig.ident = format_fn_ident(&func.sig.ident);
 
 	transform_no_closure(&mut Function {
 		is_item_fn: false,
@@ -157,30 +167,6 @@ fn transform_async_impl(item: &mut ItemImpl) -> Result<TokenStream> {
 	}
 
 	Ok(quote! { #item }.into())
-}
-
-pub struct MaybeImplOrFn;
-
-impl Parse for MaybeImplOrFn {
-	fn parse(input: ParseStream) -> Result<Self> {
-		input.call(Attribute::parse_outer)?;
-		input.parse::<Visibility>()?;
-		input.parse::<Option<Token![default]>>()?;
-		input.parse::<Option<Token![unsafe]>>()?;
-
-		if !input.peek(Token![impl]) {
-			input.parse::<Option<Token![const]>>()?;
-			input.parse::<Option<Token![async]>>()?;
-			input.parse::<Option<Token![unsafe]>>()?;
-			input.parse::<Option<Abi>>()?;
-
-			if !input.peek(Token![fn]) {
-				return Err(input.error("Expected a function or an impl trait"));
-			}
-		}
-
-		Ok(Self)
-	}
 }
 
 fn transform(item: TokenStream) -> Result<TokenStream> {

@@ -1,4 +1,7 @@
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::{
+	marker::PhantomData,
+	os::fd::{AsRawFd, BorrowedFd}
+};
 
 use enumflags2::{bitflags, BitFlags};
 
@@ -46,18 +49,21 @@ pub enum PollFlag {
 }
 
 #[repr(C)]
-pub struct PollFd {
+pub struct PollFd<'a> {
 	pub fd: i32,
 	pub events: u16,
-	pub returned_events: u16
+	pub returned_events: u16,
+
+	phantom: PhantomData<&'a ()>
 }
 
-impl PollFd {
-	pub fn new(fd: BorrowedFd<'_>, events: BitFlags<PollFlag>) -> PollFd {
-		PollFd {
+impl<'a> PollFd<'a> {
+	pub fn new(fd: BorrowedFd<'a>, events: BitFlags<PollFlag>) -> Self {
+		Self {
 			fd: fd.as_raw_fd(),
 			events: events.bits() as u16,
-			returned_events: 0
+			returned_events: 0,
+			phantom: PhantomData
 		}
 	}
 
@@ -66,13 +72,15 @@ impl PollFd {
 	}
 }
 
-pub fn poll(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
-	let events = syscall_int!(
-		Poll,
-		MutPtr::from(fds.as_mut_ptr()).int_addr(),
-		fds.len(),
-		timeout
-	)?;
+pub fn poll(fds: &mut [PollFd<'_>], timeout: i32) -> Result<u32> {
+	unsafe {
+		let events = syscall_int!(
+			Poll,
+			MutPtr::from(fds.as_mut_ptr()).int_addr(),
+			fds.len(),
+			timeout
+		)?;
 
-	Ok(events as u32)
+		Ok(events as u32)
+	}
 }

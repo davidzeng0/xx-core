@@ -6,6 +6,7 @@ use std::{
 };
 
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct Pointer<T: ?Sized, const MUTABLE: bool> {
 	ptr: *const T
 }

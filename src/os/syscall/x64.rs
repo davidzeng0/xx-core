@@ -1,4 +1,4 @@
-use std::arch::asm;
+use super::*;
 
 pub enum SyscallNumber {
 	Read                  = 0,
@@ -365,132 +365,118 @@ pub enum SyscallNumber {
 	SetMempolicyHomeNode  = 450
 }
 
-pub fn syscall0(num: isize) -> isize {
+pub unsafe fn syscall0(num: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"syscall",
-			inlateout("rax") num => result,
-			out("rcx") _,
-			out("r11") _
-		);
-	}
+	asm!(
+		"syscall",
+		inlateout("rax") num => result,
+		out("rcx") _,
+		out("r11") _
+	);
 
 	result
 }
 
-pub fn syscall1(num: isize, arg1: isize) -> isize {
+pub unsafe fn syscall1(num: isize, arg1: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"syscall",
-			inlateout("rax") num => result,
-			in("rdi") arg1,
-			out("rcx") _,
-			out("r11") _
-		);
-	}
+	asm!(
+		"syscall",
+		inlateout("rax") num => result,
+		in("rdi") arg1,
+		out("rcx") _,
+		out("r11") _
+	);
 
 	result
 }
 
-pub fn syscall2(num: isize, arg1: isize, arg2: isize) -> isize {
+pub unsafe fn syscall2(num: isize, arg1: isize, arg2: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"syscall",
-			inlateout("rax") num => result,
-			in("rdi") arg1,
-			in("rsi") arg2,
-			out("rcx") _,
-			out("r11") _
-		);
-	}
+	asm!(
+		"syscall",
+		inlateout("rax") num => result,
+		in("rdi") arg1,
+		in("rsi") arg2,
+		out("rcx") _,
+		out("r11") _
+	);
 
 	result
 }
 
-pub fn syscall3(num: isize, arg1: isize, arg2: isize, arg3: isize) -> isize {
+pub unsafe fn syscall3(num: isize, arg1: isize, arg2: isize, arg3: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"syscall",
-			inlateout("rax") num => result,
-			in("rdi") arg1,
-			in("rsi") arg2,
-			in("rdx") arg3,
-			out("rcx") _,
-			out("r11") _
-		);
-	}
+	asm!(
+		"syscall",
+		inlateout("rax") num => result,
+		in("rdi") arg1,
+		in("rsi") arg2,
+		in("rdx") arg3,
+		out("rcx") _,
+		out("r11") _
+	);
 
 	result
 }
 
-pub fn syscall4(num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize) -> isize {
+pub unsafe fn syscall4(num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"syscall",
-			inlateout("rax") num => result,
-			in("rdi") arg1,
-			in("rsi") arg2,
-			in("rdx") arg3,
-			in("r10") arg4,
-			out("rcx") _,
-			out("r11") _
-		);
-	}
+	asm!(
+		"syscall",
+		inlateout("rax") num => result,
+		in("rdi") arg1,
+		in("rsi") arg2,
+		in("rdx") arg3,
+		in("r10") arg4,
+		out("rcx") _,
+		out("r11") _
+	);
 
 	result
 }
 
-pub fn syscall5(
+pub unsafe fn syscall5(
 	num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize
 ) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"syscall",
-			inlateout("rax") num => result,
-			in("rdi") arg1,
-			in("rsi") arg2,
-			in("rdx") arg3,
-			in("r10") arg4,
-			in("r8") arg5,
-			out("rcx") _,
-			out("r11") _
-		);
-	}
+	asm!(
+		"syscall",
+		inlateout("rax") num => result,
+		in("rdi") arg1,
+		in("rsi") arg2,
+		in("rdx") arg3,
+		in("r10") arg4,
+		in("r8") arg5,
+		out("rcx") _,
+		out("r11") _
+	);
 
 	result
 }
 
-pub fn syscall6(
+pub unsafe fn syscall6(
 	num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize, arg6: isize
 ) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"syscall",
-			inlateout("rax") num => result,
-			in("rdi") arg1,
-			in("rsi") arg2,
-			in("rdx") arg3,
-			in("r10") arg4,
-			in("r8") arg5,
-			in("r9") arg6,
-			out("rcx") _,
-			out("r11") _
-		);
-	}
+	asm!(
+		"syscall",
+		inlateout("rax") num => result,
+		in("rdi") arg1,
+		in("rsi") arg2,
+		in("rdx") arg3,
+		in("r10") arg4,
+		in("r8") arg5,
+		in("r9") arg6,
+		out("rcx") _,
+		out("r11") _
+	);
 
 	result
 }

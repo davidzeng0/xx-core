@@ -81,11 +81,10 @@ pub trait Read {
 
 			if len == capacity {
 				buf.reserve(32);
+				capacity = buf.capacity();
 			}
 
 			unsafe {
-				capacity = buf.capacity();
-
 				match self.read(buf.get_unchecked_mut(len..capacity)).await {
 					Ok(0) => break,
 					Ok(n) => buf.set_len(len + n),
@@ -114,16 +113,14 @@ pub trait Read {
 		let vec = unsafe { buf.as_mut_vec() };
 		let start_len = vec.len();
 
-		let mut result = self.read_to_end(vec).await;
-
-		result = result.and_then(|read| {
+		let result = self.read_to_end(vec).await.and_then(|read| {
 			check_utf8(&vec[start_len..])?;
 
 			Ok(read)
 		});
 
 		if result.is_err() {
-			unsafe { vec.set_len(start_len) }
+			vec.truncate(start_len);
 		}
 
 		return result;
@@ -135,7 +132,7 @@ pub trait Read {
 
 	async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
 		match bufs.iter_mut().find(|b| !b.is_empty()) {
-			Some(buf) => self.read(&mut **buf).await,
+			Some(buf) => self.read(&mut buf[..]).await,
 			None => Ok(0)
 		}
 	}
@@ -193,6 +190,7 @@ impl<'a, R: Read + ?Sized> ReadRef<'a, R> {
 	}
 }
 
+#[async_trait_impl]
 impl<'a, R: Read + ?Sized> Read for ReadRef<'a, R> {
 	read_wrapper! {
 		inner = reader;
@@ -205,7 +203,7 @@ pub trait BufRead: Read {
 	/// Fill any remaining space in the internal buffer,
 	/// up to `amount` total unconsumed bytes
 	///
-	/// Returns the number of bytes filled, which can be zero
+	/// Returns the number of additional bytes filled, which can be zero
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize>;
 
 	#[inline(never)]
@@ -222,7 +220,6 @@ pub trait BufRead: Read {
 
 		loop {
 			let available = self.buffer();
-
 			let (used, done) = match memchr(byte, available) {
 				Some(index) => (index + 1, true),
 				None => (available.len(), false)
@@ -230,9 +227,7 @@ pub trait BufRead: Read {
 
 			buf.extend_from_slice(&available[0..used]);
 
-			unsafe {
-				self.consume_unchecked(used);
-			}
+			self.consume(used);
 
 			if done {
 				break;
@@ -302,10 +297,14 @@ pub trait BufRead: Read {
 
 	fn consume(&mut self, count: usize);
 
+	unsafe fn consume_unchecked(&mut self, count: usize);
+
+	fn unconsume(&mut self, count: usize);
+
+	unsafe fn unconsume_unchecked(&mut self, count: usize);
+
 	/// Discard all data in the buffer
 	fn discard(&mut self);
-
-	unsafe fn consume_unchecked(&mut self, count: usize);
 }
 
 pub trait IntoLines: BufRead {
@@ -354,10 +353,16 @@ macro_rules! bufread_wrapper {
 			fn consume(&mut self, count: usize);
 
 			#[async_trait_impl]
-			fn discard(&mut self);
+			unsafe fn consume_unchecked(&mut self, count: usize);
 
 			#[async_trait_impl]
-			unsafe fn consume_unchecked(&mut self, count: usize);
+			fn unconsume(&mut self, count: usize);
+
+			#[async_trait_impl]
+			unsafe fn unconsume_unchecked(&mut self, count: usize);
+
+			#[async_trait_impl]
+			fn discard(&mut self);
 		}
 	}
 }

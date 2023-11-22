@@ -1,27 +1,25 @@
 use std::str::from_utf8;
 
-mod buf_reader;
-pub use buf_reader::*;
-mod buf_writer;
-pub use buf_writer::*;
-
-mod read;
+pub mod read;
 pub use read::*;
-mod write;
+pub mod write;
 pub use write::*;
-mod seek;
+pub mod seek;
 pub use seek::*;
-mod split;
+pub mod split;
 pub use split::*;
 
-mod typed;
+pub mod buf_reader;
+pub use buf_reader::*;
+pub mod buf_writer;
+pub use buf_writer::*;
+
+pub mod typed;
+
 use std::{
 	io::{IoSlice, IoSliceMut, SeekFrom},
-	marker::PhantomData,
-	ptr::copy
+	marker::PhantomData
 };
-
-pub use typed::*;
 
 use super::*;
 use crate::{coroutines::*, error::*, opt::hint::*};

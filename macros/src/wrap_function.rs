@@ -19,49 +19,35 @@ impl Parse for WrapperFunctions {
 		let mut inner_mut = None;
 
 		for _ in 0..2 {
-			let mutability = input.peek(Token![mut]);
-
-			if mutability {
-				input.parse::<Token![mut]>()?;
-			}
-
-			if !input.peek(Ident) {
+			if !input.peek(Ident) && !(input.peek(Token![mut]) && input.peek2(Ident)) {
 				break;
 			}
 
+			let mutability: Option<Token![mut]> = input.parse()?;
 			let ident: Ident = input.parse()?;
+			let rhs: Expr;
 
 			if ident != "inner" {
 				return Err(input.error("unexpected ident"));
 			}
 
 			input.parse::<Token![=]>()?;
-
-			let rhs: Expr = input.parse()?;
-
+			rhs = input.parse()?;
 			input.parse::<Token![;]>()?;
 
-			if mutability {
+			if mutability.is_some() {
 				inner_mut = Some(rhs);
 			} else {
 				inner = Some(rhs);
 			}
 		}
 
-		if inner.is_none() {
-			inner = inner_mut.clone();
-		}
-
-		if inner_mut.is_none() {
-			inner_mut = inner.clone();
-		}
-
-		if inner.is_none() {
+		if inner.is_none() && inner_mut.is_none() {
 			return Err(input.error("expected an inner expression"));
 		}
 
-		let inner = inner.unwrap();
-		let inner_mut = inner_mut.unwrap();
+		let inner = inner.unwrap_or_else(|| inner_mut.clone().unwrap());
+		let inner_mut = inner_mut.unwrap_or(inner.clone());
 
 		let mut functions = Vec::new();
 
@@ -76,11 +62,7 @@ impl Parse for WrapperFunctions {
 			let vis: Visibility = input.parse()?;
 			let sig: Signature = input.parse()?;
 
-			let ident = if let Some(ident) = ident {
-				ident
-			} else {
-				sig.ident.clone()
-			};
+			let ident = ident.unwrap_or(sig.ident.clone());
 
 			input.parse::<Token![;]>()?;
 			functions.push(Function { attrs, ident, vis, sig });

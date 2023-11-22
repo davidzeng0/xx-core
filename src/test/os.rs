@@ -2,18 +2,21 @@
 mod test {
 	use std::{
 		mem::transmute,
-		os::fd::{FromRawFd, OwnedFd}
+		os::fd::{BorrowedFd, FromRawFd, OwnedFd}
 	};
 
 	use enumflags2::make_bitflags;
 
-	use crate::os::{
-		error::{result_from_int, result_from_ptr, ErrorCodes},
-		mman::{map_memory, MemoryAdvice, MemoryFlag, MemoryProtection, MemoryType},
-		poll::{poll, PollFd, PollFlag},
-		resource::{get_rlimit, Resource},
-		time::{time, ClockId},
-		unistd::close
+	use crate::{
+		os::{
+			error::{result_from_int, result_from_ptr, ErrorCodes},
+			mman::{MemoryAdvice, MemoryFlag, MemoryMap, MemoryProtection, MemoryType},
+			poll::{poll, PollFd, PollFlag},
+			resource::{get_rlimit, Resource},
+			time::{time, ClockId},
+			unistd::close
+		},
+		pointer::{MutPtr, Ptr}
 	};
 
 	#[test]
@@ -36,11 +39,10 @@ mod test {
 
 	#[test]
 	fn test_poll() {
-		let mut fds = [PollFd {
-			fd: 1,
-			events: make_bitflags!(PollFlag::{Out}).bits() as u16,
-			returned_events: 0
-		}];
+		let mut fds = [PollFd::new(
+			unsafe { BorrowedFd::borrow_raw(1) },
+			make_bitflags!(PollFlag::{Out})
+		)];
 
 		poll(&mut fds, 0).unwrap();
 		assert!(fds[0].returned_events().intersects(PollFlag::Out));
@@ -48,8 +50,8 @@ mod test {
 
 	#[test]
 	fn test_mmap() {
-		let mut mem = map_memory(
-			0x12345678000,
+		let mut mem = MemoryMap::map(
+			Some(Ptr::from_int_addr(0x12345678000)),
 			16384,
 			MemoryProtection::Read as u32,
 			MemoryType::Private as u32 | MemoryFlag::Anonymous as u32,
@@ -59,7 +61,7 @@ mod test {
 		.unwrap();
 
 		assert_eq!(mem.length(), 16384);
-		assert_eq!(mem.addr(), 0x12345678000);
+		assert_eq!(mem.addr(), MutPtr::from_int_addr(0x12345678000));
 
 		mem.protect(MemoryProtection::Write as u32).unwrap();
 		mem.advise(MemoryAdvice::Random as u32).unwrap();

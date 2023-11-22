@@ -71,7 +71,7 @@ fn transform_with_type(func: &mut Function, make_closure: ClosureType) -> Result
 				OpaqueClosureType::Custom(|rt| {
 					(
 						quote! { xx_core::coroutines::Task<Output = #rt> },
-						quote! { xx_core::coroutines::ClosureWrap }
+						quote! { xx_core::coroutines::closure::ClosureWrap }
 					)
 				})
 			)?;
@@ -84,9 +84,9 @@ fn transform_with_type(func: &mut Function, make_closure: ClosureType) -> Result
 					quote! { mut __xx_internal_async_context },
 					quote! { xx_core::task::Handle<xx_core::coroutines::Context> }
 				)],
-				quote! { xx_core::coroutines::Closure },
+				quote! { xx_core::coroutines::closure::Closure },
 				|capture, ret| {
-					quote! { xx_core::coroutines::Closure<#capture, #ret> }
+					quote! { xx_core::coroutines::closure::Closure<#capture, #ret> }
 				}
 			)?;
 		}
@@ -140,6 +140,13 @@ pub fn transform_typed_closure(func: &mut Function) -> Result<()> {
 /// ```
 pub fn async_fn(_: TokenStream, item: TokenStream) -> TokenStream {
 	match transform_fn(item, transform) {
+		Ok(ts) => ts,
+		Err(err) => err.to_compile_error()
+	}
+}
+
+pub fn async_fn_typed(_: TokenStream, item: TokenStream) -> TokenStream {
+	match transform_fn(item, transform_typed_closure) {
 		Ok(ts) => ts,
 		Err(err) => err.to_compile_error()
 	}

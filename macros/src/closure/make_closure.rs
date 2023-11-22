@@ -31,17 +31,20 @@ struct AddLifetime {
 	modified: bool
 }
 
-fn closure_lifetime<R: Parse>() -> R {
-	parse_quote! { '__xx_internal_closure_lifetime }
+fn closure_lifetime() -> TokenStream {
+	quote! { '__xx_internal_closure_lifetime }
+}
+
+fn closure_lifetime_parsed<R: Parse>() -> R {
+	let lifetime = closure_lifetime();
+
+	parse_quote! { #lifetime }
 }
 
 impl AddLifetime {
 	fn next_lifetime(&mut self, span: Span) -> Lifetime {
 		let lifetime = Lifetime::new(
-			&format!(
-				"'__xx_internal_closure_lifetime_{}",
-				self.added_lifetimes.len() + 1
-			),
+			&format!("{}_{}", closure_lifetime(), self.added_lifetimes.len() + 1),
 			span
 		);
 
@@ -121,7 +124,7 @@ impl VisitMut for AddLifetime {
 		visit_lifetime_param_mut(self, lifetime);
 
 		lifetime.colon_token = Some(Default::default());
-		lifetime.bounds.push(closure_lifetime());
+		lifetime.bounds.push(closure_lifetime_parsed());
 
 		self.modified = true;
 	}
@@ -141,20 +144,20 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&Generics>) ->
 				addl_bounds
 					.push(parse_quote! { xx_core::macros::closure::lifetime::Captures<#lifetime> });
 			}
-		})
+		});
 	});
 
 	/* this is apparently necessary */
 	for param in sig.generics.lifetimes() {
 		let lifetime = &param.lifetime;
 
-		if lifetime != &closure_lifetime() {
+		if lifetime != &closure_lifetime_parsed() {
 			addl_bounds
 				.push(parse_quote! { xx_core::macros::closure::lifetime::Captures<#lifetime> });
 		}
 	}
 
-	addl_bounds.push(closure_lifetime());
+	addl_bounds.push(closure_lifetime_parsed());
 
 	quote! { #addl_bounds }
 }
@@ -169,7 +172,7 @@ impl VisitMut for ReturnLifetime {
 			return;
 		}
 
-		reference.lifetime = Some(closure_lifetime());
+		reference.lifetime = Some(closure_lifetime_parsed());
 	}
 }
 
@@ -187,7 +190,7 @@ pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&Generics>) -> To
 	ReturnLifetime {}.visit_return_type_mut(&mut sig.output);
 
 	op.visit_signature_mut(sig);
-	sig.generics.params.push(closure_lifetime());
+	sig.generics.params.push(closure_lifetime_parsed());
 
 	let clause = sig
 		.generics
@@ -205,28 +208,34 @@ pub fn add_lifetime(sig: &mut Signature, env_generics: &Option<&Generics>) -> To
 			GenericParam::Type(_) => (),
 			GenericParam::Lifetime(param) => {
 				let lifetime = &param.lifetime;
+				let closure_lifetime = closure_lifetime();
 
 				clause
 					.predicates
-					.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime });
+					.push(parse_quote! { #lifetime: #closure_lifetime });
 				self_bounds.push(lifetime.clone());
 			}
 		})
 	});
 
 	for lifetime in &op.added_lifetimes {
+		let closure_lifetime = closure_lifetime();
+
 		sig.generics.params.push(parse_quote! { #lifetime });
 		clause
 			.predicates
-			.push(parse_quote! { #lifetime: '__xx_internal_closure_lifetime });
+			.push(parse_quote! { #lifetime: #closure_lifetime });
 	}
 
+	// TODO: remove when trait aliases are stable
 	if true {
 		let lifetimes = lifetime_workaround(sig, env_generics);
 
 		quote! { + #lifetimes }
 	} else {
-		quote! { + '__xx_internal_closure_lifetime }
+		let closure_lifetime = closure_lifetime();
+
+		quote! { + #closure_lifetime }
 	}
 }
 
@@ -319,12 +328,10 @@ pub fn into_typed_closure(
 		ReplaceSelf {}.visit_block_mut(*block);
 
 		**block = parse_quote! {{
-			let run = |
+			#closure_type::new(#construct, |
 				#destruct: #types,
 				#args
-			| -> #return_type #block;
-
-			#closure_type::new(#construct, run)
+			| -> #return_type #block)
 		}};
 	}
 

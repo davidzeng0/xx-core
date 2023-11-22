@@ -330,11 +330,11 @@ pub enum MessageFlag {
 }
 
 #[repr(C)]
-pub struct MessageHeader {
+pub struct MessageHeader<'a> {
 	pub address: MutPtr<()>,
 	pub address_len: u32,
 
-	pub iov: MutPtr<IoVec>,
+	pub iov: MutPtr<IoVec<'a>>,
 	pub iov_len: usize,
 
 	pub control: Ptr<()>,
@@ -343,9 +343,14 @@ pub struct MessageHeader {
 	pub flags: u32
 }
 
-impl MessageHeader {
+impl MessageHeader<'_> {
 	pub fn new() -> Self {
 		unsafe { zeroed() }
+	}
+
+	pub fn set_addr<A>(&mut self, addr: &mut A) {
+		self.address = MutPtr::from(addr).as_unit();
+		self.address_len = size_of::<A>() as u32;
 	}
 
 	pub fn flags(&self) -> BitFlags<MessageFlag> {
@@ -353,26 +358,29 @@ impl MessageHeader {
 	}
 }
 
-impl Default for MessageHeader {
-	fn default() -> Self {
-		Self::new()
+impl<'a> MessageHeader<'a> {
+	pub fn set_vecs<'b: 'a>(&mut self, vecs: &mut [IoVec<'b>]) {
+		self.iov = MutPtr::from(vecs.as_mut_ptr());
+		self.iov_len = vecs.len();
 	}
 }
 
 pub fn socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd> {
-	let fd = syscall_int!(Socket, domain, socket_type, protocol)?;
+	unsafe {
+		let fd = syscall_int!(Socket, domain, socket_type, protocol)?;
 
-	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+		Ok(OwnedFd::from_raw_fd(fd as i32))
+	}
 }
 
-pub fn bind_raw(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()> {
+pub unsafe fn bind_raw(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()> {
 	syscall_int!(Bind, socket.as_raw_fd(), addr.int_addr(), addrlen)?;
 
 	Ok(())
 }
 
 pub fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	bind_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32)
+	unsafe { bind_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32) }
 }
 
 pub fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
@@ -382,14 +390,14 @@ pub fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 	}
 }
 
-pub fn connect_raw(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()> {
+pub unsafe fn connect_raw(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()> {
 	syscall_int!(Connect, socket.as_raw_fd(), addr.int_addr(), addrlen)?;
 
 	Ok(())
 }
 
 pub fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	connect_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32)
+	unsafe { connect_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32) }
 }
 
 pub fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
@@ -399,7 +407,9 @@ pub fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 	}
 }
 
-pub fn accept_raw(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32) -> Result<OwnedFd> {
+pub unsafe fn accept_raw(
+	socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32
+) -> Result<OwnedFd> {
 	let fd = syscall_int!(
 		Accept,
 		socket.as_raw_fd(),
@@ -407,17 +417,17 @@ pub fn accept_raw(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32) -
 		MutPtr::from(addrlen).int_addr()
 	)?;
 
-	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+	Ok(OwnedFd::from_raw_fd(fd as i32))
 }
 
 pub fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd, u32)> {
 	let mut addrlen = size_of::<A>() as u32;
-	let fd = accept_raw(socket, MutPtr::from(addr).as_unit(), &mut addrlen)?;
+	let fd = unsafe { accept_raw(socket, MutPtr::from(addr).as_unit(), &mut addrlen)? };
 
 	Ok((fd, addrlen))
 }
 
-pub fn sendto_raw(
+pub unsafe fn sendto_raw(
 	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, dest_addr: Ptr<()>, addrlen: u32
 ) -> Result<usize> {
 	let sent = syscall_int!(
@@ -433,7 +443,7 @@ pub fn sendto_raw(
 	Ok(sent as usize)
 }
 
-pub fn sendto<A>(
+pub unsafe fn sendto<A>(
 	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, destination: &A
 ) -> Result<usize> {
 	sendto_raw(
@@ -446,11 +456,11 @@ pub fn sendto<A>(
 	)
 }
 
-pub fn send(socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize> {
+pub unsafe fn send(socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize> {
 	sendto_raw(socket, buf, len, flags, Ptr::null(), 0)
 }
 
-pub fn recvfrom_raw(
+pub unsafe fn recvfrom_raw(
 	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, addr: MutPtr<()>,
 	addrlen: &mut u32
 ) -> Result<usize> {
@@ -467,7 +477,7 @@ pub fn recvfrom_raw(
 	Ok(received as usize)
 }
 
-pub fn recvfrom<A>(
+pub unsafe fn recvfrom<A>(
 	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, addr: &mut A
 ) -> Result<(usize, u32)> {
 	let mut addrlen = size_of::<A>() as u32;
@@ -483,7 +493,7 @@ pub fn recvfrom<A>(
 	Ok((recvd, addrlen))
 }
 
-pub fn recv(socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize> {
+pub unsafe fn recv(socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize> {
 	let received = syscall_int!(
 		Recvfrom,
 		socket.as_raw_fd(),
@@ -500,13 +510,13 @@ pub fn recv(socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32) -> Res
 pub const MAX_BACKLOG: i32 = 4096;
 
 pub fn listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()> {
-	syscall_int!(Listen, socket.as_raw_fd(), backlog)?;
+	unsafe { syscall_int!(Listen, socket.as_raw_fd(), backlog)? };
 
 	Ok(())
 }
 
 pub fn shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()> {
-	syscall_int!(Shutdown, socket.as_raw_fd(), how)?;
+	unsafe { syscall_int!(Shutdown, socket.as_raw_fd(), how)? };
 
 	Ok(())
 }
@@ -514,14 +524,16 @@ pub fn shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()> {
 pub fn getsockopt<Opt>(
 	socket: BorrowedFd<'_>, level: i32, option: i32, opt_val: &mut Opt
 ) -> Result<u32> {
-	let res = syscall_int!(
-		Setsockopt,
-		socket.as_raw_fd(),
-		level,
-		option,
-		MutPtr::from(opt_val).int_addr(),
-		size_of::<Opt>
-	)?;
+	let res = unsafe {
+		syscall_int!(
+			Setsockopt,
+			socket.as_raw_fd(),
+			level,
+			option,
+			MutPtr::from(opt_val).int_addr(),
+			size_of::<Opt>
+		)?
+	};
 
 	Ok(res as u32)
 }
@@ -529,14 +541,16 @@ pub fn getsockopt<Opt>(
 pub fn setsockopt<Opt>(
 	socket: BorrowedFd<'_>, level: i32, option: i32, opt_val: &Opt
 ) -> Result<u32> {
-	let res = syscall_int!(
-		Setsockopt,
-		socket.as_raw_fd(),
-		level,
-		option,
-		Ptr::from(opt_val).int_addr(),
-		size_of::<Opt>()
-	)?;
+	let res = unsafe {
+		syscall_int!(
+			Setsockopt,
+			socket.as_raw_fd(),
+			level,
+			option,
+			Ptr::from(opt_val).int_addr(),
+			size_of::<Opt>()
+		)?
+	};
 
 	Ok(res as u32)
 }
@@ -611,7 +625,7 @@ pub fn set_tcp_keepalive(socket: BorrowedFd<'_>, enable: bool, idle: i32) -> Res
 	Ok(())
 }
 
-pub fn get_addr_raw(
+pub unsafe fn get_addr_raw(
 	number: SyscallNumber, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32
 ) -> Result<()> {
 	syscall_int!(
@@ -627,7 +641,7 @@ pub fn get_addr_raw(
 pub fn get_addr<A>(number: SyscallNumber, socket: BorrowedFd<'_>, addr: &mut A) -> Result<u32> {
 	let mut addrlen = size_of::<A>() as u32;
 
-	get_addr_raw(number, socket, MutPtr::from(addr).as_unit(), &mut addrlen)?;
+	unsafe { get_addr_raw(number, socket, MutPtr::from(addr).as_unit(), &mut addrlen)? };
 
 	Ok(addrlen)
 }

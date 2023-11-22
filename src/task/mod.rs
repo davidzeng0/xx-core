@@ -1,12 +1,10 @@
 pub use crate::macros::sync_task;
 use crate::{error::*, pointer::*};
 
-mod block_on;
-mod closure;
-mod env;
-
+pub mod block_on;
 pub use block_on::*;
-pub use closure::*;
+pub mod closure;
+pub mod env;
 pub use env::*;
 
 pub type RequestPtr<T> = Ptr<Request<T>>;

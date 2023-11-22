@@ -50,9 +50,7 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 
 		trace!(target: &worker, "-- Completed");
 
-		unsafe {
-			worker.exit();
-		}
+		unsafe { worker.exit() };
 	}
 
 	#[sync_task]
@@ -89,11 +87,14 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 	}
 }
 
-/// Spawn a new fiber. The result of the fiber will be returned as a [`Task`]
+/// Spawn a new worker. The result of the worker will be returned as a [`Task`]
+///
+/// Safety: executor, task, and the created runtime outlive the worker. Sync
+/// task safety requirements must also be met
 ///
 /// [`Task`]: crate::task::Task
 #[sync_task]
-pub fn spawn_sync<R: PerContextRuntime, T: Task>(
+pub unsafe fn spawn_sync<R: PerContextRuntime, T: Task>(
 	executor: Handle<Executor>, entry: impl FnOnce(Handle<Worker>) -> R, task: T
 ) -> T::Output {
 	fn cancel(_context: Handle<Context>) -> Result<()> {
@@ -101,13 +102,13 @@ pub fn spawn_sync<R: PerContextRuntime, T: Task>(
 		Ok(())
 	}
 
-	unsafe { SpawnWorker::spawn(executor, entry, task).run(request) }
+	SpawnWorker::spawn(executor, entry, task).run(request)
 }
 
 /// Utility function that calls the above with the
 /// executor and runtime passed to this function
 #[sync_task]
-pub fn spawn_sync_with_runtime<R: PerContextRuntime, T: Task>(
+pub unsafe fn spawn_sync_with_runtime<R: PerContextRuntime, T: Task>(
 	mut runtime: Handle<R>, task: T
 ) -> T::Output {
 	fn cancel(_context: Handle<Context>) -> Result<()> {
@@ -117,7 +118,7 @@ pub fn spawn_sync_with_runtime<R: PerContextRuntime, T: Task>(
 	let executor = runtime.executor();
 	let new_runtime = |worker| runtime.new_from_worker(worker);
 
-	unsafe { spawn_sync(executor, new_runtime, task).run(request) }
+	spawn_sync(executor, new_runtime, task).run(request)
 }
 
 struct Spawn<Output> {
@@ -153,7 +154,7 @@ impl<Output> Spawn<Output> {
 		this.dec_ref();
 	}
 
-	pub fn new() -> Self {
+	fn new() -> Self {
 		unsafe {
 			Self {
 				request: Request::new(Ptr::null(), Self::spawn_complete),
@@ -165,10 +166,7 @@ impl<Output> Spawn<Output> {
 		}
 	}
 
-	#[async_fn]
-	pub async fn run<R: PerContextRuntime, T: Task>(
-		runtime: Handle<R>, task: T
-	) -> JoinHandle<T::Output> {
+	fn run<R: PerContextRuntime, T: Task>(runtime: Handle<R>, task: T) -> JoinHandle<T::Output> {
 		let mut this = Boxed::new(Spawn::new());
 
 		unsafe {
@@ -189,8 +187,8 @@ impl<Output> Spawn<Output> {
 		JoinHandle { task: unsafe { Boxed::into_raw(this) }.into() }
 	}
 
-	pub fn cancel(&mut self) -> Result<()> {
-		unsafe { self.cancel.take().unwrap().run() }
+	unsafe fn cancel(&mut self) -> Result<()> {
+		self.cancel.take().unwrap().run()
 	}
 }
 
@@ -203,54 +201,53 @@ impl<Output> Global for Spawn<Output> {
 	}
 }
 
-struct JoinTask<Output> {
-	task: MutPtr<Spawn<Output>>
-}
-
-struct JoinCancel<Output> {
-	task: MutPtr<Spawn<Output>>
-}
-
 pub struct JoinHandle<Output> {
-	task: MutPtr<Spawn<Output>>
-}
-
-unsafe impl<Output> SyncTask for JoinTask<Output> {
-	type Cancel = JoinCancel<Output>;
-	type Output = Output;
-
-	unsafe fn run(mut self, request: RequestPtr<Output>) -> Progress<Output, Self::Cancel> {
-		self.task.waiter = request;
-
-		/* we could make JoinTask return Progress::Done instead of checking below,
-		 * but block_on is somewhat expensive, so only want to block on if
-		 * it's necessary
-		 */
-		Progress::Pending(JoinCancel { task: self.task })
-	}
-}
-
-unsafe impl<Output> Cancel for JoinCancel<Output> {
-	unsafe fn run(mut self) -> Result<()> {
-		self.task.cancel()
-	}
+	task: Handle<Spawn<Output>>
 }
 
 #[async_fn]
 impl<Output> JoinHandle<Output> {
+	#[sync_task]
+	fn join(mut self) -> Output {
+		fn cancel(mut task: Handle<Spawn<Output>>) -> Result<()> {
+			unsafe { task.cancel() }
+		}
+
+		self.task.waiter = request;
+
+		/* we could make JoinTask return Progress::Done instead of checking below,
+		 * but we want to avoid calling task::block_on if possible
+		 */
+		Progress::Pending(cancel(self.task, request))
+	}
+
+	pub fn is_done(&self) -> bool {
+		self.task.clone().output.is_some()
+	}
+
+	/// Signals the task to cancel, without waiting for the result
+	///
+	/// Safety: The async task referenced by this handle must not be currently
+	/// running. Cannot call twice
 	pub unsafe fn request_cancel(&mut self) -> Result<()> {
-		if self.task.output.is_some() {
+		if self.is_done() {
 			Ok(())
 		} else {
 			self.task.cancel()
 		}
 	}
 
-	pub fn async_cancel(mut self) -> Result<()> {
+	/// Signals the task to cancel, without waiting for the result
+	///
+	/// Safety: see above function
+	pub unsafe fn async_cancel(mut self) -> Result<()> {
 		unsafe { self.request_cancel() }
 	}
 
-	pub async fn cancel(mut self) -> Output {
+	/// Signals the task to cancel, waits for, and returns the result
+	///
+	/// Safety: see above function
+	pub async unsafe fn cancel(mut self) -> Output {
 		let result = unsafe { self.request_cancel() };
 
 		if result.is_err() {
@@ -270,7 +267,7 @@ impl<Output> Task for JoinHandle<Output> {
 			return output;
 		}
 
-		block_on(JoinTask { task: self.task }).run(context)
+		block_on(self.join()).run(context)
 	}
 }
 
@@ -283,9 +280,10 @@ impl<Output> Drop for JoinHandle<Output> {
 /// Spawn a new async task
 ///
 /// Returns a join handle which may be used to get the result from the task
-#[async_fn]
-pub async fn spawn<R: PerContextRuntime, T: Task + 'static>(
+///
+/// Safety: runtime and task outlive worker
+pub unsafe fn spawn<R: PerContextRuntime, T: Task>(
 	runtime: Handle<R>, task: T
 ) -> JoinHandle<T::Output> {
-	Spawn::<T::Output>::run(runtime, task).await
+	Spawn::<T::Output>::run(runtime, task)
 }

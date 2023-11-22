@@ -6,7 +6,10 @@ use std::{
 use enumflags2::bitflags;
 
 use super::syscall::*;
-use crate::error::Result;
+use crate::{
+	error::Result,
+	pointer::{MutPtr, Ptr}
+};
 
 #[bitflags]
 #[repr(u32)]
@@ -97,92 +100,110 @@ pub enum MemoryRemapFlag {
 }
 
 pub struct MemoryMap<'a> {
-	addr: usize,
+	addr: MutPtr<()>,
 	length: usize,
 	phantom: PhantomData<&'a ()>
 }
 
-pub fn mmap(
-	addr: usize, length: usize, prot: u32, flags: u32, fd: i32, off: isize
-) -> Result<usize> {
-	syscall_pointer!(Mmap, addr, length, prot, flags, fd, off)
+pub unsafe fn mmap(
+	addr: Ptr<()>, length: usize, prot: u32, flags: u32, fd: i32, off: isize
+) -> Result<MutPtr<()>> {
+	let addr = syscall_pointer!(Mmap, addr.int_addr(), length, prot, flags, fd, off)?;
+
+	Ok(MutPtr::from_int_addr(addr))
 }
 
-pub fn map_memory<'a>(
-	addr: usize, length: usize, prot: u32, flags: u32, fd: Option<BorrowedFd<'_>>, off: isize
-) -> Result<MemoryMap<'a>> {
-	let addr = mmap(
-		addr,
-		length,
-		prot,
-		flags,
-		fd.map(|fd| fd.as_raw_fd()).unwrap_or(-1),
-		off
-	)?;
-
-	Ok(MemoryMap { addr, length, phantom: PhantomData })
-}
-
-pub fn munmap(addr: usize, length: usize) -> Result<()> {
-	syscall_int!(Munmap, addr, length)?;
+pub unsafe fn munmap(addr: Ptr<()>, length: usize) -> Result<()> {
+	syscall_int!(Munmap, addr.int_addr(), length)?;
 
 	Ok(())
 }
 
-pub fn mprotect(addr: usize, length: usize, prot: u32) -> Result<()> {
-	syscall_int!(Mprotect, addr, length, prot)?;
+pub unsafe fn mprotect(addr: Ptr<()>, length: usize, prot: u32) -> Result<()> {
+	syscall_int!(Mprotect, addr.int_addr(), length, prot)?;
 
 	Ok(())
 }
 
-pub fn msync(addr: usize, length: usize, flags: u32) -> Result<()> {
-	syscall_int!(Msync, addr, length, flags)?;
+pub unsafe fn msync(addr: Ptr<()>, length: usize, flags: u32) -> Result<()> {
+	syscall_int!(Msync, addr.int_addr(), length, flags)?;
 
 	Ok(())
 }
 
-pub fn madvise(addr: usize, length: usize, advice: u32) -> Result<()> {
-	syscall_int!(Msync, addr, length, advice)?;
+pub unsafe fn madvise(addr: Ptr<()>, length: usize, advice: u32) -> Result<()> {
+	syscall_int!(Msync, addr.int_addr(), length, advice)?;
 
 	Ok(())
 }
 
-pub fn mlock(addr: usize, length: usize) -> Result<()> {
-	syscall_int!(Mlock, addr, length)?;
+pub unsafe fn mlock(addr: Ptr<()>, length: usize) -> Result<()> {
+	syscall_int!(Mlock, addr.int_addr(), length)?;
 
 	Ok(())
 }
 
-pub fn munlock(addr: usize, length: usize) -> Result<()> {
-	syscall_int!(Munlock, addr, length)?;
+pub unsafe fn munlock(addr: Ptr<()>, length: usize) -> Result<()> {
+	syscall_int!(Munlock, addr.int_addr(), length)?;
 
 	Ok(())
 }
 
-pub fn mlock_all(flags: u32) -> Result<()> {
+pub unsafe fn mlock_all(flags: u32) -> Result<()> {
 	syscall_int!(Mlockall, flags)?;
 
 	Ok(())
 }
 
-pub fn munlock_all() -> Result<()> {
+pub unsafe fn munlock_all() -> Result<()> {
 	syscall_int!(Munlockall)?;
 
 	Ok(())
 }
 
-pub fn mremap(
-	addr: usize, old_length: usize, new_length: usize, flags: u32, new_address: usize
-) -> Result<usize> {
-	syscall_pointer!(Mremap, addr, old_length, new_length, flags, new_address)
+pub unsafe fn mremap(
+	addr: Ptr<()>, old_length: usize, new_length: usize, flags: u32, new_address: Ptr<()>
+) -> Result<MutPtr<()>> {
+	let addr = syscall_pointer!(
+		Mremap,
+		addr.int_addr(),
+		old_length,
+		new_length,
+		flags,
+		new_address.int_addr()
+	)?;
+
+	Ok(MutPtr::from_int_addr(addr))
 }
 
 impl MemoryMap<'_> {
 	pub fn new() -> Self {
-		Self { addr: 0, length: 0, phantom: PhantomData }
+		Self {
+			addr: MutPtr::null(),
+			length: 0,
+			phantom: PhantomData
+		}
 	}
 
-	pub fn addr(&self) -> usize {
+	pub fn map<'a>(
+		addr: Option<Ptr<()>>, length: usize, prot: u32, flags: u32, fd: Option<BorrowedFd<'_>>,
+		off: isize
+	) -> Result<MemoryMap<'a>> {
+		unsafe {
+			let addr = mmap(
+				addr.unwrap_or(Ptr::null()),
+				length,
+				prot,
+				flags,
+				fd.map(|fd| fd.as_raw_fd()).unwrap_or(-1),
+				off
+			)?;
+
+			Ok(MemoryMap { addr, length, phantom: PhantomData })
+		}
+	}
+
+	pub fn addr(&self) -> MutPtr<()> {
 		self.addr
 	}
 
@@ -191,30 +212,32 @@ impl MemoryMap<'_> {
 	}
 
 	pub fn protect(&mut self, prot: u32) -> Result<()> {
-		mprotect(self.addr, self.length, prot)
+		unsafe { mprotect(self.addr.into(), self.length, prot) }
 	}
 
 	pub fn sync(&mut self, flags: u32) -> Result<()> {
-		msync(self.addr, self.length, flags)
+		unsafe { msync(self.addr.into(), self.length, flags) }
 	}
 
 	pub fn advise(&mut self, advice: u32) -> Result<()> {
-		madvise(self.addr, self.length, advice)
+		unsafe { madvise(self.addr.into(), self.length, advice) }
 	}
 
 	pub fn lock(&mut self) -> Result<()> {
-		mlock(self.addr, self.length)
+		unsafe { mlock(self.addr.into(), self.length) }
 	}
 
 	pub fn unlock(&mut self) -> Result<()> {
-		munlock(self.addr, self.length)
+		unsafe { munlock(self.addr.into(), self.length) }
 	}
 }
 
 impl Drop for MemoryMap<'_> {
 	fn drop(&mut self) {
-		if self.addr != 0 {
-			munmap(self.addr, self.length).unwrap();
+		if !self.addr.is_null() {
+			unsafe {
+				munmap(self.addr.into(), self.length).unwrap();
+			}
 		}
 	}
 }

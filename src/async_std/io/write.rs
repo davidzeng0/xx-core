@@ -1,3 +1,5 @@
+use std::mem::transmute;
+
 use super::*;
 
 #[async_trait]
@@ -51,9 +53,37 @@ pub trait Write {
 
 	async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
 		match bufs.iter().find(|b| !b.is_empty()) {
-			Some(buf) => self.write(&**buf).await,
+			Some(buf) => self.write(&buf[..]).await,
 			None => Ok(0)
 		}
+	}
+
+	async fn write_all_vectored(&mut self, mut bufs: &mut [IoSlice<'_>]) -> Result<usize> {
+		let mut total = 0;
+
+		while bufs.len() > 0 {
+			let mut wrote = match self.write_vectored(bufs).await {
+				Ok(0) => break,
+				Ok(n) => n,
+				Err(err) if err.is_interrupted() => break,
+				Err(err) => return Err(err)
+			};
+
+			total += wrote;
+
+			while let Some(first) = bufs.first_mut() {
+				if wrote >= first.len() {
+					wrote -= first.len();
+					bufs = &mut bufs[1..];
+				} else {
+					*first = IoSlice::new(unsafe { transmute(&first[wrote..]) });
+
+					break;
+				}
+			}
+		}
+
+		Ok(total)
 	}
 }
 

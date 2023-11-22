@@ -1,5 +1,4 @@
 use super::*;
-use crate::async_trait::MaybeImplOrFn;
 
 pub struct Function<'a> {
 	pub is_item_fn: bool,
@@ -7,6 +6,30 @@ pub struct Function<'a> {
 	pub env_generics: Option<&'a Generics>,
 	pub sig: &'a mut Signature,
 	pub block: Option<&'a mut Block>
+}
+
+pub struct MaybeImplOrFn;
+
+impl Parse for MaybeImplOrFn {
+	fn parse(input: ParseStream) -> Result<Self> {
+		input.call(Attribute::parse_outer)?;
+		input.parse::<Visibility>()?;
+		input.parse::<Option<Token![default]>>()?;
+		input.parse::<Option<Token![unsafe]>>()?;
+
+		if !input.peek(Token![impl]) {
+			input.parse::<Option<Token![const]>>()?;
+			input.parse::<Option<Token![async]>>()?;
+			input.parse::<Option<Token![unsafe]>>()?;
+			input.parse::<Option<Abi>>()?;
+
+			if !input.peek(Token![fn]) {
+				return Err(input.error("Expected a function or an impl trait"));
+			}
+		}
+
+		Ok(Self)
+	}
 }
 
 type Callback = fn(&mut Function) -> Result<()>;

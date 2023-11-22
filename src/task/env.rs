@@ -46,19 +46,21 @@ impl<T: Global> Deref for Boxed<T> {
 	type Target = T;
 
 	fn deref(&self) -> &T {
-		&self.data
+		/* maintain aliasing rules */
+		Ptr::from(self.data.as_ref()).as_ref()
 	}
 }
 
 impl<T: Global> DerefMut for Boxed<T> {
 	fn deref_mut(&mut self) -> &mut T {
-		&mut self.data
+		self.get_handle().as_mut()
 	}
 }
 
 /// A pointer to a [`Global`] type that can be
 /// passed around and cloned infinitely
 #[derive(PartialEq, Eq)]
+#[repr(transparent)]
 pub struct Handle<T: Global + ?Sized> {
 	ptr: MutPtr<T>
 }

@@ -1,4 +1,4 @@
-use std::arch::asm;
+use super::*;
 
 pub enum SyscallNumber {
 	IoSetup                  = 0,
@@ -328,125 +328,111 @@ pub enum SyscallNumber {
 	ProcessMrelease          = 448
 }
 
-pub fn syscall0(num: isize) -> isize {
+pub unsafe fn syscall0(num: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"svc 0",
-			lateout("x0") result,
-			in("x8") num,
-		);
-	}
+	asm!(
+		"svc 0",
+		lateout("x0") result,
+		in("x8") num,
+	);
 
 	result
 }
 
-pub fn syscall1(num: isize, arg1: isize) -> isize {
+pub unsafe fn syscall1(num: isize, arg1: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"svc 0",
-			lateout("x0") result,
-			in("x8") num,
-			in("x0") arg1
-		);
-	}
+	asm!(
+		"svc 0",
+		lateout("x0") result,
+		in("x8") num,
+		in("x0") arg1
+	);
 
 	result
 }
 
-pub fn syscall2(num: isize, arg1: isize, arg2: isize) -> isize {
+pub unsafe fn syscall2(num: isize, arg1: isize, arg2: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"svc 0",
-			lateout("x0") result,
-			in("x8") num,
-			in("x0") arg1,
-			in("x1") arg2
-		);
-	}
+	asm!(
+		"svc 0",
+		lateout("x0") result,
+		in("x8") num,
+		in("x0") arg1,
+		in("x1") arg2
+	);
 
 	result
 }
 
-pub fn syscall3(num: isize, arg1: isize, arg2: isize, arg3: isize) -> isize {
+pub unsafe fn syscall3(num: isize, arg1: isize, arg2: isize, arg3: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"svc 0",
-			lateout("x0") result,
-			in("x8") num,
-			in("x0") arg1,
-			in("x1") arg2,
-			in("x2") arg3
-		);
-	}
+	asm!(
+		"svc 0",
+		lateout("x0") result,
+		in("x8") num,
+		in("x0") arg1,
+		in("x1") arg2,
+		in("x2") arg3
+	);
 
 	result
 }
 
-pub fn syscall4(num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize) -> isize {
+pub unsafe fn syscall4(num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"svc 0",
-			lateout("x0") result,
-			in("x8") num,
-			in("x0") arg1,
-			in("x1") arg2,
-			in("x2") arg3,
-			in("x3") arg4
-		);
-	}
+	asm!(
+		"svc 0",
+		lateout("x0") result,
+		in("x8") num,
+		in("x0") arg1,
+		in("x1") arg2,
+		in("x2") arg3,
+		in("x3") arg4
+	);
 
 	result
 }
 
-pub fn syscall5(
+pub unsafe fn syscall5(
 	num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize
 ) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"svc 0",
-			lateout("x0") result,
-			in("x8") num,
-			in("x0") arg1,
-			in("x1") arg2,
-			in("x2") arg3,
-			in("x3") arg4,
-			in("x4") arg5
-		);
-	}
+	asm!(
+		"svc 0",
+		lateout("x0") result,
+		in("x8") num,
+		in("x0") arg1,
+		in("x1") arg2,
+		in("x2") arg3,
+		in("x3") arg4,
+		in("x4") arg5
+	);
 
 	result
 }
 
-pub fn syscall6(
+pub unsafe fn syscall6(
 	num: isize, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize, arg6: isize
 ) -> isize {
 	let result;
 
-	unsafe {
-		asm!(
-			"svc 0",
-			lateout("x0") result,
-			in("x8") num,
-			in("x0") arg1,
-			in("x1") arg2,
-			in("x2") arg3,
-			in("x3") arg4,
-			in("x4") arg5,
-			in("x5") arg6
-		);
-	}
+	asm!(
+		"svc 0",
+		lateout("x0") result,
+		in("x8") num,
+		in("x0") arg1,
+		in("x1") arg2,
+		in("x2") arg3,
+		in("x3") arg4,
+		in("x4") arg5,
+		in("x5") arg6
+	);
 
 	result
 }

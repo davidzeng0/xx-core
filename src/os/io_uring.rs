@@ -573,14 +573,14 @@ pub enum SocketCmd {
 
 pub const SIGSET_SIZE: usize = 8; /* _NSIG / 8 */
 
-pub fn io_uring_enter(
-	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: usize
+pub unsafe fn io_uring_enter(
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: MutPtr<()>
 ) -> Result<i32> {
 	io_uring_enter2(fd, submit, min_complete, flags, sigset, SIGSET_SIZE)
 }
 
-pub fn io_uring_enter2(
-	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: usize,
+pub unsafe fn io_uring_enter2(
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: MutPtr<()>,
 	sigset_size: usize
 ) -> Result<i32> {
 	let submitted = syscall_int!(
@@ -589,14 +589,14 @@ pub fn io_uring_enter2(
 		submit,
 		min_complete,
 		flags,
-		sigset,
+		sigset.int_addr(),
 		sigset_size
 	)?;
 
 	Ok(submitted as i32)
 }
 
-pub fn io_uring_enter_timeout(
+pub unsafe fn io_uring_enter_timeout(
 	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: u32, timeout: u64
 ) -> Result<i32> {
 	let mut args = GetEventsArg::new();
@@ -616,20 +616,28 @@ pub fn io_uring_enter_timeout(
 		submit,
 		min_complete,
 		flags,
-		MutPtr::from(&mut args).int_addr(),
+		MutPtr::from(&mut args).as_unit(),
 		size_of::<GetEventsArg>()
 	)
 }
 
 pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd> {
-	let fd = syscall_int!(IoUringSetup, entries, MutPtr::from(params).int_addr())?;
+	unsafe {
+		let fd = syscall_int!(IoUringSetup, entries, MutPtr::from(params).int_addr())?;
 
-	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+		Ok(OwnedFd::from_raw_fd(fd as i32))
+	}
 }
 
-pub fn io_uring_register(
-	fd: BorrowedFd<'_>, opcode: u32, arg: usize, arg_count: u32
+pub unsafe fn io_uring_register(
+	fd: BorrowedFd<'_>, opcode: u32, arg: Ptr<()>, arg_count: u32
 ) -> Result<i32> {
-	syscall_int!(IoUringRegister, fd.as_raw_fd(), opcode, arg, arg_count)
-		.map(|result| result as i32)
+	syscall_int!(
+		IoUringRegister,
+		fd.as_raw_fd(),
+		opcode,
+		arg.int_addr(),
+		arg_count
+	)
+	.map(|result| result as i32)
 }

@@ -15,7 +15,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 		let default_cancel_capture = make_tuple_type(types);
 
 		quote! {
-			xx_core::task::CancelClosure<#default_cancel_capture>
+			xx_core::task::closure::CancelClosure<#default_cancel_capture>
 		}
 	};
 
@@ -49,8 +49,8 @@ fn transform_func(func: &mut Function) -> Result<()> {
 				block: Some(&mut cancel.block)
 			},
 			vec![(quote! { () }, quote! { () })],
-			quote! { xx_core::task::CancelClosure },
-			|capture, _| quote! { xx_core::task::CancelClosure<#capture> }
+			quote! { xx_core::task::closure::CancelClosure },
+			|capture, _| quote! { xx_core::task::closure::CancelClosure<#capture> }
 		)?;
 
 		let (inputs, output, block) = (&cancel.sig.inputs, &cancel.sig.output, &cancel.block);
@@ -74,7 +74,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 		OpaqueClosureType::Custom(|_| {
 			(
 				quote! { xx_core::task::Task<Output = #return_type, Cancel = #cancel_closure_type> },
-				quote! { xx_core::task::TaskClosureWrap }
+				quote! { xx_core::task::closure::TaskClosureWrap }
 			)
 		})
 	)?;

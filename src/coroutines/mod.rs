@@ -1,16 +1,15 @@
-mod closure;
-pub use closure::*;
-mod context;
+pub mod closure;
+pub mod context;
 pub use context::*;
-mod executor;
+pub mod executor;
 pub use executor::*;
-mod worker;
+pub mod worker;
 pub use worker::*;
-mod spawn;
+pub mod spawn;
 pub use spawn::*;
-mod select;
+pub mod select;
 pub use select::*;
-mod join;
+pub mod join;
 pub use join::*;
 
 pub use crate::{async_fn, async_trait, async_trait_impl};
@@ -20,8 +19,8 @@ use crate::{
 	opt::hint::*,
 	pointer::*,
 	task::{
-		block_on as sync_block_on, pin_local_mut, sync_task, Boxed, Cancel, CancelClosure, Global,
-		Handle, Progress, Request, RequestPtr, Task as SyncTask
+		block_on as sync_block_on, closure::CancelClosure, env::*, sync_task, Cancel, Progress,
+		Request, RequestPtr, Task as SyncTask
 	},
 	xx_core
 };

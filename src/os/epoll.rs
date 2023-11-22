@@ -65,24 +65,28 @@ pub struct EpollEvent {
 }
 
 pub fn create(flags: u32) -> Result<OwnedFd> {
-	let fd = syscall_int!(EpollCreate1, flags)?;
+	unsafe {
+		let fd = syscall_int!(EpollCreate1, flags)?;
 
-	Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+		Ok(OwnedFd::from_raw_fd(fd as i32))
+	}
 }
 
 pub fn ctl(ep: BorrowedFd<'_>, op: CtlOp, fd: i32, event: &mut EpollEvent) -> Result<()> {
-	syscall_int!(
-		EpollCtl,
-		ep.as_raw_fd(),
-		op,
-		fd,
-		MutPtr::from(event).int_addr()
-	)?;
+	unsafe {
+		syscall_int!(
+			EpollCtl,
+			ep.as_raw_fd(),
+			op,
+			fd,
+			MutPtr::from(event).int_addr()
+		)?;
+	}
 
 	Ok(())
 }
 
-pub fn wait_raw(
+pub unsafe fn wait_raw(
 	ep: BorrowedFd<'_>, events: MutPtr<EpollEvent>, count: usize, timeout: i32
 ) -> Result<u32> {
 	let events = syscall_int!(EpollWait, ep.as_raw_fd(), events.int_addr(), count, timeout)?;
@@ -91,5 +95,5 @@ pub fn wait_raw(
 }
 
 pub fn wait(ep: BorrowedFd<'_>, event: &mut [EpollEvent], timeout: i32) -> Result<u32> {
-	wait_raw(ep, event.as_mut_ptr().into(), event.len(), timeout)
+	unsafe { wait_raw(ep, event.as_mut_ptr().into(), event.len(), timeout) }
 }

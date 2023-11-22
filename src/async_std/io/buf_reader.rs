@@ -24,25 +24,22 @@ impl<R: Read> BufReader<R> {
 
 	/// Utility function for filling start..end in the capacity of our buffer
 	#[inline]
-	async fn fill_buf_offset(&mut self, start: usize, end: usize) -> Result<usize> {
-		Ok(unsafe {
-			/* bounds checking done by callers */
-			let spare = self.buf.get_unchecked_mut(start..end);
-			let read = self.inner.read(spare).await?;
+	async unsafe fn fill_buf_offset(&mut self, start: usize, end: usize) -> Result<usize> {
+		let spare = self.buf.get_unchecked_mut(start..end);
+		let read = self.inner.read(spare).await?;
 
-			if likely(read != 0) {
-				self.buf.set_len(start + read);
-			}
+		if likely(read != 0) {
+			self.buf.set_len(start + read);
+		}
 
-			read
-		})
+		Ok(read)
 	}
 
 	/// Fills the internal buffer from the start
 	/// If zero is returned, internal data is not modified
 	#[inline]
 	async fn fill_buf(&mut self) -> Result<usize> {
-		let read = self.fill_buf_offset(0, self.buf.capacity()).await?;
+		let read = unsafe { self.fill_buf_offset(0, self.buf.capacity()).await? };
 
 		if likely(read != 0) {
 			self.pos = 0;
@@ -95,20 +92,16 @@ impl<R: Read> BufReader<R> {
 			return;
 		}
 
-		if self.buffer().len() == 0 {
+		let len = self.buffer().len();
+
+		if len == 0 {
 			self.discard();
 
 			return;
 		}
 
-		let len = self.buffer().len();
-
-		unsafe {
-			copy(self.buffer().as_ptr(), self.buf.as_mut_ptr(), len);
-
-			self.buf.set_len(len);
-		}
-
+		self.buf.copy_within(self.pos.., 0);
+		self.buf.truncate(len);
 		self.pos = 0;
 	}
 
@@ -122,7 +115,7 @@ impl<R: Read> BufReader<R> {
 impl<R: Read> Read for BufReader<R> {
 	#[inline]
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-		if likely(self.buf.len() != self.pos) {
+		if likely(self.buffer().len() > 0) {
 			return Ok(self.read_into(buf));
 		}
 
@@ -141,35 +134,37 @@ impl<R: Read> Read for BufReader<R> {
 #[async_trait_impl]
 impl<R: Read> BufRead for BufReader<R> {
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize> {
-		let amount = amount.min(self.buf.capacity());
+		assert!(amount <= self.buf.capacity());
+
+		let mut start = self.buf.len();
 		let mut end = self.pos + amount;
 
-		if unlikely(end <= self.buf.len()) {
+		if unlikely(end <= start) {
 			return Ok(0);
 		}
 
-		let mut start = self.buf.len();
-
 		if unlikely(end > self.buf.capacity()) {
-			if self.pos != 0 {
-				if self.buffer().len() == 0 {
-					start = 0;
-					end = amount;
-				} else {
-					self.move_data_to_beginning();
+			end = self.buf.capacity();
 
-					start = self.buf.len();
+			if self.buffer().len() == 0 {
+				/* try not to discard existing data if read returns EOF */
+				start = 0;
+				end = amount;
+			} else {
+				self.move_data_to_beginning();
+
+				if self.spare_capacity() == 0 {
+					return Ok(0);
 				}
-			} else if self.spare_capacity() == 0 {
-				return Ok(0);
-			}
 
-			end = end.min(self.buf.capacity());
+				start = self.buf.len();
+			}
 		}
 
-		let read = self.fill_buf_offset(start, end).await?;
+		let read = unsafe { self.fill_buf_offset(start, end).await? };
 
 		if unlikely(start == 0 && read != 0) {
+			/* read new data at beginning, reset pos */
 			self.pos = 0;
 		}
 
@@ -185,28 +180,34 @@ impl<R: Read> BufRead for BufReader<R> {
 	}
 
 	fn buffer(&self) -> &[u8] {
+		/* Safety: pos always <= self.buf.len() */
 		unsafe { self.buf.get_unchecked(self.pos..) }
 	}
 
 	fn consume(&mut self, count: usize) {
-		let new_pos = self.pos.checked_add(count).unwrap();
+		assert!(count <= self.buffer().len());
 
-		assert!(new_pos <= self.buf.len());
+		self.pos += count;
+	}
 
-		self.pos = new_pos;
+	unsafe fn consume_unchecked(&mut self, count: usize) {
+		self.pos = self.pos.wrapping_add(count);
+	}
+
+	fn unconsume(&mut self, count: usize) {
+		assert!(count <= self.pos);
+
+		self.pos -= count;
+	}
+
+	unsafe fn unconsume_unchecked(&mut self, count: usize) {
+		self.pos = self.pos.wrapping_sub(count);
 	}
 
 	#[inline]
 	fn discard(&mut self) {
 		self.pos = 0;
-
-		unsafe {
-			self.buf.set_len(0);
-		}
-	}
-
-	unsafe fn consume_unchecked(&mut self, count: usize) {
-		self.pos = self.pos.wrapping_add(count);
+		self.buf.clear();
 	}
 }
 
@@ -224,14 +225,8 @@ impl<R: Read + Seek> BufReader<R> {
 	}
 
 	async fn seek_inner(&mut self, seek: SeekFrom) -> Result<u64> {
-		let off = self.inner.seek(seek).await?;
-
-		/* read should not be called after error,
-		 * so it's okay to discard only after a successfull seek
-		 */
 		self.discard();
-
-		Ok(off)
+		self.inner.seek(seek).await
 	}
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
@@ -264,7 +259,7 @@ impl<R: Read + Seek> Seek for BufReader<R> {
 		let pos = self.inner.stream_position().await?;
 		let remaining = self.buffer().len();
 
-		Ok(pos - remaining as u64)
+		Ok(pos.checked_sub(remaining as u64).unwrap())
 	}
 
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {

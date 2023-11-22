@@ -3,12 +3,6 @@ use std::{any::TypeId, mem::transmute};
 use super::*;
 use crate::closure::Closure;
 
-fn run_cancel<C: Cancel>(arg: MutPtr<()>, _: ()) -> Result<()> {
-	let cancel = arg.cast::<Option<C>>().as_mut();
-
-	unsafe { cancel.take().unwrap().run() }
-}
-
 /// The environment for a async worker
 pub trait PerContextRuntime: Global + 'static {
 	/// Gets the context associated with the worker
@@ -20,10 +14,7 @@ pub trait PerContextRuntime: Global + 'static {
 	/// Creates a new environment for a new worker
 	fn new_from_worker(&mut self, worker: Handle<Worker>) -> Self;
 
-	/// The worker's executor
-	fn executor(&mut self) -> Handle<Executor> {
-		self.context().executor()
-	}
+	fn executor(&mut self) -> Handle<Executor>;
 
 	/// Manually suspend the worker
 	unsafe fn suspend(&mut self) {
@@ -37,14 +28,19 @@ pub trait PerContextRuntime: Global + 'static {
 }
 
 pub struct Context {
-	executor: Handle<Executor>,
 	worker: Handle<Worker>,
-
-	cancel: Option<Closure<MutPtr<()>, (), Result<()>>>,
 
 	runtime_type: u32,
 	guards: u32,
-	interrupted: bool
+	interrupted: bool,
+
+	cancel: Option<Closure<MutPtr<()>, (), Result<()>>>
+}
+
+fn run_cancel<C: Cancel>(arg: MutPtr<()>, _: ()) -> Result<()> {
+	let cancel = arg.cast::<Option<C>>().as_mut();
+
+	unsafe { cancel.take().unwrap().run() }
 }
 
 fn type_for<R: PerContextRuntime>() -> u32 {
@@ -59,21 +55,16 @@ fn type_for<R: PerContextRuntime>() -> u32 {
 }
 
 impl Context {
-	pub fn new<R: PerContextRuntime>(executor: Handle<Executor>, worker: Handle<Worker>) -> Self {
+	pub fn new<R: PerContextRuntime>(worker: Handle<Worker>) -> Self {
 		Self {
-			executor,
 			worker,
-
-			cancel: None,
 
 			guards: 0,
 			runtime_type: type_for::<R>(),
-			interrupted: false
-		}
-	}
+			interrupted: false,
 
-	fn executor(&mut self) -> Handle<Executor> {
-		self.executor
+			cancel: None
+		}
 	}
 
 	#[inline(always)]
@@ -123,6 +114,7 @@ impl Context {
 				));
 
 				this.suspend();
+				this.cancel = None;
 			},
 			|| {
 				handle.clone().resume();

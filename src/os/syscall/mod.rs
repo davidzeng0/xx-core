@@ -1,3 +1,5 @@
+use std::arch::asm;
+
 use crate::sysdep::import_sysdeps;
 
 import_sysdeps!();

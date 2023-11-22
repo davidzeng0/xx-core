@@ -27,6 +27,13 @@ pub fn async_fn(
 }
 
 #[proc_macro_attribute]
+pub fn async_fn_typed(
+	attr: proc_macro::TokenStream, item: proc_macro::TokenStream
+) -> proc_macro::TokenStream {
+	closure::async_fn_typed(attr.into(), item.into()).into()
+}
+
+#[proc_macro_attribute]
 pub fn async_trait(
 	attr: proc_macro::TokenStream, item: proc_macro::TokenStream
 ) -> proc_macro::TokenStream {

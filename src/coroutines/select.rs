@@ -228,7 +228,7 @@ impl<T1: SyncTask, T2: SyncTask> Global for SelectData<T1, T2> {
 }
 
 #[async_fn]
-pub async fn select_sync<T1: SyncTask, T2: SyncTask>(
+pub async unsafe fn select_sync<T1: SyncTask, T2: SyncTask>(
 	task_1: T1, task_2: T2
 ) -> Select<T1::Output, T2::Output> {
 	let data = SelectData::new(task_1, task_2);
@@ -246,7 +246,7 @@ pub async fn select_sync<T1: SyncTask, T2: SyncTask>(
 /// Because a task may not be cancelled in time, the second parameter
 /// in `Select` may contain the result from the cancelled task
 #[async_fn]
-pub async fn select<R: PerContextRuntime, T1: Task, T2: Task>(
+pub async unsafe fn select<R: PerContextRuntime, T1: Task, T2: Task>(
 	runtime: Handle<R>, task_1: T1, task_2: T2
 ) -> Select<T1::Output, T2::Output> {
 	select_sync(

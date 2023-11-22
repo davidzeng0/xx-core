@@ -125,13 +125,13 @@ impl Usage {
 pub fn get_rlimit(resource: Resource) -> Result<Limit> {
 	let mut limit = Limit::new();
 
-	syscall_int!(Getrlimit, resource, MutPtr::from(&mut limit).int_addr())?;
+	unsafe { syscall_int!(Getrlimit, resource, MutPtr::from(&mut limit).int_addr())? };
 
 	Ok(limit)
 }
 
 pub fn set_rlimit(resource: Resource, limit: &Limit) -> Result<()> {
-	syscall_int!(Setrlimit, resource, Ptr::from(limit).int_addr())?;
+	unsafe { syscall_int!(Setrlimit, resource, Ptr::from(limit).int_addr())? };
 
 	Ok(())
 }
@@ -139,13 +139,15 @@ pub fn set_rlimit(resource: Resource, limit: &Limit) -> Result<()> {
 pub fn p_rlimit(pid: Option<i32>, resource: Resource, new_limit: Option<&Limit>) -> Result<Limit> {
 	let mut limit = Limit::new();
 
-	syscall_int!(
-		Prlimit64,
-		pid.unwrap_or(0),
-		resource,
-		new_limit.map_or(0, |rlimit| { Ptr::from(rlimit).int_addr() }),
-		MutPtr::from(&mut limit).int_addr()
-	)?;
+	unsafe {
+		syscall_int!(
+			Prlimit64,
+			pid.unwrap_or(0),
+			resource,
+			new_limit.map_or(0, |rlimit| { Ptr::from(rlimit).int_addr() }),
+			MutPtr::from(&mut limit).int_addr()
+		)?
+	};
 
 	Ok(limit)
 }
@@ -157,20 +159,20 @@ pub fn get_limit(resource: Resource) -> Result<u64> {
 pub fn get_rusage(who: UsageWho) -> Result<Usage> {
 	let mut usage = Usage::new();
 
-	syscall_int!(Getrusage, who, MutPtr::from(&mut usage).int_addr())?;
+	unsafe { syscall_int!(Getrusage, who, MutPtr::from(&mut usage).int_addr())? };
 
 	Ok(usage)
 }
 
 pub fn get_priority(which: PriorityWhich, who: Option<u32>) -> Result<i32> {
 	const PRIORITY_ZERO: i32 = 20;
-	let prio = syscall_int!(Getpriority, which, who.unwrap_or(0))?;
+	let prio = unsafe { syscall_int!(Getpriority, which, who.unwrap_or(0))? };
 
 	Ok(PRIORITY_ZERO - prio as i32)
 }
 
 pub fn set_priority(which: PriorityWhich, who: Option<u32>, prio: i32) -> Result<()> {
-	syscall_int!(Setpriority, which, who.unwrap_or(0), prio)?;
+	unsafe { syscall_int!(Setpriority, which, who.unwrap_or(0), prio)? };
 
 	Ok(())
 }

@@ -4,19 +4,14 @@ use enumflags2::make_bitflags;
 
 use super::{
 	os::{mman::*, resource::*},
+	pointer::*,
 	sysdep::import_sysdeps
 };
-use crate::pointer::*;
 
 import_sysdeps!();
 
 mod pool;
 pub use pool::*;
-
-pub struct Fiber {
-	context: Context,
-	stack: MemoryMap<'static>
-}
 
 /// Safety: the stack is not used before a fiber is started,
 /// so we can safely write our start args there
@@ -79,19 +74,25 @@ fn exit_fiber_to_pool(arg: Ptr<()>) {
 	arg.1.exit_fiber(fiber);
 }
 
+pub struct Fiber {
+	context: Context,
+	stack: MemoryMap<'static>
+}
+
 impl Fiber {
 	pub fn main() -> Self {
 		Fiber { context: Context::new(), stack: MemoryMap::new() }
 	}
 
-	pub fn new() -> Self {
+	/// Safety: set_start must be called before switching to this fiber
+	pub unsafe fn new() -> Self {
 		Self {
 			/* fiber context. stores to-be-preserved registers,
 			 * including any that cannot be corrupted by inline asm
 			 */
 			context: Context::new(),
-			stack: map_memory(
-				0,
+			stack: MemoryMap::map(
+				None,
 				get_limit(Resource::Stack).expect("Failed to get stack size") as usize,
 				make_bitflags!(MemoryProtection::{Read | Write}).bits(),
 				MemoryType::Private as u32 | make_bitflags!(MemoryFlag::{Anonymous | Stack}).bits(),
@@ -103,13 +104,12 @@ impl Fiber {
 	}
 
 	pub fn new_with_start(start: Start) -> Self {
-		let mut this = Self::new();
-
 		unsafe {
-			this.set_start(start);
-		}
+			let mut this = Self::new();
 
-		this
+			this.set_start(start);
+			this
+		}
 	}
 
 	/// Set the entry point of the fiber
@@ -119,7 +119,7 @@ impl Fiber {
 		/* set the stack back to the beginning. unuse all the stack that the previous
 		 * worker used */
 		self.context
-			.set_stack(self.stack.addr(), self.stack.length());
+			.set_stack(self.stack.addr().int_addr(), self.stack.length());
 		self.context.set_start(start);
 	}
 

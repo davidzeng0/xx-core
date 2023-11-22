@@ -137,7 +137,7 @@ impl<T1: SyncTask, T2: SyncTask> Global for JoinData<T1, T2> {
 }
 
 #[async_fn]
-pub async fn join_sync<T1: SyncTask, T2: SyncTask>(
+pub async unsafe fn join_sync<T1: SyncTask, T2: SyncTask>(
 	task_1: T1, task_2: T2
 ) -> Join<T1::Output, T2::Output> {
 	let data = JoinData::new(task_1, task_2);
@@ -150,7 +150,7 @@ pub async fn join_sync<T1: SyncTask, T2: SyncTask>(
 /// for both of them to finish, returning
 /// both of their results
 #[async_fn]
-pub async fn join<R: PerContextRuntime, T1: Task, T2: Task>(
+pub async unsafe fn join<R: PerContextRuntime, T1: Task, T2: Task>(
 	runtime: Handle<R>, task_1: T1, task_2: T2
 ) -> Join<T1::Output, T2::Output> {
 	join_sync(
