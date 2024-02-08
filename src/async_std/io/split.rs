@@ -1,12 +1,23 @@
 use super::*;
-use crate::pointer::MutPtr;
+use crate::pointer::*;
 
 /// Splits a stream into a read half and a write half.
-/// Implementers must be careful not to violate rust's aliasing rules
 pub trait Split: Read + Write {
-	fn split(&mut self) -> (ReadRef<'_, Self>, WriteRef<'_, Self>) {
-		let mut this = MutPtr::from(self);
+	type Read: Read;
+	type Write: Write;
 
-		(ReadRef::new(this.as_mut()), WriteRef::new(this.as_mut()))
+	fn split(&mut self) -> (ReadRef<'_, Self::Read>, WriteRef<'_, Self::Write>);
+}
+
+pub unsafe trait SimpleSplit: Read + Write {}
+
+impl<T: SimpleSplit> Split for T {
+	type Read = Self;
+	type Write = Self;
+
+	fn split(&mut self) -> (ReadRef<'_, Self::Read>, WriteRef<'_, Self::Write>) {
+		let this = MutPtr::from(self);
+
+		unsafe { (ReadRef::new(this.as_mut()), WriteRef::new(this.as_mut())) }
 	}
 }

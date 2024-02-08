@@ -1,70 +1,71 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, rc::Rc};
 
 use super::*;
 use crate::{trace, warn};
 
-struct SpawnWorker<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> {
+struct SpawnWorker<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> {
 	move_to_worker: Option<(Entry, T, Worker)>,
-	request: RequestPtr<T::Output>,
+	request: ReqPtr<T::Output>,
 
 	/* pass back */
 	result: Option<T::Output>,
-	context: Handle<Context>,
-	is_async: MutPtr<bool>,
+	context: Ptr<Context>,
+	is_async: Ptr<UnsafeCell<bool>>,
 
 	phantom: PhantomData<R>
 }
 
-impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWorker<R, Entry, T> {
-	fn worker_start(arg: Ptr<()>) {
-		let this = arg.cast::<Self>().make_mut().as_mut();
-
-		let (entry, task, worker) = this.move_to_worker.take().unwrap();
+#[future]
+impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, Entry, T> {
+	unsafe fn worker_start(arg: Ptr<()>) {
+		let this = arg.cast::<Self>().cast_mut().as_mut();
+		let (entry, task, mut worker) = this.move_to_worker.take().unwrap();
 		let request = this.request;
 
-		pin_local_mut!(worker);
+		{
+			let worker = worker.pin_local();
 
-		let mut runtime = entry((&mut worker).into());
+			let runtime = entry(Ptr::from(&*worker));
+			let context = runtime.context();
+			let is_async = UnsafeCell::new(false);
 
-		let mut is_async = false;
-		let context = runtime.context();
+			/* pass back a pointer to is_async. only the caller will know
+			 * if we've suspended from this function
+			 *
+			 * cannot call Request::complete when synchronous,
+			 * as that double resumes the calling worker
+			 */
+			this.is_async = Ptr::from(&is_async);
+			this.context = context.into();
 
-		/* pass back a pointer to is_async. only the caller will know
-		 * if we've suspended from this function
-		 *
-		 * cannot call Request::complete when synchronous,
-		 * as that double resumes the calling worker
-		 */
-		this.is_async = MutPtr::from(&mut is_async);
-		this.context = context.into();
+			trace!(target: &worker, "++ Spawned");
 
-		trace!(target: &worker, "++ Spawned");
+			let result = context.run(task);
 
-		let result = context.run(task);
+			if *is_async.as_ref() {
+				unsafe { Request::complete(request, result) };
+			} else {
+				this.result = Some(result);
+			}
 
-		if is_async {
-			Request::complete(request, result);
-		} else {
-			this.result = Some(result);
+			trace!(target: &worker, "-- Completed");
 		}
 
-		trace!(target: &worker, "-- Completed");
-
-		unsafe { worker.exit() };
+		worker.exit();
 	}
 
-	#[sync_task]
-	fn spawn(mut executor: Handle<Executor>, entry: Entry, task: T) -> T::Output {
-		fn cancel(mut context: Handle<Context>) -> Result<()> {
+	#[future]
+	unsafe fn spawn(executor: Ptr<Executor>, entry: Entry, task: T) -> T::Output {
+		fn cancel(context: Ptr<Context>) -> Result<()> {
 			context.interrupt()
 		}
 
 		let mut data = Self {
 			move_to_worker: None,
 			request,
-			context: unsafe { Handle::null() },
+			context: Ptr::null(),
 			result: None,
-			is_async: MutPtr::null(),
+			is_async: Ptr::null(),
 			phantom: PhantomData
 		};
 
@@ -72,9 +73,7 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 		let pass = (entry, task, executor.new_worker(start));
 		let worker = &mut data.move_to_worker.insert(pass).2;
 
-		unsafe {
-			executor.start(worker.into());
-		}
+		unsafe { executor.start(worker.into()) };
 
 		if data.result.is_some() {
 			Progress::Done(data.result.take().unwrap())
@@ -93,11 +92,11 @@ impl<R: PerContextRuntime, Entry: FnOnce(Handle<Worker>) -> R, T: Task> SpawnWor
 /// task safety requirements must also be met
 ///
 /// [`Task`]: crate::task::Task
-#[sync_task]
-pub unsafe fn spawn_sync<R: PerContextRuntime, T: Task>(
-	executor: Handle<Executor>, entry: impl FnOnce(Handle<Worker>) -> R, task: T
+#[future]
+pub unsafe fn spawn_future<R: Environment, T: Task>(
+	executor: Ptr<Executor>, entry: impl FnOnce(Ptr<Worker>) -> R, task: T
 ) -> T::Output {
-	fn cancel(_context: Handle<Context>) -> Result<()> {
+	fn cancel(_context: Ptr<Context>) -> Result<()> {
 		/* use this fn to generate the cancel closure type */
 		Ok(())
 	}
@@ -107,43 +106,33 @@ pub unsafe fn spawn_sync<R: PerContextRuntime, T: Task>(
 
 /// Utility function that calls the above with the
 /// executor and runtime passed to this function
-#[sync_task]
-pub unsafe fn spawn_sync_with_runtime<R: PerContextRuntime, T: Task>(
-	mut runtime: Handle<R>, task: T
+#[future]
+pub unsafe fn spawn_future_with_env<R: Environment, T: Task>(
+	runtime: Ptr<R>, task: T
 ) -> T::Output {
-	fn cancel(_context: Handle<Context>) -> Result<()> {
+	fn cancel(_context: Ptr<Context>) -> Result<()> {
 		Ok(())
 	}
 
 	let executor = runtime.executor();
-	let new_runtime = |worker| runtime.new_from_worker(worker);
+	let new_runtime = |worker| runtime.as_ref().clone(worker);
 
-	spawn_sync(executor, new_runtime, task).run(request)
+	spawn_future(executor, new_runtime, task).run(request)
 }
 
 struct Spawn<Output> {
 	request: Request<Output>,
-	cancel: Option<CancelClosure<(Handle<Context>, RequestPtr<Output>)>>,
-	waiter: RequestPtr<Output>,
 	output: Option<Output>,
-	refs: u32
+	cancel: Option<CancelClosure<(Ptr<Context>, ReqPtr<Output>)>>,
+	waiter: ReqPtr<Output>
 }
 
+type AsyncSpawn<Output> = Rc<UnsafeCell<Spawn<Output>>>;
+
 impl<Output> Spawn<Output> {
-	fn dec_ref(&mut self) {
-		self.refs -= 1;
-
-		if self.refs == 0 {
-			drop(unsafe { Boxed::from_raw(self.into()) });
-		}
-	}
-
-	fn inc_ref(&mut self) {
-		self.refs += 1;
-	}
-
-	fn spawn_complete(_: RequestPtr<Output>, arg: Ptr<()>, output: Output) {
-		let this = arg.cast::<Self>().make_mut().as_mut();
+	unsafe fn spawn_complete(_: ReqPtr<Output>, arg: Ptr<()>, output: Output) {
+		let cell = arg.cast::<UnsafeCell<Spawn<Output>>>().cast_mut();
+		let this = (*cell).as_mut();
 
 		if this.waiter.is_null() {
 			this.output = Some(output);
@@ -151,40 +140,35 @@ impl<Output> Spawn<Output> {
 			Request::complete(this.waiter, output);
 		}
 
-		this.dec_ref();
+		drop(unsafe { AsyncSpawn::<Output>::from_raw(cell.as_ptr()) });
 	}
 
 	fn new() -> Self {
-		unsafe {
-			Self {
-				request: Request::new(Ptr::null(), Self::spawn_complete),
-				cancel: None,
-				waiter: RequestPtr::null(),
-				output: None,
-				refs: 0
-			}
+		Self {
+			request: Request::new(Ptr::null(), Self::spawn_complete),
+			output: None,
+			cancel: None,
+			waiter: ReqPtr::null()
 		}
 	}
 
-	fn run<R: PerContextRuntime, T: Task>(runtime: Handle<R>, task: T) -> JoinHandle<T::Output> {
-		let mut this = Boxed::new(Spawn::new());
+	unsafe fn run<R: Environment, T: Task>(runtime: Ptr<R>, task: T) -> JoinHandle<T::Output> {
+		let cell = UnsafeCell::new(Spawn::new()).pin_rc().into_inner();
+		let this = cell.as_mut();
 
-		unsafe {
-			match spawn_sync_with_runtime(runtime, task).run(Ptr::from(&this.request)) {
-				Progress::Pending(cancel) => {
-					this.cancel = Some(cancel);
-					this.inc_ref();
-				}
+		match spawn_future_with_env(runtime, task).run(Ptr::from(&this.request)) {
+			Progress::Pending(cancel) => {
+				this.cancel = Some(cancel);
 
-				Progress::Done(result) => {
-					this.output = Some(result);
-				}
+				Rc::into_raw(cell.clone());
+			}
+
+			Progress::Done(result) => {
+				this.output = Some(result);
 			}
 		}
 
-		this.inc_ref();
-
-		JoinHandle { task: unsafe { Boxed::into_raw(this) }.into() }
+		JoinHandle { task: cell }
 	}
 
 	unsafe fn cancel(&mut self) -> Result<()> {
@@ -192,28 +176,28 @@ impl<Output> Spawn<Output> {
 	}
 }
 
-impl<Output> Global for Spawn<Output> {
-	unsafe fn pinned(&mut self) {
-		let mut this = MutPtr::from(self);
-		let arg = this.as_unit().into();
+unsafe impl<Output> Pin for Spawn<Output> {
+	unsafe fn pin(&mut self) {
+		let arg = Ptr::from(&*self).as_unit();
 
-		this.request.set_arg(arg);
+		self.request.set_arg(arg);
 	}
 }
 
 pub struct JoinHandle<Output> {
-	task: Handle<Spawn<Output>>
+	task: AsyncSpawn<Output>
 }
 
-#[async_fn]
+#[future]
+#[asynchronous]
 impl<Output> JoinHandle<Output> {
-	#[sync_task]
-	fn join(mut self) -> Output {
-		fn cancel(mut task: Handle<Spawn<Output>>) -> Result<()> {
-			unsafe { task.cancel() }
+	#[future]
+	fn join(self) -> Output {
+		fn cancel(task: AsyncSpawn<Output>) -> Result<()> {
+			unsafe { task.as_mut().cancel() }
 		}
 
-		self.task.waiter = request;
+		self.task.as_mut().waiter = request;
 
 		/* we could make JoinTask return Progress::Done instead of checking below,
 		 * but we want to avoid calling task::block_on if possible
@@ -222,7 +206,7 @@ impl<Output> JoinHandle<Output> {
 	}
 
 	pub fn is_done(&self) -> bool {
-		self.task.clone().output.is_some()
+		self.task.get().output.is_some()
 	}
 
 	/// Signals the task to cancel, without waiting for the result
@@ -233,7 +217,7 @@ impl<Output> JoinHandle<Output> {
 		if self.is_done() {
 			Ok(())
 		} else {
-			self.task.cancel()
+			self.task.as_mut().cancel()
 		}
 	}
 
@@ -261,8 +245,8 @@ impl<Output> JoinHandle<Output> {
 impl<Output> Task for JoinHandle<Output> {
 	type Output = Output;
 
-	fn run(mut self, context: Handle<Context>) -> Output {
-		if let Some(output) = self.task.output.take() {
+	fn run(self, context: Ptr<Context>) -> Output {
+		if let Some(output) = self.task.as_mut().output.take() {
 			/* task finished inbetween spawn and await */
 			return output;
 		}
@@ -271,19 +255,11 @@ impl<Output> Task for JoinHandle<Output> {
 	}
 }
 
-impl<Output> Drop for JoinHandle<Output> {
-	fn drop(&mut self) {
-		self.task.dec_ref();
-	}
-}
-
 /// Spawn a new async task
 ///
 /// Returns a join handle which may be used to get the result from the task
 ///
 /// Safety: runtime and task outlive worker
-pub unsafe fn spawn<R: PerContextRuntime, T: Task>(
-	runtime: Handle<R>, task: T
-) -> JoinHandle<T::Output> {
+pub unsafe fn spawn<R: Environment, T: Task>(runtime: Ptr<R>, task: T) -> JoinHandle<T::Output> {
 	Spawn::<T::Output>::run(runtime, task)
 }

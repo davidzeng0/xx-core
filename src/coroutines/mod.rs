@@ -12,57 +12,109 @@ pub use select::*;
 pub mod join;
 pub use join::*;
 
-pub use crate::{async_fn, async_trait, async_trait_impl};
+pub use crate::macros::asynchronous;
 use crate::{
+	debug,
 	error::*,
 	fiber::*,
 	opt::hint::*,
 	pointer::*,
 	task::{
-		block_on as sync_block_on, closure::CancelClosure, env::*, sync_task, Cancel, Progress,
-		Request, RequestPtr, Task as SyncTask
-	},
-	xx_core
+		block_on::block_on as sync_block_on, closure::*, future, Cancel, Complete, Progress,
+		ReqPtr, Request, Task as SyncTask
+	}
 };
+
+struct TaskHandle<T: SyncTask> {
+	task: Option<T>,
+	request: Request<T::Output>,
+	cancel: Option<T::Cancel>,
+	result: Option<T::Output>
+}
+
+impl<T: SyncTask> TaskHandle<T> {
+	pub fn new(task: T, callback: Complete<T::Output>) -> Self {
+		Self {
+			task: Some(task),
+			request: Request::new(Ptr::null(), callback),
+			cancel: None,
+			result: None
+		}
+	}
+
+	pub unsafe fn run(&mut self) {
+		match self.task.take().unwrap().run(Ptr::from(&self.request)) {
+			Progress::Pending(cancel) => self.cancel = Some(cancel),
+			Progress::Done(value) => self.complete(value)
+		}
+	}
+
+	pub fn done(&self) -> bool {
+		self.result.is_some()
+	}
+
+	pub fn complete(&mut self, result: T::Output) {
+		self.cancel = None;
+		self.result = Some(result);
+	}
+
+	pub fn take_result(&mut self) -> T::Output {
+		self.result.take().unwrap()
+	}
+
+	pub unsafe fn try_cancel(&mut self) -> Option<Result<()>> {
+		let result = self.cancel.take()?.run();
+
+		if let Err(err) = &result {
+			debug!("Cancel returned an error: {:?}", err);
+		}
+
+		Some(result)
+	}
+
+	pub fn set_arg<A>(&mut self, arg: Ptr<A>) {
+		self.request.set_arg(arg.as_unit())
+	}
+}
 
 /// An async task
 pub trait Task {
 	type Output;
 
-	fn run(self, context: Handle<Context>) -> Self::Output;
+	fn run(self, context: Ptr<Context>) -> Self::Output;
 }
 
-#[async_fn]
-#[inline(always)]
-pub async fn get_context() -> Handle<Context> {
+#[asynchronous]
+pub async fn get_context() -> Ptr<Context> {
 	__xx_internal_async_context
 }
 
-#[async_fn]
-#[inline(always)]
+pub unsafe fn with_context<T: Task>(context: Ptr<Context>, task: T) -> T::Output {
+	context.run(task)
+}
+
+#[asynchronous]
 pub async fn block_on<T: SyncTask>(task: T) -> T::Output {
 	get_context().await.block_on(task)
 }
 
-#[async_fn]
-#[inline(always)]
+#[asynchronous]
 pub async fn is_interrupted() -> bool {
 	get_context().await.interrupted()
 }
 
-#[async_fn]
-#[inline(always)]
+#[asynchronous]
 pub async fn check_interrupt() -> Result<()> {
 	if unlikely(get_context().await.interrupted()) {
-		Err(Error::interrupted())
+		Err(Core::Interrupted.new())
 	} else {
 		Ok(())
 	}
 }
 
-#[async_fn]
+#[asynchronous]
 pub async fn take_interrupt() -> bool {
-	let mut context = get_context().await;
+	let context = get_context().await;
 	let interrupted = context.interrupted();
 
 	if unlikely(interrupted) {
@@ -72,10 +124,10 @@ pub async fn take_interrupt() -> bool {
 	interrupted
 }
 
-#[async_fn]
+#[asynchronous]
 pub async fn check_interrupt_take() -> Result<()> {
 	if unlikely(take_interrupt().await) {
-		Err(Error::interrupted())
+		Err(Core::Interrupted.new())
 	} else {
 		Ok(())
 	}
@@ -85,7 +137,7 @@ pub async fn check_interrupt_take() -> Result<()> {
 ///
 /// While this guard is held, any attempt to interrupt
 /// the current context will be ignored
-#[async_fn]
-pub async fn interrupt_guard() -> InterruptGuard {
+#[asynchronous]
+pub async unsafe fn interrupt_guard() -> InterruptGuard {
 	InterruptGuard::new(get_context().await)
 }

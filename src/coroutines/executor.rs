@@ -1,29 +1,30 @@
+use std::mem::replace;
+
 use super::*;
 
 /// Per thread executor, responsible for running worker threads
 pub struct Executor {
-	pool: MutPtr<Pool>,
+	pool: Ptr<Pool>,
 	main: Worker,
-	current: Handle<Worker>
+	current: UnsafeCell<Ptr<Worker>>
 }
 
 impl Executor {
 	pub fn new() -> Self {
+		unsafe { Self::new_with_pool(Ptr::null()) }
+	}
+
+	pub unsafe fn new_with_pool(pool: Ptr<Pool>) -> Self {
 		Self {
-			/* pool can be null, if the user doesn't want to use a pool */
-			pool: MutPtr::null(),
+			pool,
 			main: Worker::main(),
 
 			/* current cannot be null, is assigned once pinned */
-			current: unsafe { Handle::null() }
+			current: UnsafeCell::new(Ptr::null())
 		}
 	}
 
-	pub fn set_pool(&mut self, pool: MutPtr<Pool>) {
-		self.pool = pool;
-	}
-
-	pub fn new_worker(&mut self, start: Start) -> Worker {
+	pub fn new_worker(&self, start: Start) -> Worker {
 		if self.pool.is_null() {
 			Worker::new(self.into(), start)
 		} else {
@@ -34,59 +35,58 @@ impl Executor {
 	/// Workers move themselves onto their own stack when
 	/// they get started. We have to update our current reference
 	/// when they get moved and pinned
-	pub(super) fn worker_pinned(&mut self, worker: Handle<Worker>) {
-		self.current = worker;
+	pub(super) unsafe fn worker_pinned(&self, worker: Ptr<Worker>) {
+		*self.current.as_mut() = worker;
 	}
 
 	/// Suspend the `worker` and resume on the worker that resumed `worker`
 	///
 	/// Safety: the passed `worker` must be the current worker running
-	#[inline(always)]
-	pub(super) unsafe fn suspend(&mut self, mut worker: Handle<Worker>) {
-		self.current = worker.from();
+	pub(super) unsafe fn suspend(&self, worker: Ptr<Worker>) {
+		let from = worker.source();
 
-		worker.inner().switch(self.current.inner());
+		*self.current.as_mut() = from;
+
+		worker.fiber().switch(from.fiber());
 	}
 
 	/// Switch from whichever `current` worker is running to the new `worker`
 	///
 	/// Safety: the passed `worker` must not exist on the worker call stack
 	/// Workers cannot resume each other recursively
-	#[inline(always)]
-	pub(super) unsafe fn resume(&mut self, mut worker: Handle<Worker>) {
-		let mut previous = self.current;
+	pub(super) unsafe fn resume(&self, worker: Ptr<Worker>) {
+		let previous = replace(self.current.as_mut(), worker);
 
-		self.current = worker;
-
-		worker.set_resume_to(previous);
-		previous.inner().switch(worker.inner());
+		worker.suspend_to(previous);
+		previous.fiber().switch(worker.fiber());
 	}
 
 	/// Start a new worker
 	///
 	/// Safety: same as resume
-	pub(super) unsafe fn start(&mut self, worker: Handle<Worker>) {
+	pub(super) unsafe fn start(&self, worker: Ptr<Worker>) {
 		self.resume(worker);
 	}
 
 	/// Exit the worker and drop its stack
 	///
 	/// Safety: same as resume
-	pub(super) unsafe fn exit(&mut self, worker: Worker) {
-		self.current = worker.from();
+	pub(super) unsafe fn exit(&self, worker: Worker) {
+		let pool = self.pool;
+		let from = worker.source();
 
-		if self.pool.is_null() {
-			worker.into_inner().exit(self.current.inner())
+		*self.current.as_mut() = from;
+
+		if pool.is_null() {
+			worker.into_inner().exit(from.fiber())
 		} else {
-			worker
-				.into_inner()
-				.exit_to_pool(self.current.inner(), self.pool);
+			worker.into_inner().exit_to_pool(from.fiber(), pool);
 		}
 	}
 }
 
-impl Global for Executor {
-	unsafe fn pinned(&mut self) {
-		self.current = (&mut self.main).into();
+unsafe impl Pin for Executor {
+	unsafe fn pin(&mut self) {
+		*self.current.as_mut() = Ptr::from(&self.main);
 	}
 }

@@ -1,4 +1,4 @@
-use super::{async_fn, xx_core};
+use super::macros::asynchronous;
 mod fiber;
 mod impls;
 mod os;

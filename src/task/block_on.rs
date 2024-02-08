@@ -1,14 +1,19 @@
-use std::mem::{ManuallyDrop, MaybeUninit};
+use std::mem::replace;
 
 use super::*;
 
-type ResumeArg<Resume, Output> = (ManuallyDrop<Resume>, MaybeUninit<Output>);
+enum BlockState<Resume, Output> {
+	Pending(Resume),
+	Done(Output)
+}
 
-fn block_resume<Resume: FnOnce(), Output>(_: RequestPtr<Output>, arg: Ptr<()>, value: Output) {
-	let arg = arg.cast::<ResumeArg<Resume, Output>>().make_mut().as_mut();
-	let resume = unsafe { ManuallyDrop::take(&mut arg.0) };
+unsafe fn block_resume<Resume: FnOnce(), Output>(_: ReqPtr<Output>, arg: Ptr<()>, value: Output) {
+	let arg = arg.cast::<BlockState<Resume, Output>>().cast_mut().as_mut();
+	let resume = replace(arg, BlockState::Done(value));
 
-	arg.1.write(value);
+	let BlockState::Pending(resume) = resume else {
+		panic!("Double resume detected");
+	};
 
 	resume();
 }
@@ -20,18 +25,14 @@ fn block_resume<Resume: FnOnce(), Output>(_: RequestPtr<Output>, arg: Ptr<()>, v
 ///
 /// `resume` is a function that is called when the task finishes,
 /// to signal to the `block`ing function that it should return
-///
-/// Safety: memory leak if `resume` is not called, aka the blocking function
-/// exits and the task never finishes
-#[inline(always)]
 pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Task>(
 	block: Block, resume: Resume, task: T
 ) -> T::Output {
-	let mut arg: ResumeArg<Resume, T::Output> = (ManuallyDrop::new(resume), MaybeUninit::uninit());
+	let mut state: BlockState<Resume, T::Output> = BlockState::Pending(resume);
 
 	unsafe {
 		let request = Request::new(
-			MutPtr::from(&mut arg).as_unit().into(),
+			MutPtr::from(&mut state).as_unit().into(),
 			block_resume::<Resume, T::Output>
 		);
 
@@ -41,5 +42,9 @@ pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Task>(
 		};
 	};
 
-	unsafe { arg.1.assume_init() }
+	let BlockState::Done(output) = state else {
+		panic!("Blocking function ended before producing a result");
+	};
+
+	output
 }

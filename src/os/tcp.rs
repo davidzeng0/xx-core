@@ -1,115 +1,118 @@
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum TcpOption {
-	/// Don't delay send to coalesce packets
-	NoDelay             = 1,
+use super::*;
 
-	/// Set maximum segment size
-	MaxSegment          = 2,
+define_enum! {
+	#[repr(u32)]
+	pub enum TcpOption {
+		/// Don't delay send to coalesce packets
+		NoDelay             = 1,
 
-	/// Control sending of partial frames
-	Cork                = 3,
+		/// Set maximum segment size
+		MaxSegment          = 2,
 
-	/// Start keeplives after this period
-	KeepIdle            = 4,
+		/// Control sending of partial frames
+		Cork                = 3,
 
-	/// Interval between keepalives
-	KeepInterval        = 5,
+		/// Start keeplives after this period
+		KeepIdle            = 4,
 
-	/// Number of keepalives before death
-	KeepCount           = 6,
+		/// Interval between keepalives
+		KeepInterval        = 5,
 
-	/// Number of SYN retransmits
-	SynCount            = 7,
+		/// Number of keepalives before death
+		KeepCount           = 6,
 
-	/// Life time of orphaned FIN-WAIT-2 state
-	Linger2             = 8,
+		/// Number of SYN retransmits
+		SynCount            = 7,
 
-	/// Wake up listener only when data arrive
-	DeferAccept         = 9,
+		/// Life time of orphaned FIN-WAIT-2 state
+		Linger2             = 8,
 
-	/// Bound advertised window
-	WindowClamp         = 10,
+		/// Wake up listener only when data arrive
+		DeferAccept         = 9,
 
-	/// Information about this connection.
-	Info                = 11,
+		/// Bound advertised window
+		WindowClamp         = 10,
 
-	/// Bock/reenable quick ACKs.
-	Quickack            = 12,
+		/// Information about this connection.
+		Info                = 11,
 
-	/// Congestion control algorithm.
-	Congestion          = 13,
+		/// Bock/reenable quick ACKs.
+		Quickack            = 12,
 
-	/// TCP MD5 Signature (RFC2385)
-	Md5Signature        = 14,
+		/// Congestion control algorithm.
+		Congestion          = 13,
 
-	/// TCP Cookie Transactions
-	CookieTransactions  = 15,
+		/// TCP MD5 Signature (RFC2385)
+		Md5Signature        = 14,
 
-	/// Use linear timeouts for thin streams
-	ThinLinearTimeouts  = 16,
+		/// TCP Cookie Transactions
+		CookieTransactions  = 15,
 
-	/// Fast retrans. after 1 dupack
-	ThinDupAck          = 17,
+		/// Use linear timeouts for thin streams
+		ThinLinearTimeouts  = 16,
 
-	/// How long for loss retry before timeout
-	UserTimeout         = 18,
+		/// Fast retrans. after 1 dupack
+		ThinDupAck          = 17,
 
-	/// TCP sock is under repair right now
-	Repair              = 19,
+		/// How long for loss retry before timeout
+		UserTimeout         = 18,
 
-	/// Set TCP queue to repair
-	RepairQueue         = 20,
+		/// TCP sock is under repair right now
+		Repair              = 19,
 
-	/// Set sequence number of repaired queue.
-	QueueSeq            = 21,
+		/// Set TCP queue to repair
+		RepairQueue         = 20,
 
-	/// Repair TCP connection options
-	RepairOptions       = 22,
+		/// Set sequence number of repaired queue.
+		QueueSeq            = 21,
 
-	/// Enable FastOpen on listeners
-	Fastopen            = 23,
+		/// Repair TCP connection options
+		RepairOptions       = 22,
 
-	/// TCP time stamp
-	Timestamp           = 24,
+		/// Enable FastOpen on listeners
+		Fastopen            = 23,
 
-	/// Limit number of unsent bytes in write queue.
-	NotSentLowWatermark = 25,
+		/// TCP time stamp
+		Timestamp           = 24,
 
-	/// Get Congestion Control (optional) info.
-	CcInfo              = 26,
+		/// Limit number of unsent bytes in write queue.
+		NotSentLowWatermark = 25,
 
-	/// Record SYN headers for new connections.
-	SaveSyn             = 27,
+		/// Get Congestion Control (optional) info.
+		CcInfo              = 26,
 
-	/// Get SYN headers recorded for connection.
-	SavedSyn            = 28,
+		/// Record SYN headers for new connections.
+		SaveSyn             = 27,
 
-	/// Get/set window parameters.
-	RepairWindow        = 29,
+		/// Get SYN headers recorded for connection.
+		SavedSyn            = 28,
 
-	/// Attempt FastOpen with connect.
-	FastopenConnect     = 30,
+		/// Get/set window parameters.
+		RepairWindow        = 29,
 
-	/// Attach a ULP to a TCP connection.
-	Ulp                 = 31,
+		/// Attempt FastOpen with connect.
+		FastopenConnect     = 30,
 
-	/// TCP MD5 Signature with extensions.
-	Md5sigExt           = 32,
+		/// Attach a ULP to a TCP connection.
+		Ulp                 = 31,
 
-	/// Set the key for Fast Open (cookie).
-	FastopenKey         = 33,
+		/// TCP MD5 Signature with extensions.
+		Md5sigExt           = 32,
 
-	/// Enable TFO without a TFO cookie.
-	FastopenNoCookie    = 34,
+		/// Set the key for Fast Open (cookie).
+		FastopenKey         = 33,
 
-	ZerocopyReceive     = 35,
+		/// Enable TFO without a TFO cookie.
+		FastopenNoCookie    = 34,
 
-	/// Notify bytes available to read as a cmsg on read.
-	Inq                 = 36,
+		ZerocopyReceive     = 35,
 
-	/// Delay outgoing packets by XX usec.
-	TxDelay             = 37
+		/// Notify bytes available to read as a cmsg on read.
+		Inq                 = 36,
+
+		/// Delay outgoing packets by XX usec.
+		TxDelay             = 37
+	}
 }
 
 #[allow(non_upper_case_globals)]

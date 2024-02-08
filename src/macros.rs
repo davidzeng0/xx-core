@@ -1,26 +1,52 @@
-pub use xx_core_macros::*;
+pub(crate) use xx_core_macros::syscall_impl;
+pub use xx_core_macros::{asynchronous, compact_error, duration, future, wrapper_functions};
 
 #[macro_export]
 macro_rules! offset_of {
-	($type: ty, $field: ident) => {
-		(&unsafe { &*(0usize as *const $type) }.$field) as *const _ as usize
-	};
+	($type: ty, $field: ident) => {{
+		unsafe fn require_unsafe() {}
+
+		require_unsafe();
+
+		let field = &$crate::pointer::Ptr::<$type>::null().$field;
+
+		$crate::pointer::Ptr::from(field).int_addr()
+	}};
 }
+
+pub use offset_of;
 
 #[macro_export]
 macro_rules! container_of {
-	($val: expr, $type: ty, $field: ident) => {
-		&mut *(($val as *const _ as *const ())
-			.cast::<u8>()
-			.wrapping_sub($crate::offset_of!($type, $field))
-			.cast::<$type>() as *mut $type)
+	($ptr: expr, $type: ty, $field: ident) => {
+		$ptr.cast::<u8>()
+			.sub($crate::offset_of!($type, $field))
+			.cast::<$type>()
+			.cast_mut()
 	};
 }
 
-pub mod closure {
-	pub mod lifetime {
-		pub trait Captures<'__> {}
+pub use container_of;
 
-		impl<T: ?Sized> Captures<'_> for T {}
-	}
+macro_rules! import_sysdeps {
+	() => {
+		#[cfg(target_arch = "aarch64")]
+		mod arm64;
+		#[cfg(target_arch = "x86_64")]
+		mod x64;
+
+		mod platform {
+			#[cfg(target_arch = "aarch64")]
+			#[allow(unused_imports)]
+			pub use super::arm64::*;
+			#[cfg(target_arch = "x86_64")]
+			#[allow(unused_imports)]
+			pub use super::x64::*;
+		}
+
+		#[allow(unused_imports)]
+		use platform::*;
+	};
 }
+
+pub(crate) use import_sysdeps;

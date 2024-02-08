@@ -4,7 +4,6 @@ use memchr::memchr;
 
 use super::*;
 
-#[inline(always)]
 pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	let len = dest.len().min(src.len());
 
@@ -21,7 +20,7 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	len
 }
 
-#[async_trait]
+#[asynchronous]
 pub trait Read {
 	/// Read into `buf`, returning the amount of bytes read
 	///
@@ -31,19 +30,17 @@ pub trait Read {
 	/// Read until the buffer is filled, an I/O error, an interrupt, or an EOF
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
-	async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
-		/* if the buffer's length is zero and we're interrupted,
-		 * we technically completed the read without error,
-		 * so return early here
-		 */
+	async fn read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
 		let mut read = 0;
 
 		while read < buf.len() {
-			match self.read(&mut buf[read..]).await {
+			let available = &mut buf[read..];
+
+			match self.read(available).await {
 				Ok(0) => break,
-				Ok(n) => read += n,
+				Ok(n) => read += length_check(available, n),
 				Err(err) if err.is_interrupted() => break,
 				Err(err) => return Err(err)
 			}
@@ -54,14 +51,16 @@ pub trait Read {
 
 	/// Same as above, except returns err on partial reads, even
 	/// when interrupted
-	async fn read_exact_or_err(&mut self, buf: &mut [u8]) -> Result<()> {
-		let read = self.read_exact(buf).await?;
+	async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+		let read = self.read_fully(buf).await?;
+
+		length_check(buf, read);
 
 		if unlikely(read != buf.len()) {
 			return Err(short_io_error_unless_interrupt().await);
 		}
 
-		Ok(())
+		Ok(read)
 	}
 
 	/// Reads until an EOF, I/O error, or interrupt
@@ -85,9 +84,16 @@ pub trait Read {
 			}
 
 			unsafe {
-				match self.read(buf.get_unchecked_mut(len..capacity)).await {
+				let available = buf.get_unchecked_mut(len..capacity);
+
+				match self.read(available).await {
 					Ok(0) => break,
-					Ok(n) => buf.set_len(len + n),
+					Ok(n) => {
+						let new_len = len + length_check(available, n);
+
+						buf.set_len(new_len)
+					}
+
 					Err(err) if err.is_interrupted() => break,
 					Err(err) => return Err(err)
 				}
@@ -136,6 +142,25 @@ pub trait Read {
 			None => Ok(0)
 		}
 	}
+
+	async fn read_all_vectored(&mut self, mut bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+		let mut total = 0;
+
+		while bufs.len() > 0 {
+			let read = match self.read_vectored(bufs).await {
+				Ok(0) => break,
+				Ok(n) => n,
+				Err(err) if err.is_interrupted() => break,
+				Err(err) => return Err(err)
+			};
+
+			total += read;
+
+			advance_slices_mut(&mut bufs, read);
+		}
+
+		Ok(total)
+	}
 }
 
 pub trait AsReadRef: Read {
@@ -156,25 +181,25 @@ macro_rules! read_wrapper {
 			inner = self.$inner;
 			mut inner = self.$inner_mut;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
+			async fn read_fully(&mut self, buf: &mut [u8]) -> Result<usize>;
+
+			#[asynchronous(traitfn)]
 			async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize>;
 
-			#[async_trait_impl]
-			async fn read_exact_or_err(&mut self, buf: &mut [u8]) -> Result<()>;
-
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn read_to_string(&mut self, buf: &mut String) -> Result<usize>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn is_read_vectored(&self) -> bool;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> Result<usize>;
 		}
 	}
@@ -190,7 +215,6 @@ impl<'a, R: Read + ?Sized> ReadRef<'a, R> {
 	}
 }
 
-#[async_trait_impl]
 impl<'a, R: Read + ?Sized> Read for ReadRef<'a, R> {
 	read_wrapper! {
 		inner = reader;
@@ -198,7 +222,7 @@ impl<'a, R: Read + ?Sized> Read for ReadRef<'a, R> {
 	}
 }
 
-#[async_trait]
+#[asynchronous]
 pub trait BufRead: Read {
 	/// Fill any remaining space in the internal buffer,
 	/// up to `amount` total unconsumed bytes
@@ -328,40 +352,40 @@ macro_rules! bufread_wrapper {
 			inner = self.$inner;
 			mut inner = self.$inner_mut;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn fill_amount(&mut self, amount: usize) -> Result<usize>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn fill(&mut self) -> Result<usize>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn capacity(&self) -> usize;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn spare_capacity(&self) -> usize;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn buffer(&self) -> &[u8];
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn consume(&mut self, count: usize);
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			unsafe fn consume_unchecked(&mut self, count: usize);
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn unconsume(&mut self, count: usize);
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			unsafe fn unconsume_unchecked(&mut self, count: usize);
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn discard(&mut self);
 		}
 	}
@@ -384,7 +408,7 @@ impl<R: BufRead> Lines<R> {
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl<R: BufRead> AsyncIterator for Lines<R> {
 	type Item = Result<String>;
 

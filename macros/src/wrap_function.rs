@@ -72,18 +72,6 @@ impl Parse for WrapperFunctions {
 	}
 }
 
-pub fn get_pats(sig: &Signature) -> Punctuated<Pat, Token![,]> {
-	let mut pats = Punctuated::new();
-
-	for arg in sig.inputs.iter() {
-		if let FnArg::Typed(arg) = arg {
-			pats.push(arg.pat.as_ref().clone());
-		}
-	}
-
-	pats
-}
-
 impl WrapperFunctions {
 	pub fn expand(&self) -> TokenStream {
 		let mut fns = Vec::new();
@@ -93,7 +81,7 @@ impl WrapperFunctions {
 				.sig
 				.receiver()
 				.is_some_and(|rec| rec.mutability.is_some());
-			let pats = get_pats(&function.sig);
+			let pats = get_args(&function.sig, false);
 			let ident = &function.sig.ident;
 
 			let maybe_await = if function.sig.asyncness.is_some() {

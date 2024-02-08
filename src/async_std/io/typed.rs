@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::*;
-use crate::{macros::async_fn_typed, task::Handle};
+use crate::pointer::*;
 
 pub trait ToBytes<const N: usize> {
 	fn to_bytes(self) -> [u8; N];
@@ -33,14 +33,12 @@ macro_rules! impl_primitive_bytes_encoding_endian {
 			struct [<$type $endian>](pub $type);
 
 			impl ToBytes<{ size_of::<$type>() }> for [<$type $endian>] {
-				#[inline(always)]
 				fn to_bytes(self) -> [u8; size_of::<$type>()] {
 					self.0.[<to_ $endian _bytes>]()
 				}
 			}
 
 			impl FromBytes<{ size_of::<$type>() }> for [<$type $endian>] {
-				#[inline(always)]
 				fn from_bytes(bytes: [u8; size_of::<$type>()]) -> Self {
 					Self($type::[<from_ $endian _bytes>](bytes))
 				}
@@ -84,16 +82,14 @@ impl_primitive_type!(f64, 64);
 macro_rules! read_num_type_endian {
 	($type: ty, $endian_type: ty, $endian: ident) => {
 		paste::paste! {
-			#[inline(always)]
-			#[async_fn_typed]
+			#[asynchronous(explicit)]
 			async fn [<read_ $endian_type>](&mut self) -> Result<Option<$type>> {
 				self.read_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>().await.map(|c| c.map(|t| t.0))
 			}
 
-			#[inline(always)]
-			#[async_fn_typed]
+			#[asynchronous(explicit)]
 			async fn [<read_ $endian_type _or_err>](&mut self) -> Result<$type> {
-				self.[<read_ $endian_type>]().await?.ok_or_else(|| unexpected_end_of_stream())
+				self.[<read_ $endian_type>]().await?.ok_or_else(|| Core::UnexpectedEof.into())
 			}
 		}
 	};
@@ -117,12 +113,13 @@ macro_rules! read_int {
 	};
 }
 
-#[async_fn]
-#[inline(always)]
+#[asynchronous]
 async fn read_bytes_n<R: Read + ?Sized, const N: usize>(
 	reader: &mut R, bytes: &mut [u8; N]
 ) -> Result<usize> {
-	let read = reader.read_exact(bytes).await?;
+	let read = reader.read_fully(bytes).await?;
+
+	length_check(bytes, read);
 
 	if unlikely(read != N) {
 		check_interrupt().await?;
@@ -135,8 +132,7 @@ async fn read_bytes_n<R: Read + ?Sized, const N: usize>(
 	Ok(read)
 }
 
-#[async_fn]
-#[inline(always)]
+#[asynchronous]
 async fn read_bytes<R: Read + ?Sized, const N: usize>(reader: &mut R) -> Result<Option<[u8; N]>> {
 	let mut bytes = [0u8; N];
 
@@ -147,7 +143,7 @@ async fn read_bytes<R: Read + ?Sized, const N: usize>(reader: &mut R) -> Result<
 	})
 }
 
-#[async_fn]
+#[asynchronous]
 #[inline(never)]
 async fn read_bytes_slow<R: Read + ?Sized, const N: usize>(
 	reader: &mut R, bytes: &mut [u8; N]
@@ -155,15 +151,16 @@ async fn read_bytes_slow<R: Read + ?Sized, const N: usize>(
 	read_bytes_n(reader, bytes).await
 }
 
-#[async_fn]
-#[inline(always)]
+#[asynchronous]
 async fn buf_read_bytes<R: BufRead + ?Sized, const N: usize>(
 	reader: &mut R
 ) -> Result<Option<[u8; N]>> {
 	/* for some llvm or rustc reason, unlikely here does the actual job of
 	 * likely, and nets a performance gain on x64
 	 */
-	Ok(if unlikely(reader.buffer().len() >= N) {
+	let available = reader.buffer();
+
+	Ok(if unlikely(available.len() >= N) {
 		/* bytes variable is separated to improve optimizations */
 		let mut bytes = [0u8; N];
 
@@ -204,8 +201,7 @@ pub trait ReadTyped: Read {
 	read_num_type!(f64);
 
 	/// Read a type, returning None if EOF and no bytes were read
-	#[inline(always)]
-	#[async_fn_typed]
+	#[asynchronous(explicit)]
 	async fn read_type<T: FromBytes<N>, const N: usize>(&mut self) -> Result<Option<T>> {
 		let bytes = read_bytes(self).await?;
 
@@ -213,12 +209,11 @@ pub trait ReadTyped: Read {
 	}
 
 	/// Read a type, assuming EOF is an error
-	#[inline(always)]
-	#[async_fn_typed]
+	#[asynchronous(explicit)]
 	async fn read_type_or_err<T: FromBytes<N>, const N: usize>(&mut self) -> Result<T> {
 		self.read_type()
 			.await?
-			.ok_or_else(|| unexpected_end_of_stream())
+			.ok_or_else(|| Core::UnexpectedEof.into())
 	}
 }
 
@@ -242,8 +237,7 @@ pub trait BufReadTyped: BufRead {
 	read_num_type!(f64);
 
 	/// Read a type, returning None if EOF and no bytes were read
-	#[inline(always)]
-	#[async_fn_typed]
+	#[asynchronous(explicit)]
 	async fn read_type<T: FromBytes<N>, const N: usize>(&mut self) -> Result<Option<T>> {
 		let bytes = buf_read_bytes(self).await?;
 
@@ -251,12 +245,11 @@ pub trait BufReadTyped: BufRead {
 	}
 
 	/// Read a type, assuming EOF is an error
-	#[inline(always)]
-	#[async_fn_typed]
+	#[asynchronous(explicit)]
 	async fn read_type_or_err<T: FromBytes<N>, const N: usize>(&mut self) -> Result<T> {
 		self.read_type()
 			.await?
-			.ok_or_else(|| unexpected_end_of_stream())
+			.ok_or_else(|| Core::UnexpectedEof.into())
 	}
 }
 
@@ -264,20 +257,15 @@ impl<T: BufRead> BufReadTyped for T {}
 
 struct FmtAdapter<'a, W: Write + 'a> {
 	writer: &'a mut W,
-	context: Handle<Context>,
+	context: Ptr<Context>,
 	wrote: usize,
 	error: Option<Error>
 }
 
-#[async_fn]
+#[asynchronous]
 impl<'a, W: Write> FmtAdapter<'a, W> {
-	pub async fn new(writer: &'a mut W) -> FmtAdapter<'a, W> {
-		Self {
-			writer,
-			context: get_context().await,
-			wrote: 0,
-			error: None
-		}
+	pub fn new(writer: &'a mut W, context: Ptr<Context>) -> FmtAdapter<'a, W> {
+		Self { writer, context, wrote: 0, error: None }
 	}
 
 	pub async fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
@@ -286,14 +274,14 @@ impl<'a, W: Write> FmtAdapter<'a, W> {
 			Err(_) => Err(self
 				.error
 				.take()
-				.unwrap_or_else(|| Error::new(ErrorKind::Other, "Formatter error")))
+				.unwrap_or_else(|| Error::simple(ErrorKind::Other, "Formatter error")))
 		}
 	}
 }
 
 impl<W: Write> fmt::Write for FmtAdapter<'_, W> {
 	fn write_str(&mut self, s: &str) -> fmt::Result {
-		match self.context.run(self.writer.write_string_exact_or_err(s)) {
+		match unsafe { with_context(self.context, self.writer.write_string_all_or_err(s)) } {
 			Err(err) => {
 				self.error = Some(err);
 
@@ -312,8 +300,7 @@ impl<W: Write> fmt::Write for FmtAdapter<'_, W> {
 macro_rules! write_num_type_endian {
 	($type: ty, $endian_type: ident, $endian: ident) => {
 		paste::paste! {
-			#[inline(always)]
-			#[async_fn_typed]
+			#[asynchronous(explicit)]
 			async fn [<write_ $endian_type>](&mut self, val: $type) -> Result<usize> {
 				self.write_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>([<$type $endian>](val)).await
 			}
@@ -358,42 +345,40 @@ pub trait WriteTyped: Write {
 
 	/// Returns the number of bytes written, or error if the data could not be
 	/// fully written
-	#[async_fn_typed]
+	#[asynchronous(explicit)]
 	async fn write_fmt(&mut self, args: Arguments<'_>) -> Result<usize>
 	where
 		Self: Sized
 	{
-		FmtAdapter::new(self).await.write_args(args).await
+		FmtAdapter::new(self, get_context().await)
+			.write_args(args)
+			.await
 	}
 
 	/// Attempts to write the entire string, returning the number of bytes
 	/// written which may be short if interrupted or eof
-	#[async_fn_typed]
+	#[asynchronous(explicit)]
 	async fn write_string(&mut self, buf: &str) -> Result<usize> {
 		self.write_all(buf.as_bytes()).await
 	}
 
 	/// Same as above but returns error on partial writes
-	#[async_fn_typed]
-	async fn write_string_exact_or_err(&mut self, buf: &str) -> Result<usize> {
-		self.write_all_or_err(buf.as_bytes()).await?;
-
-		Ok(buf.as_bytes().len())
+	#[asynchronous(explicit)]
+	async fn write_string_all_or_err(&mut self, buf: &str) -> Result<usize> {
+		self.write_exact(buf.as_bytes()).await
 	}
 
-	/// Attemps to write an entire char, returning the number of bytes written
-	/// which may be short if interrupted or eof
-	#[async_fn_typed]
+	/// Attemps to write an entire char, returning error on partial writes
+	#[asynchronous(explicit)]
 	async fn write_char(&mut self, ch: char) -> Result<usize> {
 		let mut buf = [0u8; 4];
 
-		self.write_string(ch.encode_utf8(&mut buf)).await
+		self.write_string_all_or_err(ch.encode_utf8(&mut buf)).await
 	}
 
 	/// Attempts to write an entire type, returning the number of bytes written
 	/// which may be short if interrupted or eof
-	#[inline(always)]
-	#[async_fn_typed]
+	#[asynchronous(explicit)]
 	async fn write_type<T: ToBytes<N>, const N: usize>(&mut self, val: T) -> Result<usize> {
 		self.write_all(&val.to_bytes()).await
 	}

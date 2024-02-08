@@ -1,11 +1,11 @@
 use super::*;
 
-#[async_fn]
+#[asynchronous]
 async fn async_add(a: i32, b: i32) -> i32 {
 	a + b
 }
 
-#[async_fn]
+#[asynchronous]
 pub async fn test_add() {
 	let result = async_add(12, 5).await;
 

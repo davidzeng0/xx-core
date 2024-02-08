@@ -1,31 +1,43 @@
-use super::error::result_from_libc;
-use crate::error::Result;
+use super::{error::result_from_libc, *};
 
-#[repr(C)]
-pub struct TimeVal {
-	pub sec: i64,
-	pub micros: i64
+define_struct! {
+	pub struct TimeVal {
+		pub sec: i64,
+		pub micros: i64
+	}
 }
 
-#[repr(C)]
-pub struct TimeSpec {
-	pub sec: i64,
-	pub nanos: i64
+define_struct! {
+	pub struct TimeSpec {
+		pub sec: i64,
+		pub nanos: i64
+	}
 }
 
-#[repr(C)]
-pub enum ClockId {
-	RealTime,
-	Monotonic,
-	ProcessCpuTimeId,
-	ThreadCpuTimeId,
-	MonotonicRaw,
-	RealTimeCoarse,
-	MonotonicCoarse,
-	BootTime,
-	RealTimeAlarm,
-	BootTimeAlarm,
-	Tai = 11
+impl TimeSpec {
+	pub fn from_ms(duration: u64) -> Self {
+		Self {
+			sec: (duration / 1000) as i64,
+			nanos: ((duration % 1000) * 1_000_000) as i64
+		}
+	}
+}
+
+define_enum! {
+	#[repr(C)]
+	pub enum ClockId {
+		RealTime,
+		Monotonic,
+		ProcessCpuTimeId,
+		ThreadCpuTimeId,
+		MonotonicRaw,
+		RealTimeCoarse,
+		MonotonicCoarse,
+		BootTime,
+		RealTimeAlarm,
+		BootTimeAlarm,
+		Tai = 11
+	}
 }
 
 extern "C" {

@@ -1,8 +1,6 @@
-use std::mem::transmute;
-
 use super::*;
 
-#[async_trait]
+#[asynchronous]
 pub trait Write {
 	/// Write from `buf`, returning the amount of bytes read
 	///
@@ -25,9 +23,11 @@ pub trait Write {
 		let mut wrote = 0;
 
 		while wrote < buf.len() {
-			match self.write(&buf[wrote..]).await {
+			let available = &buf[wrote..];
+
+			match self.write(available).await {
 				Ok(0) => break,
-				Ok(n) => wrote += n,
+				Ok(n) => wrote += length_check(available, n),
 				Err(err) if err.is_interrupted() => break,
 				Err(err) => return Err(err)
 			}
@@ -37,14 +37,16 @@ pub trait Write {
 	}
 
 	/// Same as above, except partial writes are treated as an error
-	async fn write_all_or_err(&mut self, buf: &[u8]) -> Result<()> {
+	async fn write_exact(&mut self, buf: &[u8]) -> Result<usize> {
 		let wrote = self.write_all(buf).await?;
+
+		length_check(buf, wrote);
 
 		if unlikely(wrote != buf.len()) {
 			return Err(short_io_error_unless_interrupt().await);
 		}
 
-		Ok(())
+		Ok(wrote)
 	}
 
 	fn is_write_vectored(&self) -> bool {
@@ -62,7 +64,7 @@ pub trait Write {
 		let mut total = 0;
 
 		while bufs.len() > 0 {
-			let mut wrote = match self.write_vectored(bufs).await {
+			let wrote = match self.write_vectored(bufs).await {
 				Ok(0) => break,
 				Ok(n) => n,
 				Err(err) if err.is_interrupted() => break,
@@ -71,16 +73,7 @@ pub trait Write {
 
 			total += wrote;
 
-			while let Some(first) = bufs.first_mut() {
-				if wrote >= first.len() {
-					wrote -= first.len();
-					bufs = &mut bufs[1..];
-				} else {
-					*first = IoSlice::new(unsafe { transmute(&first[wrote..]) });
-
-					break;
-				}
-			}
+			advance_slices(&mut bufs, wrote);
 		}
 
 		Ok(total)
@@ -105,22 +98,22 @@ macro_rules! write_wrapper {
 			inner = self.$inner;
 			mut inner = self.$inner_mut;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn flush(&mut self) -> Result<()>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn write_all(&mut self, buf: &[u8]) -> Result<usize>;
 
-			#[async_trait_impl]
-			async fn write_all_or_err(&mut self, buf: &[u8]) -> Result<()>;
+			#[asynchronous(traitfn)]
+			async fn write_exact(&mut self, buf: &[u8]) -> Result<usize>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn is_write_vectored(&self) -> bool;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> Result<usize>;
 		}
 	}

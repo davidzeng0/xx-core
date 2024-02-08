@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use super::*;
 use crate::impls::UIntExtensions;
 
@@ -5,15 +7,12 @@ pub struct BufReader<R: Read> {
 	inner: R,
 
 	buf: Vec<u8>,
-	pos: usize,
-
-	phantom: PhantomData<Context>
+	pos: usize
 }
 
-#[async_fn]
+#[asynchronous]
 impl<R: Read> BufReader<R> {
 	/// Reads from our internal buffer into `buf`
-	#[inline]
 	fn read_into(&mut self, buf: &mut [u8]) -> usize {
 		let len = read_into_slice(buf, self.buffer());
 
@@ -22,24 +21,22 @@ impl<R: Read> BufReader<R> {
 		len
 	}
 
-	/// Utility function for filling start..end in the capacity of our buffer
-	#[inline]
-	async unsafe fn fill_buf_offset(&mut self, start: usize, end: usize) -> Result<usize> {
-		let spare = self.buf.get_unchecked_mut(start..end);
-		let read = self.inner.read(spare).await?;
+	async unsafe fn fill_buf_range(&mut self, range: Range<usize>) -> Result<usize> {
+		let buf = self.buf.get_unchecked_mut(range.clone());
+		let read = self.inner.read(buf).await?;
 
 		if likely(read != 0) {
-			self.buf.set_len(start + read);
+			let new_len = range.start + length_check(buf, read);
+
+			self.buf.set_len(new_len);
 		}
 
 		Ok(read)
 	}
 
-	/// Fills the internal buffer from the start
-	/// If zero is returned, internal data is not modified
-	#[inline]
+	#[inline(never)]
 	async fn fill_buf(&mut self) -> Result<usize> {
-		let read = unsafe { self.fill_buf_offset(0, self.buf.capacity()).await? };
+		let read = unsafe { self.fill_buf_range(0..self.buf.capacity()).await? };
 
 		if likely(read != 0) {
 			self.pos = 0;
@@ -57,12 +54,13 @@ impl<R: Read> BufReader<R> {
 	}
 
 	pub fn from_parts(inner: R, buf: Vec<u8>, pos: usize) -> Self {
-		assert!(pos <= buf.len());
+		debug_assert!(pos <= buf.len());
 
 		#[cfg(any(test, feature = "test"))]
 		let buf = {
 			let mut buf = buf;
 
+			/* valgrind doesn't like uninitialized data */
 			for b in buf.spare_capacity_mut() {
 				b.write(0);
 			}
@@ -70,7 +68,7 @@ impl<R: Read> BufReader<R> {
 			buf
 		};
 
-		BufReader { inner, buf, pos, phantom: PhantomData }
+		BufReader { inner, buf, pos }
 	}
 
 	/// Calling `into_inner` with data in the buffer will lead to data loss
@@ -86,7 +84,7 @@ impl<R: Read> BufReader<R> {
 		(self.inner, self.buf, self.pos)
 	}
 
-	/// Moves unconsumed data to the beginning of the buffer
+	/// Free up consumed bytes to fill more space without discarding
 	pub fn move_data_to_beginning(&mut self) {
 		if self.pos == 0 {
 			return;
@@ -96,13 +94,11 @@ impl<R: Read> BufReader<R> {
 
 		if len == 0 {
 			self.discard();
-
-			return;
+		} else {
+			self.buf.copy_within(self.pos.., 0);
+			self.buf.truncate(len);
+			self.pos = 0;
 		}
-
-		self.buf.copy_within(self.pos.., 0);
-		self.buf.truncate(len);
-		self.pos = 0;
 	}
 
 	/// The read head
@@ -111,9 +107,8 @@ impl<R: Read> BufReader<R> {
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl<R: Read> Read for BufReader<R> {
-	#[inline]
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		if likely(self.buffer().len() > 0) {
 			return Ok(self.read_into(buf));
@@ -123,18 +118,18 @@ impl<R: Read> Read for BufReader<R> {
 			return self.inner.read(buf).await;
 		}
 
-		if likely(self.fill_buf().await? != 0) {
-			Ok(self.read_into(buf))
-		} else {
-			Ok(0)
+		if unlikely(self.fill_buf().await? != 0) {
+			return Ok(0);
 		}
+
+		Ok(self.read_into(buf))
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl<R: Read> BufRead for BufReader<R> {
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize> {
-		assert!(amount <= self.buf.capacity());
+		debug_assert!(amount <= self.buf.capacity());
 
 		let mut start = self.buf.len();
 		let mut end = self.pos + amount;
@@ -147,7 +142,8 @@ impl<R: Read> BufRead for BufReader<R> {
 			end = self.buf.capacity();
 
 			if self.buffer().len() == 0 {
-				/* try not to discard existing data if read returns EOF */
+				/* try not to discard existing data if read returns EOF, assuming the read
+				 * impl doesn't write junk even when returning zero */
 				start = 0;
 				end = amount;
 			} else {
@@ -161,7 +157,7 @@ impl<R: Read> BufRead for BufReader<R> {
 			}
 		}
 
-		let read = unsafe { self.fill_buf_offset(start, end).await? };
+		let read = unsafe { self.fill_buf_range(start..end).await? };
 
 		if unlikely(start == 0 && read != 0) {
 			/* read new data at beginning, reset pos */
@@ -185,7 +181,7 @@ impl<R: Read> BufRead for BufReader<R> {
 	}
 
 	fn consume(&mut self, count: usize) {
-		assert!(count <= self.buffer().len());
+		debug_assert!(count <= self.buffer().len());
 
 		self.pos += count;
 	}
@@ -195,7 +191,7 @@ impl<R: Read> BufRead for BufReader<R> {
 	}
 
 	fn unconsume(&mut self, count: usize) {
-		assert!(count <= self.pos);
+		debug_assert!(count <= self.pos);
 
 		self.pos -= count;
 	}
@@ -204,17 +200,18 @@ impl<R: Read> BufRead for BufReader<R> {
 		self.pos = self.pos.wrapping_sub(count);
 	}
 
-	#[inline]
 	fn discard(&mut self) {
 		self.pos = 0;
 		self.buf.clear();
 	}
 }
 
-#[async_fn]
+#[asynchronous]
 impl<R: Read + Seek> BufReader<R> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
-		let pos = rel.checked_add_unsigned(self.pos as u64).unwrap();
+		let pos = rel
+			.checked_add_unsigned(self.pos as u64)
+			.ok_or_else(|| Core::Overflow.new())?;
 
 		if pos >= 0 && pos as usize <= self.buf.len() {
 			self.pos = pos as usize;
@@ -241,7 +238,7 @@ impl<R: Read + Seek> BufReader<R> {
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl<R: Read + Seek> Seek for BufReader<R> {
 	fn stream_len_fast(&self) -> bool {
 		self.inner.stream_len_fast()
@@ -259,7 +256,8 @@ impl<R: Read + Seek> Seek for BufReader<R> {
 		let pos = self.inner.stream_position().await?;
 		let remaining = self.buffer().len();
 
-		Ok(pos.checked_sub(remaining as u64).unwrap())
+		pos.checked_sub(remaining as u64)
+			.ok_or_else(|| Core::Overflow.new())
 	}
 
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
@@ -275,7 +273,11 @@ impl<R: Read + Seek> Seek for BufReader<R> {
 
 			SeekFrom::End(pos) => {
 				if self.stream_len_fast() && self.stream_position_fast() {
-					let new_pos = self.stream_len().await?.checked_add_signed(pos).unwrap();
+					let new_pos = self
+						.stream_len()
+						.await?
+						.checked_add_signed(pos)
+						.ok_or_else(|| Core::Overflow.new())?;
 
 					self.seek_abs(new_pos, seek).await
 				} else {

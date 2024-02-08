@@ -1,25 +1,24 @@
-use std::mem::zeroed;
+use super::*;
 
-use enumflags2::bitflags;
-
-#[bitflags]
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum StatxMask {
-	Type                = 1 << 0,
-	Mode                = 1 << 1,
-	HardLinksCount      = 1 << 2,
-	UserId              = 1 << 3,
-	GroupId             = 1 << 4,
-	AccessTime          = 1 << 5,
-	ModifiedTime        = 1 << 6,
-	AttributeChangeTime = 1 << 7,
-	Inode               = 1 << 8,
-	Size                = 1 << 9,
-	Blocks              = 1 << 10,
-	CreationTime        = 1 << 11,
-	MountId             = 1 << 12,
-	DirectIoAlign       = 1 << 13
+define_enum! {
+	#[bitflags]
+	#[repr(u32)]
+	pub enum StatxMask {
+		Type                = 1 << 0,
+		Mode                = 1 << 1,
+		HardLinksCount      = 1 << 2,
+		UserId              = 1 << 3,
+		GroupId             = 1 << 4,
+		AccessTime          = 1 << 5,
+		ModifiedTime        = 1 << 6,
+		AttributeChangeTime = 1 << 7,
+		Inode               = 1 << 8,
+		Size                = 1 << 9,
+		Blocks              = 1 << 10,
+		CreationTime        = 1 << 11,
+		MountId             = 1 << 12,
+		DirectIoAlign       = 1 << 13
+	}
 }
 
 #[allow(non_upper_case_globals)]
@@ -28,47 +27,43 @@ impl StatxMask {
 	pub const BasicStats: u32 = 0x7ff;
 }
 
-#[repr(C)]
-pub struct StatxTimestamp {
-	pub sec: i64,
-	pub nanos: u32,
-	pub resv: [i32; 1]
+define_struct! {
+	pub struct StatxTimestamp {
+		pub sec: i64,
+		pub nanos: u32,
+		pub resv: [i32; 1]
+	}
 }
 
-#[repr(C)]
-pub struct Statx {
-	pub mask: u32,
-	pub block_size: u32,
-	pub attributes: u64,
-	pub hard_links_count: u32,
-	pub user_id: u32,
-	pub group_id: u32,
-	pub mode: u16,
-	pub resv: [u16; 1],
-	pub inode: u64,
-	pub size: u64,
-	pub blocks: u64,
-	pub attributes_mask: u64,
+define_struct! {
+	pub struct Statx {
+		pub mask: u32,
+		pub block_size: u32,
+		pub attributes: u64,
+		pub hard_links_count: u32,
+		pub user_id: u32,
+		pub group_id: u32,
+		pub mode: u16,
+		pub resv: [u16; 1],
+		pub inode: u64,
+		pub size: u64,
+		pub blocks: u64,
+		pub attributes_mask: u64,
 
-	pub access_time: StatxTimestamp,
-	pub creation_time: StatxTimestamp,
-	pub attribute_change_time: StatxTimestamp,
-	pub modified_time: StatxTimestamp,
+		pub access_time: StatxTimestamp,
+		pub creation_time: StatxTimestamp,
+		pub attribute_change_time: StatxTimestamp,
+		pub modified_time: StatxTimestamp,
 
-	pub rdev_major: u32,
-	pub rdev_minor: u32,
-	pub dev_major: u32,
-	pub dev_minor: u32,
+		pub rdev_major: u32,
+		pub rdev_minor: u32,
+		pub dev_major: u32,
+		pub dev_minor: u32,
 
-	pub mount_id: u64,
-	pub direct_io_mem_align: u32,
-	pub direct_io_offset_align: u32,
+		pub mount_id: u64,
+		pub direct_io_mem_align: u32,
+		pub direct_io_offset_align: u32,
 
-	pub resv1: [u64; 12]
-}
-
-impl Statx {
-	pub fn new() -> Self {
-		unsafe { zeroed() }
+		pub resv1: [u64; 12]
 	}
 }

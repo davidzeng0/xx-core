@@ -1,8 +1,3 @@
-use std::{
-	arch::{asm, global_asm},
-	mem::zeroed
-};
-
 use super::*;
 
 #[repr(C)]
@@ -26,32 +21,31 @@ impl Context {
 		unsafe { zeroed() }
 	}
 
-	pub fn set_stack(&mut self, stack: usize, len: usize) {
-		self.stack = (stack + len) as u64;
+	pub fn program_counter(&self) -> Ptr<()> {
+		Ptr::from_int_addr(self.link as usize)
 	}
 
-	pub fn set_start(&mut self, start: Start) {
-		let ptr = MutPtr::<Start>::from_int_addr(self.stack as usize).wrapping_sub(1);
+	pub unsafe fn set_stack(&mut self, stack: Ptr<()>, len: usize) {
+		self.stack = (stack.int_addr() + len) as u64;
+	}
 
-		ptr.as_uninit().write(start);
+	pub unsafe fn set_start(&mut self, start: Start) {
+		let stack = MutPtr::<Start>::from_int_addr(self.stack as usize);
+
+		stack.wrapping_sub(1).as_uninit().write(start);
 
 		self.link = xx_core_fiber_arm64_start as u64;
 	}
 
-	pub fn set_intercept(&mut self, mut intercept: Intercept) {
-		let ptr = MutPtr::<Intercept>::from_int_addr(self.stack as usize).wrapping_sub(1);
+	pub unsafe fn set_intercept(&mut self, intercept: Intercept) {
+		let stack = MutPtr::<Intercept>::from_int_addr(self.stack as usize);
 
-		if intercept.ret == 0 {
-			intercept.ret = self.link as usize;
-		}
-
-		ptr.as_uninit().write(intercept);
+		stack.wrapping_sub(1).as_uninit().write(intercept);
 
 		self.link = xx_core_fiber_arm64_intercept as u64;
 	}
 }
 
-#[inline(always)]
 pub(super) unsafe fn switch(from: &mut Context, to: &mut Context) {
 	unsafe {
 		asm!(

@@ -1,37 +1,26 @@
-use std::marker::PhantomData;
+use super::*;
 
-use crate::pointer::*;
-
-#[repr(C)]
-pub struct IoVec<'a> {
-	pub base: MutPtr<()>,
-	pub len: usize,
-
-	phantom: PhantomData<&'a ()>
-}
-
-impl IoVec<'_> {
-	pub fn new() -> Self {
-		Self { base: MutPtr::null(), len: 0, phantom: PhantomData }
+define_struct! {
+	pub struct IoVec {
+		pub base: MutPtr<()>,
+		pub len: usize
 	}
 }
 
-impl From<&[u8]> for IoVec<'_> {
+impl From<&[u8]> for IoVec {
 	fn from(value: &[u8]) -> Self {
 		Self {
-			base: Ptr::from(value.as_ptr()).make_mut().as_unit(),
-			len: value.len(),
-			phantom: PhantomData
+			base: Ptr::from(value.as_ptr()).cast_mut().as_unit(),
+			len: value.len()
 		}
 	}
 }
 
-impl From<&mut [u8]> for IoVec<'_> {
+impl From<&mut [u8]> for IoVec {
 	fn from(value: &mut [u8]) -> Self {
 		Self {
 			base: MutPtr::from(value.as_mut_ptr()).as_unit(),
-			len: value.len(),
-			phantom: PhantomData
+			len: value.len()
 		}
 	}
 }

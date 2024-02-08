@@ -1,131 +1,127 @@
 use std::{
-	mem::zeroed,
 	net::{IpAddr, SocketAddr, SocketAddrV6},
 	ptr::copy
 };
 
-use super::socket::AddressFamily;
-use crate::pointer::*;
+use num_traits::FromPrimitive;
 
-#[repr(u32)]
-pub enum IpProtocol {
-	/// Dummy protocol for TCP.
-	Ip       = 1,
+use super::{socket::AddressFamily, *};
 
-	/// Internet Control Message Protocol.
-	Icmp     = 2,
+define_enum! {
+	#[repr(u32)]
+	pub enum IpProtocol {
+		/// Dummy protocol for TCP.
+		Ip       = 1,
 
-	/// Internet Group Management Protocol.
-	Igmp     = 3,
+		/// Internet Control Message Protocol.
+		Icmp     = 2,
 
-	/// IPIP tunnels (older KA9Q tunnels use 94).
-	Ipip     = 4,
+		/// Internet Group Management Protocol.
+		Igmp     = 3,
 
-	/// Transmission Control Protocol.
-	Tcp      = 6,
+		/// IPIP tunnels (older KA9Q tunnels use 94).
+		Ipip     = 4,
 
-	/// Exterior Gateway Protocol.
-	Egp      = 8,
+		/// Transmission Control Protocol.
+		Tcp      = 6,
 
-	/// PUP protocol.
-	Pup      = 12,
+		/// Exterior Gateway Protocol.
+		Egp      = 8,
 
-	/// User Datagram Protocol.
-	Udp      = 17,
+		/// PUP protocol.
+		Pup      = 12,
 
-	/// XNS IDP protocol.
-	Idp      = 22,
+		/// User Datagram Protocol.
+		Udp      = 17,
 
-	/// SO Transport Protocol Class 4.
-	Tp       = 29,
+		/// XNS IDP protocol.
+		Idp      = 22,
 
-	/// Datagram Congestion Control Protocol.
-	Dccp     = 33,
+		/// SO Transport Protocol Class 4.
+		Tp       = 29,
 
-	/// IPv6 header.
-	Ipv6     = 41,
+		/// Datagram Congestion Control Protocol.
+		Dccp     = 33,
 
-	/// Reservation Protocol.
-	Rsvp     = 46,
+		/// IPv6 header.
+		Ipv6     = 41,
 
-	/// General Routing Encapsulation.
-	Gre      = 47,
+		/// Reservation Protocol.
+		Rsvp     = 46,
 
-	/// encapsulating security payload.
-	Esp      = 50,
+		/// General Routing Encapsulation.
+		Gre      = 47,
 
-	/// authentication header.
-	Ah       = 51,
+		/// encapsulating security payload.
+		Esp      = 50,
 
-	/// Multicast Transport Protocol.
-	Mtp      = 92,
+		/// authentication header.
+		Ah       = 51,
 
-	/// IP option pseudo header for BEET.
-	Beetph   = 94,
+		/// Multicast Transport Protocol.
+		Mtp      = 92,
 
-	/// Encapsulation Header.
-	Encap    = 98,
+		/// IP option pseudo header for BEET.
+		Beetph   = 94,
 
-	/// Protocol Independent Multicast.
-	Pim      = 103,
+		/// Encapsulation Header.
+		Encap    = 98,
 
-	/// Compression Header Protocol.
-	Comp     = 108,
+		/// Protocol Independent Multicast.
+		Pim      = 103,
 
-	/// Stream Control Transmission Protocol.
-	Sctp     = 132,
+		/// Compression Header Protocol.
+		Comp     = 108,
 
-	/// UDP-Lite protocol.
-	Udplite  = 136,
+		/// Stream Control Transmission Protocol.
+		Sctp     = 132,
 
-	/// MPLS in IP.
-	Mpls     = 137,
+		/// UDP-Lite protocol.
+		Udplite  = 136,
 
-	/// Ethernet-within-IPv6 Encapsulation.
-	Ethernet = 143,
+		/// MPLS in IP.
+		Mpls     = 137,
 
-	/// Raw IP packets.
-	Raw      = 255,
+		/// Ethernet-within-IPv6 Encapsulation.
+		Ethernet = 143,
 
-	/// Multipath TCP connection.
-	Mptcp    = 262
+		/// Raw IP packets.
+		Raw      = 255,
+
+		/// Multipath TCP connection.
+		Mptcp    = 262
+	}
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct AddressCommon {
-	pub family: u16
+define_struct! {
+	pub struct AddressCommon {
+		pub family: u16
+	}
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct AddressV4 {
-	pub common: AddressCommon,
-	pub port: u16,
-	pub addr: [u8; 4],
-	pub pad: [u8; 8]
+define_struct! {
+	pub struct AddressV4 {
+		pub common: AddressCommon,
+		pub port: u16,
+		pub addr: [u8; 4],
+		pub pad: [u8; 8]
+	}
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct AddressV6 {
-	pub common: AddressCommon,
-	pub port: u16,
-	pub flow_info: u32,
-	pub addr: [u8; 16],
-	pub scope_id: u32
+define_struct! {
+	pub struct AddressV6 {
+		pub common: AddressCommon,
+		pub port: u16,
+		pub flow_info: u32,
+		pub addr: [u8; 16],
+		pub scope_id: u32
+	}
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct AddressStorage {
-	pub common: AddressCommon,
-	pub pad: [u64; 15]
-}
-
-impl AddressStorage {
-	pub fn new() -> Self {
-		unsafe { zeroed() }
+define_struct! {
+	pub struct AddressStorage {
+		pub common: AddressCommon,
+		pub pad: [u64; 15]
 	}
 }
 
@@ -156,14 +152,11 @@ impl From<SocketAddr> for Address {
 }
 
 impl TryFrom<AddressStorage> for Address {
-	type Error = ();
+	type Error = Error;
 
-	fn try_from(value: AddressStorage) -> Result<Self, ()> {
-		const INET: u16 = AddressFamily::INet as u16;
-		const INET6: u16 = AddressFamily::INet6 as u16;
-
-		match value.common.family {
-			INET => {
+	fn try_from(value: AddressStorage) -> Result<Self> {
+		match AddressFamily::from_u16(value.common.family) {
+			Some(AddressFamily::INet) => {
 				let addr = unsafe {
 					let mut addr: AddressV4 = zeroed();
 					let ptr = Ptr::from(&value).cast::<AddressV4>();
@@ -176,7 +169,7 @@ impl TryFrom<AddressStorage> for Address {
 				Ok(Address::V4(addr))
 			}
 
-			INET6 => {
+			Some(AddressFamily::INet6) => {
 				let addr = unsafe {
 					let mut addr: AddressV6 = zeroed();
 					let ptr = Ptr::from(&value).cast::<AddressV6>();
@@ -189,15 +182,15 @@ impl TryFrom<AddressStorage> for Address {
 				Ok(Address::V6(addr))
 			}
 
-			_ => Err(())
+			_ => Err(Error::simple(ErrorKind::NotFound, "Unknown address family"))
 		}
 	}
 }
 
 impl TryFrom<AddressStorage> for SocketAddr {
-	type Error = ();
+	type Error = Error;
 
-	fn try_from(value: AddressStorage) -> Result<Self, ()> {
+	fn try_from(value: AddressStorage) -> Result<Self> {
 		let addr: Address = value.try_into()?;
 
 		Ok(match addr {

@@ -1,15 +1,12 @@
-pub use crate::macros::sync_task;
+pub use crate::macros::future;
 use crate::{error::*, pointer::*};
 
 pub mod block_on;
-pub use block_on::*;
 pub mod closure;
-pub mod env;
-pub use env::*;
 
-pub type RequestPtr<T> = Ptr<Request<T>>;
+pub type ReqPtr<T> = Ptr<Request<T>>;
 
-pub type RequestCallback<T> = fn(RequestPtr<T>, Ptr<()>, T);
+pub type Complete<T> = unsafe fn(ReqPtr<T>, Ptr<()>, T);
 
 /// A pointer of a [`Request`] will be passed to a [`Task`] when [`Task::run`]
 /// is called
@@ -26,12 +23,12 @@ pub type RequestCallback<T> = fn(RequestPtr<T>, Ptr<()>, T);
 /// The lifetime of the request must last until the callback is executed
 pub struct Request<T> {
 	/// The user data to be passed back.
-	pub arg: Ptr<()>,
-	pub callback: RequestCallback<T>
+	arg: Ptr<()>,
+	callback: Complete<T>
 }
 
 impl<T> Request<T> {
-	pub const unsafe fn new(arg: Ptr<()>, callback: RequestCallback<T>) -> Self {
+	pub const fn new(arg: Ptr<()>, callback: Complete<T>) -> Self {
 		Self { arg, callback }
 	}
 
@@ -39,8 +36,7 @@ impl<T> Request<T> {
 		self.arg = arg;
 	}
 
-	#[inline(always)]
-	pub fn complete(request: Ptr<Self>, value: T) {
+	pub unsafe fn complete(request: Ptr<Self>, value: T) {
 		(request.callback)(request, request.arg, value);
 	}
 }
@@ -73,15 +69,6 @@ pub unsafe trait Cancel {
 	unsafe fn run(self) -> Result<()>;
 }
 
-pub struct NoOpCancel;
-
-unsafe impl Cancel for NoOpCancel {
-	#[inline(always)]
-	unsafe fn run(self) -> Result<()> {
-		Ok(())
-	}
-}
-
 #[must_use]
 pub enum Progress<Output, C: Cancel> {
 	/// The operation is pending
@@ -103,5 +90,5 @@ pub unsafe trait Task {
 	/// to the task stays alive until the callback is called.
 	///
 	/// Which pointers need to stay valid will depend on the implementation
-	unsafe fn run(self, request: RequestPtr<Self::Output>) -> Progress<Self::Output, Self::Cancel>;
+	unsafe fn run(self, request: ReqPtr<Self::Output>) -> Progress<Self::Output, Self::Cancel>;
 }

@@ -4,47 +4,31 @@ use super::*;
 use crate::closure::Closure;
 
 /// The environment for a async worker
-pub trait PerContextRuntime: Global + 'static {
+pub trait Environment: Pin + 'static {
 	/// Gets the context associated with the worker
-	fn context(&mut self) -> &mut Context;
+	fn context(&self) -> &Context;
 
 	/// Returns the PerContextRuntime that owns the Context
-	fn from_context(context: &mut Context) -> &mut Self;
+	fn from_context(context: &Context) -> Ptr<Self>;
 
 	/// Creates a new environment for a new worker
-	fn new_from_worker(&mut self, worker: Handle<Worker>) -> Self;
+	unsafe fn clone(&self, worker: Ptr<Worker>) -> Self;
 
-	fn executor(&mut self) -> Handle<Executor>;
+	fn executor(&self) -> Ptr<Executor>;
 
 	/// Manually suspend the worker
-	unsafe fn suspend(&mut self) {
+	unsafe fn suspend(&self) {
 		self.context().suspend()
 	}
 
 	/// Manually resume the worker
-	unsafe fn resume(&mut self) {
+	unsafe fn resume(&self) {
 		self.context().resume()
 	}
 }
 
-pub struct Context {
-	worker: Handle<Worker>,
-
-	runtime_type: u32,
-	guards: u32,
-	interrupted: bool,
-
-	cancel: Option<Closure<MutPtr<()>, (), Result<()>>>
-}
-
-fn run_cancel<C: Cancel>(arg: MutPtr<()>, _: ()) -> Result<()> {
-	let cancel = arg.cast::<Option<C>>().as_mut();
-
-	unsafe { cancel.take().unwrap().run() }
-}
-
-fn type_for<R: PerContextRuntime>() -> u32 {
-	let id: i128 = unsafe { transmute(TypeId::of::<R>()) };
+fn type_for<R: Environment>() -> u32 {
+	let id: u128 = unsafe { transmute(TypeId::of::<R>()) };
 
 	/* comparing i128s is generally slower than u32
 	 *
@@ -54,87 +38,86 @@ fn type_for<R: PerContextRuntime>() -> u32 {
 	id as u32
 }
 
+fn run_cancel<C: Cancel>(arg: MutPtr<()>, _: ()) -> Result<()> {
+	unsafe {
+		let cancel = arg.cast::<Option<C>>().as_mut();
+
+		cancel.take().unwrap().run()
+	}
+}
+
+struct ContextInner {
+	guards: u32,
+	interrupted: bool,
+	cancel: Option<Closure<MutPtr<()>, (), Result<()>>>
+}
+
+pub struct Context {
+	worker: Ptr<Worker>,
+	environment: u32,
+	inner: UnsafeCell<ContextInner>
+}
+
 impl Context {
-	pub fn new<R: PerContextRuntime>(worker: Handle<Worker>) -> Self {
+	pub fn new<R: Environment>(worker: Ptr<Worker>) -> Self {
 		Self {
 			worker,
-
-			guards: 0,
-			runtime_type: type_for::<R>(),
-			interrupted: false,
-
-			cancel: None
-		}
-	}
-
-	#[inline(always)]
-	fn suspend(&mut self) {
-		unsafe {
-			self.worker.suspend();
-		}
-	}
-
-	#[inline(always)]
-	fn resume(&mut self) {
-		unsafe {
-			self.worker.resume();
+			environment: type_for::<R>(),
+			inner: UnsafeCell::new(ContextInner { guards: 0, interrupted: false, cancel: None })
 		}
 	}
 
 	/// Runs async task `T`
 	#[inline(always)]
-	pub fn run<T: Task>(&mut self, task: T) -> T::Output {
+	pub fn run<T: Task>(&self, task: T) -> T::Output {
 		task.run(self.into())
 	}
 
+	unsafe fn suspend(&self) {
+		self.worker.suspend();
+	}
+
+	unsafe fn resume(&self) {
+		self.worker.resume();
+	}
+
 	/// Runs and blocks on sync task `T`
-	#[inline(always)]
-	pub fn block_on<T: SyncTask>(&mut self, task: T) -> T::Output {
-		let handle = Handle::from(self);
+	pub fn block_on<T: SyncTask>(&self, task: T) -> T::Output {
+		unsafe {
+			sync_block_on(
+				|cancel| {
+					/* avoid allocations by storing on the stack */
+					let mut cancel = Some(cancel);
+					let canceller =
+						Closure::new(MutPtr::from(&mut cancel).as_unit(), run_cancel::<T::Cancel>);
 
-		sync_block_on(
-			|cancel| {
-				/* hold variably sized cancel on the stack,
-				 * in an option so that we know it's been
-				 * moved when `interrupt` is called
-				 *
-				 * we have to use a specialized function for each
-				 * cancel type
-				 *
-				 * this removes the need to allocate memory
-				 * to box this cancel, potentially causing
-				 * significant slowdowns
-				 */
-				let mut cancel = Some(cancel);
-				let this = handle.clone().as_mut();
-
-				this.cancel = Some(Closure::new(
-					MutPtr::from(&mut cancel).as_unit(),
-					run_cancel::<T::Cancel>
-				));
-
-				this.suspend();
-				this.cancel = None;
-			},
-			|| {
-				handle.clone().resume();
-			},
-			task
-		)
+					self.inner.as_mut().cancel = Some(canceller);
+					self.suspend();
+					self.inner.as_mut().cancel = None;
+				},
+				|| {
+					self.resume();
+				},
+				task
+			)
+		}
 	}
 
 	/// Interrupt the current running task
-	pub fn interrupt(&mut self) -> Result<()> {
-		self.interrupted = true;
+	pub fn interrupt(&self) -> Result<()> {
+		let inner = self.inner.as_mut();
 
-		if self.guards == 0 {
-			self.interrupted = true;
-			self.cancel
+		inner.interrupted = true;
+
+		if inner.guards == 0 {
+			inner.interrupted = true;
+			inner
+				.cancel
 				.take()
 				.expect("Task interrupted while active")
 				.call(())
 		} else {
-			Err(Error::new(ErrorKind::Other, "Interrupt queued"))
+			Err(Error::simple(ErrorKind::Other, "Interrupt pending"))
 		}
 	}
 
@@ -142,39 +125,37 @@ impl Context {
 	///
 	/// In the presence of interrupt guards, this returns false
 	pub fn interrupted(&self) -> bool {
-		if likely(self.guards == 0) {
-			self.interrupted
-		} else {
-			false
-		}
+		let inner = self.inner.as_ref();
+
+		inner.guards == 0 && inner.interrupted
 	}
 
 	/// Clears any interrupts or pending interrupts (due to guards) on the
 	/// current worker
-	pub fn clear_interrupt(&mut self) {
-		self.interrupted = false;
+	pub fn clear_interrupt(&self) {
+		let inner = self.inner.as_mut();
+
+		inner.interrupted = false;
 	}
 
-	#[inline(always)]
-	pub fn get_runtime<R: PerContextRuntime>(&mut self) -> Option<Handle<R>> {
-		if self.runtime_type == type_for::<R>() {
-			Some(R::from_context(self).into())
+	pub fn get_runtime<R: Environment>(&self) -> Option<Ptr<R>> {
+		if self.environment == type_for::<R>() {
+			Some(R::from_context(self.into()))
 		} else {
 			None
 		}
 	}
 }
 
-impl Global for Context {}
-
 pub struct InterruptGuard {
-	context: Handle<Context>
+	context: Ptr<Context>
 }
 
 impl InterruptGuard {
-	fn update_guard_count(&mut self, rel: i32) {
-		self.context.guards = self
-			.context
+	unsafe fn update_guard_count(&self, rel: i32) {
+		let inner = self.context.inner.as_mut();
+
+		inner.guards = inner
 			.guards
 			.checked_add_signed(rel)
 			/* this can never happen unless memory corruption. useful to check anyway as it
@@ -182,16 +163,17 @@ impl InterruptGuard {
 			.expect("Interrupt guards count overflowed");
 	}
 
-	pub(super) fn new(context: Handle<Context>) -> Self {
-		let mut this = Self { context };
+	pub(super) unsafe fn new(context: Ptr<Context>) -> Self {
+		let this = Self { context };
 
-		this.update_guard_count(1);
+		unsafe { this.update_guard_count(1) };
+
 		this
 	}
 }
 
 impl Drop for InterruptGuard {
 	fn drop(&mut self) {
-		self.update_guard_count(-1);
+		unsafe { self.update_guard_count(-1) };
 	}
 }

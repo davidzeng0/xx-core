@@ -1,44 +1,39 @@
-use std::str::from_utf8;
+use std::{
+	io::{IoSlice, IoSliceMut, SeekFrom},
+	mem::{take, transmute},
+	str::from_utf8
+};
 
-pub mod read;
+mod read;
 pub use read::*;
-pub mod write;
+mod write;
 pub use write::*;
-pub mod seek;
+mod seek;
 pub use seek::*;
-pub mod split;
+mod split;
 pub use split::*;
 
-pub mod buf_reader;
+mod buf_reader;
 pub use buf_reader::*;
-pub mod buf_writer;
+mod buf_writer;
 pub use buf_writer::*;
 
 pub mod typed;
-
-use std::{
-	io::{IoSlice, IoSliceMut, SeekFrom},
-	marker::PhantomData
-};
 
 use super::*;
 use crate::{coroutines::*, error::*, opt::hint::*};
 
 pub const DEFAULT_BUFFER_SIZE: usize = 16384;
 
-pub fn invalid_utf8_error() -> Error {
-	Error::new(ErrorKind::InvalidData, "invalid UTF-8 found in stream")
-}
-
 pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	if from_utf8(buf).is_ok() {
 		Ok(())
 	} else {
-		Err(invalid_utf8_error())
+		Err(Core::InvalidUtf8.new())
 	}
 }
 
-#[async_fn]
+#[asynchronous]
 pub async fn check_interrupt_if_zero(len: usize) -> Result<usize> {
 	if unlikely(len == 0) {
 		check_interrupt().await?;
@@ -47,16 +42,60 @@ pub async fn check_interrupt_if_zero(len: usize) -> Result<usize> {
 	Ok(len)
 }
 
-pub fn unexpected_end_of_stream() -> Error {
-	Error::new(ErrorKind::UnexpectedEof, "Unexpected end of stream")
+pub fn advance_slices(bufs: &mut &mut [IoSlice<'_>], mut amount: usize) {
+	let mut remove = 0;
+
+	for buf in bufs.iter_mut() {
+		if amount >= buf.len() {
+			amount -= buf.len();
+			remove += 1;
+		} else {
+			let left = &buf[amount..];
+
+			*buf = IoSlice::new(unsafe { transmute(left) });
+
+			break;
+		}
+	}
+
+	*bufs = &mut take(bufs)[remove..];
+
+	debug_assert_eq!(amount, 0);
 }
 
-#[async_fn]
+pub fn advance_slices_mut(bufs: &mut &mut [IoSliceMut<'_>], mut amount: usize) {
+	let mut remove = 0;
+
+	for buf in bufs.iter_mut() {
+		if amount >= buf.len() {
+			amount -= buf.len();
+			remove += 1;
+		} else {
+			let left = &mut buf[amount..];
+
+			*buf = IoSliceMut::new(unsafe { transmute(left) });
+
+			break;
+		}
+	}
+
+	*bufs = &mut take(bufs)[remove..];
+
+	debug_assert_eq!(amount, 0);
+}
+
+pub fn length_check(buf: &[u8], len: usize) -> usize {
+	debug_assert!(len <= buf.len());
+
+	len
+}
+
+#[asynchronous]
 pub async fn short_io_error_unless_interrupt() -> Error {
 	check_interrupt()
 		.await
 		.err()
-		.unwrap_or_else(|| unexpected_end_of_stream())
+		.unwrap_or_else(|| Core::UnexpectedEof.new())
 }
 
 #[macro_export]
@@ -79,7 +118,7 @@ macro_rules! read_into {
 	};
 }
 
-pub(crate) use read_into;
+pub use read_into;
 
 #[macro_export]
 macro_rules! write_from {
@@ -90,4 +129,4 @@ macro_rules! write_from {
 	};
 }
 
-pub(crate) use write_from;
+pub use write_from;

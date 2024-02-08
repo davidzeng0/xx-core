@@ -8,34 +8,34 @@ pub struct BufWriter<W: Write> {
 	pos: usize
 }
 
-#[async_fn]
+#[asynchronous]
 impl<W: Write> BufWriter<W> {
 	/// Discard all buffered data
-	#[inline]
 	fn discard(&mut self) {
 		self.pos = 0;
 		self.buf.clear();
 	}
 
 	/// Reads from `buf` into our internal buffer
-	#[inline]
+	///
+	/// Safety: buf len must not exceed spare capacity
 	unsafe fn write_buffered(&mut self, buf: &[u8]) -> usize {
 		self.buf.extend_from_slice(buf);
 
 		buf.len()
 	}
 
-	#[inline(never)]
 	/// Flushes the buffer without flushing downstream
+	#[inline(never)]
 	async fn flush_buf(&mut self) -> Result<()> {
 		while self.pos < self.buf.len() {
-			let wrote = self.inner.write(&self.buf[self.pos..]).await?;
+			let buf = &self.buf[self.pos..];
+			let wrote = self.inner.write(buf).await?;
+
+			length_check(buf, wrote);
 
 			if unlikely(wrote == 0) {
-				return Err(Error::new(
-					ErrorKind::WriteZero,
-					"Write returned EOF while flushing"
-				));
+				return Err(Core::WriteZero.new());
 			}
 
 			self.pos += wrote;
@@ -55,7 +55,7 @@ impl<W: Write> BufWriter<W> {
 	}
 
 	pub fn from_parts(inner: W, buf: Vec<u8>, pos: usize) -> Self {
-		assert!(pos <= buf.len());
+		debug_assert!(pos <= buf.len());
 
 		BufWriter { inner, buf, pos }
 	}
@@ -70,9 +70,8 @@ impl<W: Write> BufWriter<W> {
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl<W: Write> Write for BufWriter<W> {
-	#[inline]
 	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		if self.buf.spare_capacity_mut().len() >= buf.len() {
 			return Ok(unsafe { self.write_buffered(buf) });
@@ -80,10 +79,10 @@ impl<W: Write> Write for BufWriter<W> {
 
 		self.flush_buf().await?;
 
-		if buf.len() < self.buf.capacity() {
-			Ok(unsafe { self.write_buffered(buf) })
-		} else {
+		if buf.len() >= self.buf.capacity() {
 			self.inner.write(buf).await
+		} else {
+			Ok(unsafe { self.write_buffered(buf) })
 		}
 	}
 
@@ -93,25 +92,18 @@ impl<W: Write> Write for BufWriter<W> {
 	/// to finish flushing
 	async fn flush(&mut self) -> Result<()> {
 		self.flush_buf().await?;
-		self.inner.flush().await?;
-
-		Ok(())
+		self.inner.flush().await
 	}
 }
 
-#[async_fn]
+#[asynchronous]
 impl<W: Write + Seek> BufWriter<W> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
-		let pos = rel.checked_add_unsigned(self.buf.len() as u64).unwrap();
+		let pos = rel
+			.checked_add_unsigned(self.buf.len() as u64)
+			.ok_or_else(|| Core::Overflow.new())?;
 
-		/*
-		 * as long as the seek is within our written buffer,
-		 * we can fask seek
-		 *
-		 * otherwise, we'd have to fill in the blanks with the
-		 * underlying stream data, if we want to seek within the entire buffer
-		 */
-		if pos >= 0 && pos as usize <= self.buf.len() {
+		if pos >= 0 && (self.pos..=self.buf.len()).contains(&(pos as usize)) {
 			self.buf.truncate(pos as usize);
 			self.stream_position().await
 		} else {
@@ -136,7 +128,7 @@ impl<W: Write + Seek> BufWriter<W> {
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl<W: Write + Seek> Seek for BufWriter<W> {
 	fn stream_len_fast(&self) -> bool {
 		self.inner.stream_len_fast()
@@ -154,7 +146,8 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 		let pos = self.inner.stream_position().await?;
 		let buffered = self.buf.len();
 
-		Ok(pos.checked_add(buffered as u64).unwrap())
+		pos.checked_add(buffered as u64)
+			.ok_or_else(|| Core::Overflow.new())
 	}
 
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
@@ -170,7 +163,11 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 
 			SeekFrom::End(pos) => {
 				if self.stream_len_fast() && self.stream_position_fast() {
-					let new_pos = self.stream_len().await?.checked_add_signed(pos).unwrap();
+					let new_pos = self
+						.stream_len()
+						.await?
+						.checked_add_signed(pos)
+						.ok_or_else(|| Core::Overflow.new())?;
 
 					self.seek_abs(new_pos, seek).await
 				} else {

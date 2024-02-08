@@ -6,7 +6,7 @@ mod test {
 	};
 
 	fn start(arg: Ptr<()>) {
-		let mut data = arg.cast::<(Fiber, Fiber, i32)>().make_mut();
+		let mut data = arg.cast::<(Fiber, Fiber, i32)>().cast_mut();
 		let mut val = 0;
 
 		loop {
@@ -21,7 +21,7 @@ mod test {
 
 	#[test]
 	fn test_fibers() {
-		let mut data = (Fiber::main(), unsafe { Fiber::new() }, 0i32);
+		let mut data = (Fiber::main(), Fiber::new(), 0i32);
 		let mut data = MutPtr::from(&mut data);
 
 		unsafe {

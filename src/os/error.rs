@@ -1,425 +1,426 @@
 use std::io;
 
-use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
+use super::*;
 use crate::error::{Error, ErrorKind, Result};
 
-#[repr(i32)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
-pub enum ErrorCodes {
-	/// Unknown error
-	Unknown = -1,
+define_enum! {
+	#[repr(i32)]
+	pub enum OsError {
+		/// Unknown error
+		Unknown = -1,
 
-	/// Success
-	Ok      = 0,
+		/// Success
+		Ok      = 0,
 
-	/// Operation not permitted
-	Perm,
+		/// Operation not permitted
+		Perm,
 
-	/// No such file or directory
-	NoEnt,
+		/// No such file or directory
+		NoEnt,
 
-	/// No such process
-	Srch,
+		/// No such process
+		Srch,
 
-	/// Interrupted system call
-	Intr,
+		/// Interrupted system call
+		Intr,
 
-	/// I/O error
-	Io,
+		/// I/O error
+		Io,
 
-	/// No such device or address
-	Nxio,
+		/// No such device or address
+		Nxio,
 
-	/// Argument list too long
-	TooBig,
+		/// Argument list too long
+		TooBig,
 
-	/// Exec format error
-	NoExec,
+		/// Exec format error
+		NoExec,
 
-	/// Bad file number
-	BadF,
+		/// Bad file number
+		BadF,
 
-	/// No child processes
-	Child,
+		/// No child processes
+		Child,
 
-	/// Try again
-	Again,
+		/// Try again
+		Again,
 
-	/// Out of memory
-	NoMem,
+		/// Out of memory
+		NoMem,
 
-	/// Permission denied
-	Acces,
+		/// Permission denied
+		Acces,
 
-	/// Bad address
-	Fault,
+		/// Bad address
+		Fault,
 
-	/// Block device required
-	NotBlk,
+		/// Block device required
+		NotBlk,
 
-	/// Device or resource busy
-	Busy,
+		/// Device or resource busy
+		Busy,
 
-	/// File exists
-	Exist,
+		/// File exists
+		Exist,
 
-	/// Cross-device link
-	XDev,
+		/// Cross-device link
+		XDev,
 
-	/// No such device
-	NoDev,
+		/// No such device
+		NoDev,
 
-	/// Not a directory
-	NotDir,
+		/// Not a directory
+		NotDir,
 
-	/// Is a directory
-	IsDir,
+		/// Is a directory
+		IsDir,
 
-	/// Invalid argument
-	Inval,
+		/// Invalid argument
+		Inval,
 
-	/// File table overflow
-	NFile,
+		/// File table overflow
+		NFile,
 
-	/// Too many open files
-	MFile,
+		/// Too many open files
+		MFile,
 
-	/// Not a typewriter
-	NotTy,
+		/// Not a typewriter
+		NotTy,
 
-	/// Text file busy
-	TxtBsy,
+		/// Text file busy
+		TxtBsy,
 
-	/// File too large
-	FBig,
+		/// File too large
+		FBig,
 
-	/// No space left on device
-	NoSpc,
+		/// No space left on device
+		NoSpc,
 
-	/// Illegal seek
-	SPipe,
+		/// Illegal seek
+		SPipe,
 
-	/// Read-only file system
-	Rofs,
+		/// Read-only file system
+		Rofs,
 
-	/// Too many links
-	MLink,
+		/// Too many links
+		MLink,
 
-	/// Broken pipe
-	Pipe,
+		/// Broken pipe
+		Pipe,
 
-	/// Math argument out of domain of func
-	Dom,
+		/// Math argument out of domain of func
+		Dom,
 
-	/// Math result not representable
-	Range,
+		/// Math result not representable
+		Range,
 
-	/// Dead lock
-	Deadlock,
+		/// Dead lock
+		Deadlock,
 
-	/// File name too long
-	NameTooLong,
+		/// File name too long
+		NameTooLong,
 
-	/// No record locks available
-	NoLck,
+		/// No record locks available
+		NoLck,
 
-	/// Invalid system call number
-	NoSys,
+		/// Invalid system call number
+		NoSys,
 
-	/// Directory not empty
-	NotEmpty,
+		/// Directory not empty
+		NotEmpty,
 
-	/// Too many symbolic links encountered
-	Loop,
+		/// Too many symbolic links encountered
+		Loop,
 
-	/// No message of desired type
-	Nomsg   = 42,
+		/// No message of desired type
+		Nomsg   = 42,
 
-	/// Identifier removed
-	Idrm,
+		/// Identifier removed
+		Idrm,
 
-	/// Channel number out of range
-	Chrng,
+		/// Channel number out of range
+		Chrng,
 
-	/// Level 2 not synchronized
-	L2nsync,
+		/// Level 2 not synchronized
+		L2nsync,
 
-	/// Level 3 halted
-	L3hlt,
+		/// Level 3 halted
+		L3hlt,
 
-	/// Level 3 reset
-	L3rst,
+		/// Level 3 reset
+		L3rst,
 
-	/// Link number out of range
-	Lnrng,
+		/// Link number out of range
+		Lnrng,
 
-	/// Protocol driver not attached
-	Unatch,
+		/// Protocol driver not attached
+		Unatch,
 
-	/// No CSI structure available
-	Nocsi,
+		/// No CSI structure available
+		Nocsi,
 
-	/// Level 2 halted
-	L2hlt,
+		/// Level 2 halted
+		L2hlt,
 
-	/// Invalid exchange
-	Bade,
+		/// Invalid exchange
+		Bade,
 
-	/// Invalid request descriptor
-	Badr,
+		/// Invalid request descriptor
+		Badr,
 
-	/// Exchange full
-	Xfull,
+		/// Exchange full
+		Xfull,
 
-	/// No anode
-	Noano,
+		/// No anode
+		Noano,
 
-	/// Invalid request code
-	Badrqc,
+		/// Invalid request code
+		Badrqc,
 
-	/// Invalid slot
-	Badslt,
+		/// Invalid slot
+		Badslt,
 
-	/// Bad font file format
-	BFont   = 59,
+		/// Bad font file format
+		BFont   = 59,
 
-	/// Device not a stream
-	NoStr,
+		/// Device not a stream
+		NoStr,
 
-	/// No data available
-	NoData,
+		/// No data available
+		NoData,
 
-	/// Timer expired
-	Time,
+		/// Timer expired
+		Time,
 
-	/// Out of streams resources
-	NoSr,
+		/// Out of streams resources
+		NoSr,
 
-	/// Machine is not on the network
-	NoNet,
+		/// Machine is not on the network
+		NoNet,
 
-	/// Package not installed
-	NoPkg,
+		/// Package not installed
+		NoPkg,
 
-	/// Object is remote
-	Remote,
+		/// Object is remote
+		Remote,
 
-	/// Link has been severed
-	NoLink,
+		/// Link has been severed
+		NoLink,
 
-	/// Advertise error
-	Adv,
+		/// Advertise error
+		Adv,
 
-	/// Srmount error
-	Srmnt,
+		/// Srmount error
+		Srmnt,
 
-	/// Communication error on send
-	Comm,
+		/// Communication error on send
+		Comm,
 
-	/// Protocol error
-	Proto,
+		/// Protocol error
+		Proto,
 
-	/// Multihop attempted
-	Multihop,
+		/// Multihop attempted
+		Multihop,
 
-	/// RFS specific error
-	Dotdot,
+		/// RFS specific error
+		Dotdot,
 
-	/// Not a data message
-	BadMsg,
+		/// Not a data message
+		BadMsg,
 
-	/// Value too large for defined data type
-	Overflow,
+		/// Value too large for defined data type
+		Overflow,
 
-	/// Name not unique on network
-	NotUniq,
+		/// Name not unique on network
+		NotUniq,
 
-	/// File descriptor in bad state
-	BadFd,
+		/// File descriptor in bad state
+		BadFd,
 
-	/// Remote address changed
-	RemChg,
+		/// Remote address changed
+		RemChg,
 
-	/// Can not access a needed shared library
-	LibAcc,
+		/// Can not access a needed shared library
+		LibAcc,
 
-	/// Accessing a corrupted shared library
-	LibBad,
+		/// Accessing a corrupted shared library
+		LibBad,
 
-	/// .lib section in a.out corrupted
-	LibScn,
+		/// .lib section in a.out corrupted
+		LibScn,
 
-	/// Attempting to link in too many shared libraries
-	LibMax,
+		/// Attempting to link in too many shared libraries
+		LibMax,
 
-	/// Cannot exec a shared library directly
-	LibExec,
+		/// Cannot exec a shared library directly
+		LibExec,
 
-	/// Illegal byte sequence
-	IlSeq,
+		/// Illegal byte sequence
+		IlSeq,
 
-	/// Interrupted system call should be restarted
-	Restart,
+		/// Interrupted system call should be restarted
+		Restart,
 
-	/// Streams pipe error
-	StrPipe,
+		/// Streams pipe error
+		StrPipe,
 
-	/// Too many users
-	Users,
+		/// Too many users
+		Users,
 
-	/// Socket operation on non-socket
-	NotSock,
+		/// Socket operation on non-socket
+		NotSock,
 
-	/// Destination address required
-	DestAddrReq,
+		/// Destination address required
+		DestAddrReq,
 
-	/// Message too long
-	MsgSize,
+		/// Message too long
+		MsgSize,
 
-	/// Protocol wrong type for socket
-	Prototype,
+		/// Protocol wrong type for socket
+		Prototype,
 
-	/// Protocol not available
-	NoProtoOpt,
+		/// Protocol not available
+		NoProtoOpt,
 
-	/// Protocol not supported
-	ProtoNoSupport,
+		/// Protocol not supported
+		ProtoNoSupport,
 
-	/// Socket type not supported
-	SocktNoSupport,
+		/// Socket type not supported
+		SocktNoSupport,
 
-	/// Operation not supported on transport endpoint
-	OpNotSupp,
+		/// Operation not supported on transport endpoint
+		OpNotSupp,
 
-	/// Protocol family not supported
-	PfNoSupport,
+		/// Protocol family not supported
+		PfNoSupport,
 
-	/// Address family not supported by protocol
-	AfNoSupport,
+		/// Address family not supported by protocol
+		AfNoSupport,
 
-	/// Address already in use
-	AddrInUse,
+		/// Address already in use
+		AddrInUse,
 
-	/// Cannot assign requested address
-	AddrNotAvail,
+		/// Cannot assign requested address
+		AddrNotAvail,
 
-	/// Network is down
-	NetDown,
+		/// Network is down
+		NetDown,
 
-	/// Network is unreachable
-	NetUnreach,
+		/// Network is unreachable
+		NetUnreach,
 
-	/// Network dropped connection because of reset
-	NetReset,
+		/// Network dropped connection because of reset
+		NetReset,
 
-	/// Software caused connection abort
-	ConnAborted,
+		/// Software caused connection abort
+		ConnAborted,
 
-	/// Connection reset by peer
-	ConnReset,
+		/// Connection reset by peer
+		ConnReset,
 
-	/// No buffer space available
-	NoBufs,
+		/// No buffer space available
+		NoBufs,
 
-	/// Transport endpoint is already connected
-	IsConn,
+		/// Transport endpoint is already connected
+		IsConn,
 
-	/// Transport endpoint is not connected
-	NotConn,
+		/// Transport endpoint is not connected
+		NotConn,
 
-	/// Cannot send after transport endpoint shutdown
-	Shutdown,
+		/// Cannot send after transport endpoint shutdown
+		Shutdown,
 
-	/// Too many references: cannot splice
-	TooManyRefs,
+		/// Too many references: cannot splice
+		TooManyRefs,
 
-	/// Connection timed out
-	TimedOut,
+		/// Connection timed out
+		TimedOut,
 
-	/// Connection refused
-	ConnRefused,
+		/// Connection refused
+		ConnRefused,
 
-	/// Host is down
-	HostDown,
+		/// Host is down
+		HostDown,
 
-	/// No route to host
-	HostUnreach,
+		/// No route to host
+		HostUnreach,
 
-	/// Operation already in progress
-	Already,
+		/// Operation already in progress
+		Already,
 
-	/// Operation now in progress
-	InProgress,
+		/// Operation now in progress
+		InProgress,
 
-	/// Stale file handle
-	Stale,
+		/// Stale file handle
+		Stale,
 
-	/// Structure needs cleaning
-	UClean,
+		/// Structure needs cleaning
+		UClean,
 
-	/// Not a XENIX named type file
-	NotNam,
+		/// Not a XENIX named type file
+		NotNam,
 
-	/// No XENIX semaphores available
-	NAvail,
+		/// No XENIX semaphores available
+		NAvail,
 
-	/// Is a named type file
-	IsNam,
+		/// Is a named type file
+		IsNam,
 
-	/// Remote I/O error
-	RemoteIo,
+		/// Remote I/O error
+		RemoteIo,
 
-	/// Quota exceeded
-	DQuot,
+		/// Quota exceeded
+		DQuot,
 
-	/// No medium found
-	NoMedium,
+		/// No medium found
+		NoMedium,
 
-	/// Wrong medium type
-	MediumType,
+		/// Wrong medium type
+		MediumType,
 
-	/// Operation Canceled
-	Canceled,
+		/// Operation Canceled
+		Canceled,
 
-	/// Required key not available
-	NoKey,
+		/// Required key not available
+		NoKey,
 
-	/// Key has expired
-	KeyExpired,
+		/// Key has expired
+		KeyExpired,
 
-	/// Key has been revoked
-	KeyRevoked,
+		/// Key has been revoked
+		KeyRevoked,
 
-	/// Key was rejected by service
-	KeyRejected,
+		/// Key was rejected by service
+		KeyRejected,
 
-	/// Owner died
-	OwnerDead,
+		/// Owner died
+		OwnerDead,
 
-	/// State not recoverable
-	NotRecoverable,
+		/// State not recoverable
+		NotRecoverable,
 
-	/// Operation not possible due to RF-kill
-	RfKill,
+		/// Operation not possible due to RF-kill
+		RfKill,
 
-	/// Memory page has hardware error
-	HwPoison
+		/// Memory page has hardware error
+		HwPoison
+	}
 }
 
 #[allow(non_upper_case_globals)]
-impl ErrorCodes {
-	pub const DeadLk: ErrorCodes = ErrorCodes::Deadlock;
-	pub const WouldBlock: ErrorCodes = ErrorCodes::Again;
+impl OsError {
+	pub const DeadLk: OsError = OsError::Deadlock;
+	pub const WouldBlock: OsError = OsError::Again;
 
-	pub fn from_raw_os_error(value: i32) -> Self {
+	pub fn from_raw(value: i32) -> Self {
 		Self::from_i32(value).unwrap_or(Self::Unknown)
 	}
 
 	pub fn kind(&self) -> ErrorKind {
 		match self {
-			ErrorCodes::Canceled => ErrorKind::Interrupted,
+			OsError::Canceled => ErrorKind::Interrupted,
 			_ => io::Error::from_raw_os_error(*self as i32).kind()
 		}
 	}

@@ -1,6 +1,6 @@
 use super::*;
 
-#[async_trait]
+#[asynchronous]
 pub trait Seek {
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64>;
 
@@ -42,15 +42,17 @@ pub trait Seek {
 
 	/// Rewind `amount` bytes on the stream
 	async fn rewind_exact(&mut self, amount: u64) -> Result<u64> {
-		let amount: i64 = amount.try_into().unwrap();
+		let amount: i64 = amount.try_into().map_err(|_| Core::Overflow.new())?;
 
 		self.seek(SeekFrom::Current(-amount)).await
 	}
 
 	/// Skips `amount` bytes from the stream
 	async fn skip_exact(&mut self, amount: u64) -> Result<u64> {
-		self.seek(SeekFrom::Current(amount.try_into().unwrap()))
-			.await
+		self.seek(SeekFrom::Current(
+			amount.try_into().map_err(|_| Core::Overflow.new())?
+		))
+		.await
 	}
 }
 

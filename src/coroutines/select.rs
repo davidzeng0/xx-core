@@ -1,7 +1,6 @@
-use std::result;
+use std::{mem::replace, result};
 
 use super::*;
-use crate::warn;
 
 pub enum Select<O1, O2> {
 	First(O1, Option<O2>),
@@ -71,24 +70,18 @@ impl<O1, O2> Select<Option<O1>, Option<O2>> {
 }
 
 struct SelectData<T1: SyncTask, T2: SyncTask> {
-	task_1: Option<T1>,
-	req_1: Request<T1::Output>,
-	cancel_1: Option<T1::Cancel>,
-	result_1: Option<T1::Output>,
-
-	task_2: Option<T2>,
-	req_2: Request<T2::Output>,
-	cancel_2: Option<T2::Cancel>,
-	result_2: Option<T2::Output>,
-
-	request: RequestPtr<Select<T1::Output, T2::Output>>,
-	sync_done: bool
+	handle_1: TaskHandle<T1>,
+	handle_2: TaskHandle<T2>,
+	request: ReqPtr<Select<T1::Output, T2::Output>>,
+	sync_done: UnsafeCell<bool>
 }
 
 impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
-	fn complete(&mut self, is_first: bool) {
-		if self.sync_done {
-			self.sync_done = false;
+	unsafe fn complete(&mut self, is_first: bool) {
+		let sync_done = self.sync_done.as_mut();
+
+		if *sync_done {
+			*sync_done = false;
 
 			return;
 		}
@@ -97,72 +90,57 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 		 * Safety: cannot access `self` once a cancel or a complete is called,
 		 * as it may be freed by the callee
 		 */
-		if self.result_1.is_none() || self.result_2.is_none() {
-			let result = unsafe {
+		if !self.handle_1.done() || !self.handle_2.done() {
+			unsafe {
 				if is_first {
-					self.cancel_2.take().map(|cancel| cancel.run())
+					self.handle_2.try_cancel()
 				} else {
-					self.cancel_1.take().map(|cancel| cancel.run())
+					self.handle_1.try_cancel()
 				}
 			};
-
-			if let Some(result) = result {
-				if result.is_err() {
-					warn!("Cancel returned an {:?}", result);
-				}
-			}
 		} else {
 			/* reverse order, because this is the last task to complete */
 			let result = if is_first {
-				Select::Second(self.result_2.take().unwrap(), self.result_1.take())
+				Select::Second(self.handle_2.take_result(), self.handle_1.result.take())
 			} else {
-				Select::First(self.result_1.take().unwrap(), self.result_2.take())
+				Select::First(self.handle_1.take_result(), self.handle_2.result.take())
 			};
 
 			Request::complete(self.request, result);
 		}
 	}
 
-	fn complete_1(_: RequestPtr<T1::Output>, arg: Ptr<()>, value: T1::Output) {
-		let this = arg.cast::<Self>().make_mut().as_mut();
+	unsafe fn complete_1(_: ReqPtr<T1::Output>, arg: Ptr<()>, value: T1::Output) {
+		let this = arg.cast::<Self>().cast_mut().as_mut();
 
-		this.result_1 = Some(value);
+		this.handle_1.complete(value);
 		this.complete(true);
 	}
 
-	fn complete_2(_: RequestPtr<T2::Output>, arg: Ptr<()>, value: T2::Output) {
-		let this = arg.cast::<Self>().make_mut().as_mut();
+	unsafe fn complete_2(_: ReqPtr<T2::Output>, arg: Ptr<()>, value: T2::Output) {
+		let this = arg.cast::<Self>().cast_mut().as_mut();
 
-		this.result_2 = Some(value);
+		this.handle_2.complete(value);
 		this.complete(false);
 	}
 
 	fn new(task_1: T1, task_2: T2) -> Self {
-		unsafe {
-			/* request args are assigned once pinned */
-			Self {
-				task_1: Some(task_1),
-				req_1: Request::new(Ptr::null(), Self::complete_1),
-				cancel_1: None,
-				result_1: None,
-
-				task_2: Some(task_2),
-				req_2: Request::new(Ptr::null(), Self::complete_2),
-				cancel_2: None,
-				result_2: None,
-
-				request: Ptr::null(),
-				sync_done: false
-			}
+		/* request args are assigned once pinned */
+		Self {
+			handle_1: TaskHandle::new(task_1, Self::complete_1),
+			handle_2: TaskHandle::new(task_2, Self::complete_2),
+			request: Ptr::null(),
+			sync_done: UnsafeCell::new(false)
 		}
 	}
 
-	#[sync_task]
-	fn select(&mut self) -> Select<T1::Output, T2::Output> {
-		fn cancel(self: &mut Self) -> Result<()> {
+	#[future]
+	unsafe fn select(&mut self) -> Select<T1::Output, T2::Output> {
+		fn cancel(mut self: MutPtr<Self>) -> Result<()> {
 			let (cancel_1, cancel_2) = unsafe {
-				/* must prevent cancel 1 from calling cancel 2 in callback */
-				let cancel = (self.cancel_1.take(), self.cancel_2.take());
+				/* must prevent cancel 1 from calling cancel 2 in callback, as we need to
+				 * access it */
+				let cancel = (self.handle_1.cancel.take(), self.handle_2.cancel.take());
 
 				(
 					cancel.0.map(|cancel| cancel.run()),
@@ -181,60 +159,49 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 			Ok(())
 		}
 
-		unsafe {
-			match self.task_1.take().unwrap().run(Ptr::from(&self.req_1)) {
-				Progress::Pending(cancel) => self.cancel_1 = Some(cancel),
-				Progress::Done(value) => return Progress::Done(Select::First(value, None))
-			}
+		unsafe { self.handle_1.run() };
 
-			match self.task_2.take().unwrap().run(Ptr::from(&self.req_2)) {
-				Progress::Pending(cancel) => self.cancel_2 = Some(cancel),
-				Progress::Done(value) => {
-					self.result_2 = Some(value);
-					self.sync_done = true;
-
-					let result = self.cancel_1.take().unwrap().run();
-
-					if result.is_err() {
-						warn!("Cancel returned an {:?}", result);
-					}
-
-					if !self.sync_done {
-						return Progress::Done(Select::Second(
-							self.result_2.take().unwrap(),
-							self.result_1.take()
-						));
-					}
-
-					self.sync_done = false;
-				}
-			}
-
-			self.request = request;
-
-			return Progress::Pending(cancel(self, request));
+		if self.handle_1.done() {
+			return Progress::Done(Select::First(self.handle_1.take_result(), None));
 		}
+
+		unsafe { self.handle_2.run() };
+
+		if !self.handle_2.done() {
+			*self.sync_done.as_mut() = true;
+
+			let _ = unsafe { self.handle_1.try_cancel().unwrap() };
+
+			if !replace(self.sync_done.as_mut(), false) {
+				return Progress::Done(Select::Second(
+					self.handle_2.take_result(),
+					self.handle_1.result.take()
+				));
+			}
+		}
+
+		self.request = request;
+
+		Progress::Pending(cancel(self.into(), request))
 	}
 }
 
-impl<T1: SyncTask, T2: SyncTask> Global for SelectData<T1, T2> {
-	unsafe fn pinned(&mut self) {
-		let mut this = MutPtr::from(self);
-		let arg = this.as_unit().into();
+unsafe impl<T1: SyncTask, T2: SyncTask> Pin for SelectData<T1, T2> {
+	unsafe fn pin(&mut self) {
+		let arg = self.into();
 
-		this.req_1.set_arg(arg);
-		this.req_2.set_arg(arg);
+		self.handle_1.set_arg(arg);
+		self.handle_2.set_arg(arg);
 	}
 }
 
-#[async_fn]
-pub async unsafe fn select_sync<T1: SyncTask, T2: SyncTask>(
+#[asynchronous]
+pub async unsafe fn select_sync_task<T1: SyncTask, T2: SyncTask>(
 	task_1: T1, task_2: T2
 ) -> Select<T1::Output, T2::Output> {
-	let data = SelectData::new(task_1, task_2);
+	let mut data = SelectData::new(task_1, task_2);
 
-	pin_local_mut!(data);
-	block_on(data.select()).await
+	block_on(data.pin_local().select()).await
 }
 
 /// Races two tasks A and B and waits
@@ -245,13 +212,13 @@ pub async unsafe fn select_sync<T1: SyncTask, T2: SyncTask>(
 ///
 /// Because a task may not be cancelled in time, the second parameter
 /// in `Select` may contain the result from the cancelled task
-#[async_fn]
-pub async unsafe fn select<R: PerContextRuntime, T1: Task, T2: Task>(
-	runtime: Handle<R>, task_1: T1, task_2: T2
+#[asynchronous]
+pub async unsafe fn select<R: Environment, T1: Task, T2: Task>(
+	runtime: Ptr<R>, task_1: T1, task_2: T2
 ) -> Select<T1::Output, T2::Output> {
-	select_sync(
-		spawn_sync_with_runtime(runtime, task_1),
-		spawn_sync_with_runtime(runtime, task_2)
+	select_sync_task(
+		spawn_future_with_env(runtime, task_1),
+		spawn_future_with_env(runtime, task_2)
 	)
 	.await
 }

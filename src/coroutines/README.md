@@ -30,12 +30,12 @@ Switching fibers has been optimized to only incur a cost of about ~1.0-1.5 non-i
 ## Example
 
 ```rust
-#[async_fn]
+#[asynchronous]
 async fn async_add(a: i32, b: i32) -> i32 {
 	a + b
 }
 
-#[async_fn]
+#[asynchronous]
 #[inline(never)]
 async fn async_main() {
 	let a = 2;

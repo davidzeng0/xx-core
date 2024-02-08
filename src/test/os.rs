@@ -2,14 +2,14 @@
 mod test {
 	use std::{
 		mem::transmute,
-		os::fd::{BorrowedFd, FromRawFd, OwnedFd}
+		os::fd::{FromRawFd, OwnedFd}
 	};
 
 	use enumflags2::make_bitflags;
 
 	use crate::{
 		os::{
-			error::{result_from_int, result_from_ptr, ErrorCodes},
+			error::{result_from_int, result_from_ptr, OsError},
 			mman::{MemoryAdvice, MemoryFlag, MemoryMap, MemoryProtection, MemoryType},
 			poll::{poll, PollFd, PollFlag},
 			resource::{get_rlimit, Resource},
@@ -39,18 +39,16 @@ mod test {
 
 	#[test]
 	fn test_poll() {
-		let mut fds = [PollFd::new(
-			unsafe { BorrowedFd::borrow_raw(1) },
-			make_bitflags!(PollFlag::{Out})
-		)];
+		let mut fds = [PollFd::new(1, make_bitflags!(PollFlag::{Out}))];
 
-		poll(&mut fds, 0).unwrap();
+		unsafe { poll(&mut fds, 0).unwrap() };
+
 		assert!(fds[0].returned_events().intersects(PollFlag::Out));
 	}
 
 	#[test]
 	fn test_mmap() {
-		let mut mem = MemoryMap::map(
+		let mem = MemoryMap::map(
 			Some(Ptr::from_int_addr(0x12345678000)),
 			16384,
 			MemoryProtection::Read as u32,
@@ -83,6 +81,6 @@ mod test {
 		result_from_ptr(-4096).unwrap();
 		result_from_ptr(isize::MIN).unwrap();
 		result_from_ptr(isize::MAX).unwrap();
-		assert_eq!(ErrorCodes::from_raw_os_error(2), ErrorCodes::NoEnt);
+		assert_eq!(OsError::from_raw(2), OsError::NoEnt);
 	}
 }

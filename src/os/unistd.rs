@@ -1,10 +1,7 @@
-use std::os::fd::{IntoRawFd, OwnedFd};
-
-use super::syscall::{syscall_int, SyscallNumber::*};
-use crate::error::Result;
+use super::*;
 
 pub fn close(fd: OwnedFd) -> Result<()> {
-	unsafe { syscall_int!(Close, fd.into_raw_fd())? };
+	unsafe { syscall_int!(Close, fd)? };
 
 	Ok(())
 }

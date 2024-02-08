@@ -22,7 +22,7 @@ impl Pool {
 		Self { data: Mutex::new(Data::new()) }
 	}
 
-	pub fn new_fiber(&mut self, start: Start) -> Fiber {
+	pub fn new_fiber(&self, start: Start) -> Fiber {
 		let mut data = self.data.lock().unwrap();
 
 		data.active = data.active.checked_add(1).unwrap();
@@ -50,7 +50,7 @@ impl Pool {
 		count * RATIO / 100 + 16
 	}
 
-	pub fn exit_fiber(&mut self, fiber: Fiber) {
+	pub fn exit_fiber(&self, fiber: Fiber) {
 		let mut data = self.data.lock().unwrap();
 
 		data.active = data.active.checked_sub(1).unwrap();

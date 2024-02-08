@@ -1,99 +1,99 @@
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use super::{poll::PollFlag, *};
 
-use enumflags2::bitflags;
+define_enum! {
+	#[bitflags]
+	#[repr(u32)]
+	pub enum EventPollFlag {
+		/// There is data to read.
+		In            = PollFlag::In as u32,
 
-use super::{poll::PollFlag, syscall::*};
-use crate::{error::Result, pointer::MutPtr};
+		/// There is urgent data to read.
+		Priority      = PollFlag::Priority as u32,
 
-#[bitflags]
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum EPollFlag {
-	/// There is data to read.
-	In            = PollFlag::In as u32,
+		/// Writing now will not block.
+		Out           = PollFlag::Out as u32,
 
-	/// There is urgent data to read.
-	Priority      = PollFlag::Priority as u32,
+		/// Error condition.
+		Error         = PollFlag::Error as u32,
 
-	/// Writing now will not block.
-	Out           = PollFlag::Out as u32,
+		/// Hung up.
+		HangUp        = PollFlag::HangUp as u32,
 
-	/// Error condition.
-	Error         = PollFlag::Error as u32,
+		/// Normal data may be read.
+		ReadNorm      = PollFlag::ReadNorm as u32,
 
-	/// Hung up.
-	HangUp        = PollFlag::HangUp as u32,
+		/// Priority data may be read.
+		ReadBand      = PollFlag::ReadBand as u32,
 
-	/// Normal data may be read.
-	ReadNorm      = PollFlag::ReadNorm as u32,
+		/// Writing now will not block.
+		WriteNorm     = PollFlag::WriteNorm as u32,
 
-	/// Priority data may be read.
-	ReadBand      = PollFlag::ReadBand as u32,
+		/// Priority data may be written.
+		WriteBand     = PollFlag::WriteBand as u32,
 
-	/// Writing now will not block.
-	WriteNorm     = PollFlag::WriteNorm as u32,
+		Message       = PollFlag::Message as u32,
 
-	/// Priority data may be written.
-	WriteBand     = PollFlag::WriteBand as u32,
+		RdHangUp      = PollFlag::RdHangUp as u32,
 
-	Message       = PollFlag::Message as u32,
-
-	RdHangUp      = PollFlag::RdHangUp as u32,
-
-	Exclusive     = 1 << 28,
-	WakeUp        = 1 << 29,
-	OneShot       = 1 << 30,
-	EdgeTriggered = 1 << 31
-}
-
-#[repr(u32)]
-pub enum CtlOp {
-	/// Add a file descriptor to the interface.
-	Add = 1,
-
-	/// Remove a file descriptor from the interface.
-	Del,
-
-	/// Change file descriptor epoll_event structure.
-	Mod
-}
-
-#[repr(C, packed)]
-pub struct EpollEvent {
-	pub events: u32,
-	pub data: u64
-}
-
-pub fn create(flags: u32) -> Result<OwnedFd> {
-	unsafe {
-		let fd = syscall_int!(EpollCreate1, flags)?;
-
-		Ok(OwnedFd::from_raw_fd(fd as i32))
+		Exclusive     = 1 << 28,
+		WakeUp        = 1 << 29,
+		OneShot       = 1 << 30,
+		EdgeTriggered = 1 << 31
 	}
 }
 
-pub fn ctl(ep: BorrowedFd<'_>, op: CtlOp, fd: i32, event: &mut EpollEvent) -> Result<()> {
-	unsafe {
-		syscall_int!(
-			EpollCtl,
-			ep.as_raw_fd(),
-			op,
-			fd,
-			MutPtr::from(event).int_addr()
-		)?;
+define_enum! {
+	#[repr(u32)]
+	pub enum CtlOp {
+		/// Add a file descriptor to the interface.
+		Add = 1,
+
+		/// Remove a file descriptor from the interface.
+		Del,
+
+		/// Change file descriptor epoll_event structure.
+		Mod
+	}
+}
+
+define_struct! {
+	pub struct EpollEvent {
+		pub events: u32,
+		pub data: u64
+	}
+}
+
+pub struct EventPoll {
+	fd: OwnedFd
+}
+
+impl EventPoll {
+	pub fn create(flags: u32) -> Result<Self> {
+		unsafe {
+			let fd = syscall_int!(EpollCreate1, flags)?;
+
+			Ok(Self { fd: OwnedFd::from_raw_fd(fd as i32) })
+		}
 	}
 
-	Ok(())
-}
+	pub fn ctl(&self, op: CtlOp, fd: BorrowedFd<'_>, event: &mut EpollEvent) -> Result<()> {
+		unsafe { syscall_int!(EpollCtl, self.fd.as_fd(), op as u32, fd, event)? };
 
-pub unsafe fn wait_raw(
-	ep: BorrowedFd<'_>, events: MutPtr<EpollEvent>, count: usize, timeout: i32
-) -> Result<u32> {
-	let events = syscall_int!(EpollWait, ep.as_raw_fd(), events.int_addr(), count, timeout)?;
+		Ok(())
+	}
 
-	Ok(events as u32)
-}
+	pub fn wait(&self, events: &mut [EpollEvent], timeout: i32) -> Result<u32> {
+		let events = unsafe {
+			syscall_int!(
+				EpollPwait,
+				self.fd.as_fd(),
+				events.as_mut_ptr(),
+				events.len(),
+				timeout,
+				Ptr::<()>::null()
+			)?
+		};
 
-pub fn wait(ep: BorrowedFd<'_>, event: &mut [EpollEvent], timeout: i32) -> Result<u32> {
-	unsafe { wait_raw(ep, event.as_mut_ptr().into(), event.len(), timeout) }
+		Ok(events as u32)
+	}
 }
