@@ -167,7 +167,7 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 
 		unsafe { self.handle_2.run() };
 
-		if !self.handle_2.done() {
+		if self.handle_2.done() {
 			*self.sync_done.as_mut() = true;
 
 			let _ = unsafe { self.handle_1.try_cancel().unwrap() };

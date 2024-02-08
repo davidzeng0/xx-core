@@ -11,7 +11,7 @@ impl NodeInner {
 	}
 
 	fn linked(&self) -> bool {
-		self.prev.is_null()
+		!self.prev.is_null()
 	}
 
 	unsafe fn set_next(&mut self, next: &mut Self) {
