@@ -76,7 +76,7 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 		Self { ptr: self.ptr.wrapping_sub(count) }
 	}
 
-	pub fn null() -> Self
+	pub const fn null() -> Self
 	where
 		T: Sized
 	{

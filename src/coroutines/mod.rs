@@ -72,6 +72,10 @@ impl<T: SyncTask> TaskHandle<T> {
 		Some(result)
 	}
 
+	pub unsafe fn cancel(&mut self) -> Result<()> {
+		self.try_cancel().unwrap()
+	}
+
 	pub fn set_arg<A>(&mut self, arg: Ptr<A>) {
 		self.request.set_arg(arg.as_unit())
 	}

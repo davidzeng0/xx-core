@@ -4,7 +4,7 @@ use super::*;
 use crate::closure::Closure;
 
 /// The environment for a async worker
-pub trait Environment: Pin + 'static {
+pub trait Environment: 'static {
 	/// Gets the context associated with the worker
 	fn context(&self) -> &Context;
 
