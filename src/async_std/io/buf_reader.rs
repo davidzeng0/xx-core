@@ -118,7 +118,7 @@ impl<R: Read> Read for BufReader<R> {
 			return self.inner.read(buf).await;
 		}
 
-		if unlikely(self.fill_buf().await? != 0) {
+		if unlikely(self.fill_buf().await? == 0) {
 			return Ok(0);
 		}
 
