@@ -25,10 +25,25 @@ impl VisitMut for RemoveRefMut {
 	}
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Default)]
+pub enum LifetimeAnnotations {
+	#[default]
+	Auto,
+	Closure,
+	None
+}
+
 #[derive(Default)]
 struct AddLifetime {
+	annotations: LifetimeAnnotations,
 	explicit_lifetimes: Vec<Lifetime>,
 	added_lifetimes: Vec<Lifetime>
+}
+
+impl AddLifetime {
+	pub fn new(annotations: LifetimeAnnotations) -> Self {
+		Self { annotations, ..Default::default() }
+	}
 }
 
 fn closure_lifetime() -> TokenStream {
@@ -40,15 +55,19 @@ fn closure_lifetime_parsed<R: Parse>() -> R {
 }
 
 impl AddLifetime {
-	fn create_lifetime(&mut self, span: Span) -> Lifetime {
-		let lifetime = Lifetime::new(
-			&format!("{}_{}", closure_lifetime(), self.added_lifetimes.len() + 1),
-			span
-		);
+	fn next_lifetime(&mut self, span: Span) -> Lifetime {
+		if self.annotations == LifetimeAnnotations::Closure {
+			closure_lifetime_parsed()
+		} else {
+			let lifetime = Lifetime::new(
+				&format!("{}_{}", closure_lifetime(), self.added_lifetimes.len() + 1),
+				span
+			);
 
-		self.added_lifetimes.push(lifetime.clone());
+			self.added_lifetimes.push(lifetime.clone());
 
-		lifetime
+			lifetime
+		}
 	}
 }
 
@@ -65,14 +84,14 @@ impl VisitMut for AddLifetime {
 			_ => visit_type_reference_mut(self, reference)
 		}
 
-		reference.lifetime = Some(self.create_lifetime(reference.span()));
+		reference.lifetime = Some(self.next_lifetime(reference.span()));
 	}
 
 	fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
 		visit_lifetime_mut(self, lifetime);
 
 		if lifetime.ident == "_" {
-			*lifetime = self.create_lifetime(lifetime.span());
+			*lifetime = self.next_lifetime(lifetime.span());
 		} else {
 			self.explicit_lifetimes.push(lifetime.clone());
 		}
@@ -83,7 +102,7 @@ impl VisitMut for AddLifetime {
 			if let Some(lifetime) = &reference.1 {
 				self.explicit_lifetimes.push(lifetime.clone());
 			} else {
-				let lifetime = self.create_lifetime(reference.0.span());
+				let lifetime = self.next_lifetime(reference.0.span());
 
 				reference.1 = Some(lifetime.clone());
 			}
@@ -96,7 +115,7 @@ impl VisitMut for AddLifetime {
 
 	fn visit_type_impl_trait_mut(&mut self, impl_trait: &mut TypeImplTrait) {
 		impl_trait.bounds.push(TypeParamBound::Lifetime(
-			self.create_lifetime(impl_trait.span())
+			self.next_lifetime(impl_trait.span())
 		));
 	}
 }
@@ -130,9 +149,17 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&Generics>) ->
 	quote! { #addl_bounds }
 }
 
-fn add_lifetime(sig: &mut Signature, env_generics: &Option<&Generics>) -> TokenStream {
-	let mut op = AddLifetime::default();
+fn add_lifetime(
+	sig: &mut Signature, env_generics: &Option<&Generics>, annotations: LifetimeAnnotations,
+	workaround: bool
+) -> TokenStream {
+	if annotations == LifetimeAnnotations::None {
+		return quote! {};
+	}
+
+	let mut op = AddLifetime::new(annotations);
 	let closure_lifetime = closure_lifetime();
+	let has_receiver = sig.receiver().is_some();
 
 	for arg in &mut sig.inputs {
 		op.visit_fn_arg_mut(arg);
@@ -196,6 +223,12 @@ fn add_lifetime(sig: &mut Signature, env_generics: &Option<&Generics>) -> TokenS
 		}
 	}
 
+	if has_receiver {
+		clause
+			.predicates
+			.push(parse_quote! { Self: #closure_lifetime });
+	}
+
 	sig.generics.params.push(closure_lifetime_parsed());
 
 	for lifetime in &op.added_lifetimes {
@@ -213,7 +246,7 @@ fn add_lifetime(sig: &mut Signature, env_generics: &Option<&Generics>) -> TokenS
 	}
 
 	// TODO: remove when trait aliases are stable
-	if true {
+	if workaround {
 		let lifetimes = lifetime_workaround(sig, env_generics);
 
 		quote! { + #lifetimes }
@@ -266,9 +299,10 @@ fn make_args(args_pat_type: Vec<(TokenStream, TokenStream)>) -> (TokenStream, To
 
 pub fn make_explicit_closure(
 	func: &mut Function, args: Vec<(TokenStream, TokenStream)>, closure_type: TokenStream,
-	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream
+	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream,
+	annotations: LifetimeAnnotations
 ) -> Result<TokenStream> {
-	add_lifetime(&mut func.sig, &func.env_generics);
+	add_lifetime(&mut func.sig, &func.env_generics, annotations, false);
 
 	let (types, construct, destruct) = build_tuples(&mut func.sig.inputs, |arg| match arg {
 		FnArg::Typed(pat) => {
@@ -336,9 +370,15 @@ pub enum OpaqueClosureType<T> {
 pub fn make_opaque_closure(
 	func: &mut Function, args: Vec<(TokenStream, TokenStream)>,
 	transform_return: impl Fn(TokenStream) -> TokenStream,
-	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>
+	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>,
+	workaround: bool
 ) -> Result<TokenStream> {
-	let addl_lifetimes = add_lifetime(&mut func.sig, &func.env_generics);
+	let addl_lifetimes = add_lifetime(
+		&mut func.sig,
+		&func.env_generics,
+		LifetimeAnnotations::Auto,
+		workaround
+	);
 
 	let (args, args_types) = make_args(args);
 

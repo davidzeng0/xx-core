@@ -57,7 +57,7 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 	#[future]
 	unsafe fn spawn(executor: Ptr<Executor>, entry: Entry, task: T) -> T::Output {
 		fn cancel(context: Ptr<Context>) -> Result<()> {
-			context.interrupt()
+			context.as_ref().interrupt()
 		}
 
 		let mut data = Self {
@@ -70,16 +70,16 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 		};
 
 		let start = Start::new(Self::worker_start, MutPtr::from(&mut data).as_unit().into());
-		let pass = (entry, task, executor.new_worker(start));
+		let pass = (entry, task, executor.as_ref().new_worker(start));
 		let worker = &mut data.move_to_worker.insert(pass).2;
 
-		unsafe { executor.start(worker.into()) };
+		unsafe { executor.as_ref().start(worker.into()) };
 
 		if data.result.is_some() {
 			Progress::Done(data.result.take().unwrap())
 		} else {
 			/* worker suspended without producing a result (aka completing) */
-			*data.is_async.as_mut() = true;
+			*data.is_async.as_ref().as_mut() = true;
 
 			Progress::Pending(cancel(data.context, request))
 		}
@@ -114,7 +114,7 @@ pub unsafe fn spawn_future_with_env<R: Environment, T: Task>(
 		Ok(())
 	}
 
-	let executor = runtime.executor();
+	let executor = runtime.as_ref().executor();
 	let new_runtime = |worker| runtime.as_ref().clone(worker);
 
 	spawn_future(executor, new_runtime, task).run(request)
@@ -132,7 +132,7 @@ type AsyncSpawn<Output> = Rc<UnsafeCell<Spawn<Output>>>;
 impl<Output> Spawn<Output> {
 	unsafe fn spawn_complete(_: ReqPtr<Output>, arg: Ptr<()>, output: Output) {
 		let cell = arg.cast::<UnsafeCell<Spawn<Output>>>().cast_mut();
-		let this = (*cell).as_mut();
+		let this = cell.as_ref().as_mut();
 
 		if this.waiter.is_null() {
 			this.output = Some(output);
@@ -206,7 +206,7 @@ impl<Output> JoinHandle<Output> {
 	}
 
 	pub fn is_done(&self) -> bool {
-		self.task.get().output.is_some()
+		self.task.as_mut().output.is_some()
 	}
 
 	/// Signals the task to cancel, without waiting for the result

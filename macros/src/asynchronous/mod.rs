@@ -37,18 +37,29 @@ impl VisitMut for ReplaceAwait {
 	}
 }
 
+struct HasAsync(bool);
+
+impl VisitMut for HasAsync {
+	fn visit_item_mut(&mut self, _: &mut Item) {}
+
+	fn visit_expr_closure_mut(&mut self, _: &mut ExprClosure) {}
+
+	fn visit_expr_async_mut(&mut self, _: &mut ExprAsync) {
+		self.0 = true;
+	}
+}
+
 struct ReplaceAsync;
 
-impl VisitMut for ReplaceAsync {
-	fn visit_expr_mut(&mut self, expr: &mut Expr) {
-		visit_expr_mut(self, expr);
-
-		let Expr::Async(inner) = expr else { return };
+impl ReplaceAsync {
+	fn transform_async(&mut self, inner: &mut ExprAsync) -> Expr {
 		let (attrs, capture, block) = (&inner.attrs, &inner.capture, &mut inner.block);
+
+		self.visit_block_mut(block);
 
 		ReplaceAwait {}.visit_block_mut(block);
 
-		*expr = parse_quote! {
+		parse_quote! {
 			#(#attrs)*
 			{
 				::xx_core::coroutines::closure::OpaqueClosure::new(
@@ -58,6 +69,51 @@ impl VisitMut for ReplaceAsync {
 					>| #block
 				)
 			}
+		}
+	}
+
+	fn transform_closure(&mut self, closure: &mut ExprClosure) -> Expr {
+		let asyncness = closure.asyncness.take();
+		let body = closure.body.as_mut();
+		let mut has_async = HasAsync(false);
+
+		has_async.visit_expr_mut(body);
+
+		if asyncness.is_some() {
+			*body = parse_quote! { #asyncness move { #body } };
+		} else if !has_async.0 {
+			return Expr::Closure(closure.clone());
+		}
+
+		self.visit_expr_mut(body);
+
+		let template_idents: Vec<_> = (0..closure.inputs.len())
+			.map(|idx| format_ident!("Arg{}", idx))
+			.collect();
+
+		parse_quote! {
+			({
+				fn coerce_lifetime<'closure, F, #(#template_idents,)* Output>(closure: F) -> F
+				where
+					F: Fn(#(#template_idents),*) -> Output,
+					#(#template_idents: 'closure,)*
+					Output: 'closure
+				{
+					closure
+				}
+
+				coerce_lifetime
+			})(#closure)
+		}
+	}
+}
+
+impl VisitMut for ReplaceAsync {
+	fn visit_expr_mut(&mut self, expr: &mut Expr) {
+		*expr = match expr {
+			Expr::Async(inner) => self.transform_async(inner),
+			Expr::Closure(inner) => self.transform_closure(inner),
+			_ => return visit_expr_mut(self, expr)
 		};
 	}
 }
@@ -66,7 +122,8 @@ impl VisitMut for ReplaceAsync {
 enum ClosureType {
 	None,
 	Opaque,
-	Explicit
+	Explicit,
+	OpaqueTrait
 }
 
 fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()> {
@@ -98,7 +155,7 @@ fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()>
 			});
 		}
 
-		ClosureType::Opaque => {
+		ClosureType::Opaque | ClosureType::OpaqueTrait => {
 			make_opaque_closure(
 				func,
 				vec![(
@@ -111,7 +168,8 @@ fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()>
 						quote! { ::xx_core::coroutines::Task<Output = #rt> },
 						quote! { ::xx_core::coroutines::closure::OpaqueClosure }
 					)
-				})
+				}),
+				closure_type == ClosureType::Opaque
 			)?;
 		}
 
@@ -125,7 +183,8 @@ fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()>
 				quote! { ::xx_core::coroutines::closure::Closure },
 				|capture, ret| {
 					quote! { ::xx_core::coroutines::closure::Closure<#capture, #ret> }
-				}
+				},
+				LifetimeAnnotations::Auto
 			)?;
 		}
 	}

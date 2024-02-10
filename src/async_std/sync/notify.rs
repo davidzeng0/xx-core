@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use super::*;
 use crate::{
-	container::zero_alloc::linked_list::*, container_of, coroutines::block_on, error::*,
-	pointer::*, task::*
+	container::zero_alloc::linked_list::*, container_of, coroutines::block_on, error::*, future::*,
+	pointer::*
 };
 
 struct Waiter {
@@ -27,7 +27,7 @@ impl Notify {
 
 	#[future]
 	fn wait_notified(&self, waiter: &mut Waiter) -> Result<()> {
-		fn cancel(waiter: Ptr<Waiter>) -> Result<()> {
+		fn cancel(waiter: &Waiter) -> Result<()> {
 			unsafe {
 				waiter.node.unlink();
 
@@ -41,7 +41,7 @@ impl Notify {
 
 		unsafe { self.waiters.append(&waiter.node) };
 
-		Progress::Pending(cancel(waiter.into(), request))
+		Progress::Pending(cancel(waiter, request))
 	}
 
 	pub async fn notified(&self) -> Result<()> {
@@ -59,11 +59,11 @@ impl Notify {
 
 			while !list.empty() {
 				let head = list.head();
-				let waiter = container_of!(head, Waiter, node);
+				let waiter = container_of!(head, Waiter:node);
 
-				head.unlink();
+				head.as_ref().unlink();
 
-				Request::complete(waiter.request, Ok(()));
+				Request::complete(waiter.as_ref().request, Ok(()));
 			}
 		}
 	}

@@ -32,8 +32,8 @@ impl NodeInner {
 	}
 
 	unsafe fn unlink(&mut self) {
-		self.prev.next = self.next;
-		self.next.prev = self.prev;
+		self.prev.as_mut().next = self.next;
+		self.next.as_mut().prev = self.prev;
 		*self = Self::new();
 	}
 }
@@ -82,19 +82,19 @@ impl LinkedList {
 	pub fn empty(&self) -> bool {
 		let base = self.base.inner.get();
 
-		base == base.next
+		base == unsafe { base.as_ref().next }
 	}
 
 	pub fn head(&self) -> Ptr<Node> {
 		let base = self.base.inner.get();
 
-		base.next.cast_const().cast()
+		unsafe { base.as_ref().next }.cast_const().cast()
 	}
 
 	pub fn tail(&self) -> Ptr<Node> {
 		let base = self.base.inner.get();
 
-		base.prev.cast_const().cast()
+		unsafe { base.as_ref().prev }.cast_const().cast()
 	}
 
 	pub unsafe fn append(&self, node: &Node) {

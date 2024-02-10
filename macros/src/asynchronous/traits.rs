@@ -61,7 +61,7 @@ fn trait_ext(item: &ItemTrait) -> Result<TokenStream> {
 					sig: &mut func.sig,
 					block: func.default.as_mut()
 				},
-				ClosureType::Explicit
+				ClosureType::OpaqueTrait
 			)?;
 		}
 

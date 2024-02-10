@@ -74,14 +74,14 @@ impl Context {
 	}
 
 	unsafe fn suspend(&self) {
-		self.worker.suspend();
+		self.worker.as_ref().suspend();
 	}
 
 	unsafe fn resume(&self) {
-		self.worker.resume();
+		self.worker.as_ref().resume();
 	}
 
-	/// Runs and blocks on sync task `T`
+	/// Runs and blocks on future `T`
 	pub fn block_on<T: SyncTask>(&self, task: T) -> T::Output {
 		unsafe {
 			sync_block_on(
@@ -153,7 +153,7 @@ pub struct InterruptGuard {
 
 impl InterruptGuard {
 	unsafe fn update_guard_count(&self, rel: i32) {
-		let inner = self.context.inner.as_mut();
+		let inner = self.context.as_ref().inner.as_mut();
 
 		inner.guards = inner
 			.guards

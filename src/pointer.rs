@@ -2,7 +2,6 @@ use std::{
 	cell,
 	cmp::Ordering,
 	fmt::{self, Debug, Formatter, Result},
-	mem::MaybeUninit,
 	ops::{Deref, DerefMut},
 	ptr::null_mut,
 	rc::Rc
@@ -27,13 +26,6 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 
 	pub fn as_ptr(self) -> *const T {
 		self.ptr
-	}
-
-	pub unsafe fn as_uninit(self) -> Pointer<MaybeUninit<T>, MUTABLE>
-	where
-		T: Sized
-	{
-		self.cast()
 	}
 
 	pub fn cast<T2>(self) -> Pointer<T2, MUTABLE> {
@@ -129,6 +121,7 @@ impl<T> MutPtr<T> {
 		inner = self.ptr;
 
 		pub unsafe fn write_bytes(self, val: u8, count: usize);
+		pub unsafe fn write(self, value: T);
 	}
 }
 
@@ -140,20 +133,6 @@ impl<T: ?Sized, const MUTABLE: bool> Clone for Pointer<T, MUTABLE> {
 }
 
 impl<T: ?Sized, const MUTABLE: bool> Copy for Pointer<T, MUTABLE> {}
-
-impl<T: ?Sized, const MUTABLE: bool> Deref for Pointer<T, MUTABLE> {
-	type Target = T;
-
-	fn deref(&self) -> &T {
-		unsafe { self.as_ref() }
-	}
-}
-
-impl<T: ?Sized> DerefMut for MutPtr<T> {
-	fn deref_mut(&mut self) -> &mut T {
-		unsafe { self.as_mut() }
-	}
-}
 
 impl<T: ?Sized> From<MutPtr<T>> for Ptr<T> {
 	fn from(value: MutPtr<T>) -> Self {

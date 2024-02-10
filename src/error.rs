@@ -6,10 +6,12 @@ use std::{
 	result
 };
 
-use crate::{macros::compact_error, os::error::OsError};
+use crate::os::error::OsError;
 
 pub type Result<T> = result::Result<T, Error>;
 pub use io::ErrorKind;
+
+pub use crate::macros::compact_error;
 
 pub enum ErrorMessage {
 	Static(&'static str),
@@ -272,12 +274,14 @@ impl error::Error for Error {
 
 #[compact_error]
 pub enum Core {
-	Interrupted   = (ErrorKind::Interrupted, "Interrupted"),
-	WriteZero     = (ErrorKind::WriteZero, "Write EOF"),
-	InvalidUtf8   = (ErrorKind::InvalidData, "Invalid UTF-8 found in stream"),
-	UnexpectedEof = (ErrorKind::UnexpectedEof, "Unexpected EOF"),
-	Overflow      = (ErrorKind::InvalidInput, "Integer overflow"),
-	OutOfMemory   = (ErrorKind::OutOfMemory, "Out of memory"),
-	NoAddresses   = (ErrorKind::InvalidInput, "Address list empty"),
-	InvalidCStr   = (ErrorKind::InvalidInput, "Path string contained a null byte")
+	Interrupted    = (ErrorKind::Interrupted, "Interrupted"),
+	WriteZero      = (ErrorKind::WriteZero, "Write EOF"),
+	InvalidUtf8    = (ErrorKind::InvalidData, "Invalid UTF-8 found in stream"),
+	UnexpectedEof  = (ErrorKind::UnexpectedEof, "Unexpected EOF"),
+	Overflow       = (ErrorKind::InvalidInput, "Integer overflow"),
+	OutOfMemory    = (ErrorKind::OutOfMemory, "Out of memory"),
+	NoAddresses    = (ErrorKind::InvalidInput, "Address list empty"),
+	InvalidCStr    = (ErrorKind::InvalidInput, "Path string contained a null byte"),
+	ConnectTimeout = (ErrorKind::TimedOut, "Connection timed out"),
+	Shutdown       = (ErrorKind::NotConnected, "Endpoint is shutdown")
 }

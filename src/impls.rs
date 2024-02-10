@@ -38,3 +38,51 @@ uint_impl!(u32, i32);
 uint_impl!(u64, i64);
 uint_impl!(u128, i128);
 uint_impl!(usize, isize);
+
+macro_rules! async_fns_type {
+	([$($type: ident)?][$($indexes: literal)*] $args: literal $($remaining: literal)*) => {
+		paste::paste! {
+			pub trait [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>:
+				[<Fn $($type)?>]($([<Arg $indexes>]),*) ->
+				<Self as [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>>::Future
+			{
+				type Future: crate::coroutines::Task<Output = <Self as [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>>::Output>;
+				type Output;
+			}
+
+			impl<T, F, $([<Arg $indexes>]),*> [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*> for T
+			where
+				T: [<Fn $($type)?>]($([<Arg $indexes>]),*) -> F,
+				F: crate::coroutines::Task,
+			{
+				type Future = F;
+				type Output = F::Output;
+			}
+		}
+
+		async_fns_type! {
+			[$($type)?][$($indexes)* $args] $($remaining)*
+		}
+	};
+
+	([$($type: ident)?][$($indexes: literal)*]) => {};
+}
+
+macro_rules! async_fns {
+	($($args: literal)*) => {
+		async_fns_type! {
+			[Once][] $($args)+
+		}
+
+		async_fns_type! {
+			[Mut][] $($args)+
+		}
+
+		async_fns_type! {
+			[][] $($args)+
+		}
+	};
+}
+
+/* https://docs.rs/async_fn_traits */
+async_fns!(0 1 2 3 4 5 6 7 8 9 10 11 12);

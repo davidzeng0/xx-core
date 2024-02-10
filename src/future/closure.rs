@@ -1,11 +1,11 @@
 use super::*;
 use crate::closure::*;
 
-pub type TaskClosureWrap<Inner, Output, Cancel> =
+pub type FutureClosure<Inner, Output, Cancel> =
 	OpaqueClosure<Inner, ReqPtr<Output>, Progress<Output, Cancel>>;
 
-unsafe impl<Inner: FnOnce(ReqPtr<Output>) -> Progress<Output, C>, Output, C: Cancel> Task
-	for TaskClosureWrap<Inner, Output, C>
+unsafe impl<Inner: FnOnce(ReqPtr<Output>) -> Progress<Output, C>, Output, C: Cancel> Future
+	for FutureClosure<Inner, Output, C>
 {
 	type Cancel = C;
 	type Output = Output;

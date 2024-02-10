@@ -5,49 +5,40 @@ mod test {
 		pointer::{MutPtr, Ptr}
 	};
 
-	fn start(arg: Ptr<()>) {
-		let mut data = arg.cast::<(Fiber, Fiber, i32)>().cast_mut();
+	unsafe fn start(arg: Ptr<()>) {
 		let mut val = 0;
+		let data = arg.cast::<(Fiber, Fiber, i32)>().cast_mut();
 
 		loop {
-			data.2 += val;
+			data.as_mut().2 += val;
 			val += 1;
-
-			unsafe {
-				data.as_mut().1.switch(&mut data.0);
-			}
+			data.as_mut().1.switch(&mut data.as_mut().0);
 		}
 	}
 
 	#[test]
 	fn test_fibers() {
-		let mut data = (Fiber::main(), Fiber::new(), 0i32);
-		let mut data = MutPtr::from(&mut data);
-
 		unsafe {
+			let mut data = (Fiber::main(), Fiber::new(), 0i32);
+			let data = MutPtr::from(&mut data);
+
 			data.as_mut()
 				.1
 				.set_start(Start::new(start, data.as_unit().into()));
-		}
 
-		let mut val = 0;
+			let mut val = 0;
 
-		for i in 0..10 {
-			unsafe {
-				data.as_mut().0.switch(&mut data.1);
+			for i in 0..10 {
+				data.as_mut().0.switch(&mut data.as_mut().1);
+				val += i;
+
+				assert_eq!(data.as_ref().2, val);
 			}
 
-			val += i;
+			data.as_mut().2 = 0;
+			data.as_mut().0.switch(&mut data.as_mut().1);
 
-			assert_eq!(data.2, val);
+			assert_eq!(data.as_mut().2, 10);
 		}
-
-		data.2 = 0;
-
-		unsafe {
-			data.as_mut().0.switch(&mut data.1);
-		}
-
-		assert_eq!(data.2, 10);
 	}
 }

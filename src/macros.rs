@@ -8,7 +8,8 @@ macro_rules! offset_of {
 
 		require_unsafe();
 
-		let field = &$crate::pointer::Ptr::<$type>::null().$field;
+		let invalid = $crate::pointer::Ptr::<$type>::null().as_ref();
+		let field = ::std::ptr::addr_of!(invalid.$field);
 
 		$crate::pointer::Ptr::from(field).int_addr()
 	}};
@@ -18,8 +19,8 @@ pub use offset_of;
 
 #[macro_export]
 macro_rules! container_of {
-	($ptr: expr, $type: ty, $field: ident) => {
-		$ptr.cast::<u8>()
+	($ptr: expr, $type: ty:$field: ident) => {
+		$crate::pointer::Ptr::cast::<u8>($ptr)
 			.sub($crate::offset_of!($type, $field))
 			.cast::<$type>()
 			.cast_mut()

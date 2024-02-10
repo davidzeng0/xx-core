@@ -32,7 +32,7 @@ impl Context {
 	pub unsafe fn set_start(&mut self, start: Start) {
 		let stack = MutPtr::<Start>::from_int_addr(self.stack as usize);
 
-		stack.wrapping_sub(1).as_uninit().write(start);
+		stack.wrapping_sub(1).write(start);
 
 		self.link = xx_core_fiber_arm64_start as u64;
 	}
@@ -40,7 +40,7 @@ impl Context {
 	pub unsafe fn set_intercept(&mut self, intercept: Intercept) {
 		let stack = MutPtr::<Intercept>::from_int_addr(self.stack as usize);
 
-		stack.wrapping_sub(1).as_uninit().write(intercept);
+		stack.wrapping_sub(1).write(intercept);
 
 		self.link = xx_core_fiber_arm64_intercept as u64;
 	}

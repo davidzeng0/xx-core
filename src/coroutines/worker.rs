@@ -51,20 +51,20 @@ impl Worker {
 	}
 
 	pub(super) unsafe fn resume(&self) {
-		self.executor.clone().resume(self.into());
+		self.executor.as_ref().resume(self.into());
 	}
 
 	pub(super) unsafe fn suspend(&self) {
-		self.executor.clone().suspend(self.into());
+		self.executor.as_ref().suspend(self.into());
 	}
 
 	pub(super) unsafe fn exit(self) {
-		self.executor.clone().exit(self);
+		self.executor.as_ref().exit(self);
 	}
 }
 
 unsafe impl Pin for Worker {
 	unsafe fn pin(&mut self) {
-		self.executor.clone().worker_pinned(self.into());
+		self.executor.as_ref().worker_pinned(self.into());
 	}
 }

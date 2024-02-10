@@ -28,7 +28,7 @@ impl Executor {
 		if self.pool.is_null() {
 			Worker::new(self.into(), start)
 		} else {
-			unsafe { Worker::from_fiber(self.into(), self.pool.new_fiber(start)) }
+			unsafe { Worker::from_fiber(self.into(), self.pool.as_ref().new_fiber(start)) }
 		}
 	}
 
@@ -43,11 +43,12 @@ impl Executor {
 	///
 	/// Safety: the passed `worker` must be the current worker running
 	pub(super) unsafe fn suspend(&self, worker: Ptr<Worker>) {
+		let worker = worker.as_ref();
 		let from = worker.source();
 
 		*self.current.as_mut() = from;
 
-		worker.fiber().switch(from.fiber());
+		worker.fiber().switch(from.as_ref().fiber());
 	}
 
 	/// Switch from whichever `current` worker is running to the new `worker`
@@ -57,8 +58,8 @@ impl Executor {
 	pub(super) unsafe fn resume(&self, worker: Ptr<Worker>) {
 		let previous = replace(self.current.as_mut(), worker);
 
-		worker.suspend_to(previous);
-		previous.fiber().switch(worker.fiber());
+		worker.as_ref().suspend_to(previous);
+		previous.as_ref().fiber().switch(worker.as_ref().fiber());
 	}
 
 	/// Start a new worker
@@ -78,9 +79,11 @@ impl Executor {
 		*self.current.as_mut() = from;
 
 		if pool.is_null() {
-			worker.into_inner().exit(from.fiber())
+			worker.into_inner().exit(from.as_ref().fiber())
 		} else {
-			worker.into_inner().exit_to_pool(from.fiber(), pool);
+			worker
+				.into_inner()
+				.exit_to_pool(from.as_ref().fiber(), pool);
 		}
 	}
 }

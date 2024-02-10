@@ -73,7 +73,7 @@ unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
 	let mut fiber = ManuallyDrop::take(&mut arg.0);
 
 	fiber.clear_stack();
-	arg.1.exit_fiber(fiber);
+	arg.1.as_ref().exit_fiber(fiber);
 }
 
 pub struct Fiber {

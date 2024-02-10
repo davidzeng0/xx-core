@@ -17,12 +17,12 @@ use crate::{
 	debug,
 	error::*,
 	fiber::*,
+	future::{
+		block_on::block_on as sync_block_on, closure::*, future, Cancel, Complete,
+		Future as SyncTask, Progress, ReqPtr, Request
+	},
 	opt::hint::*,
-	pointer::*,
-	task::{
-		block_on::block_on as sync_block_on, closure::*, future, Cancel, Complete, Progress,
-		ReqPtr, Request, Task as SyncTask
-	}
+	pointer::*
 };
 
 struct TaskHandle<T: SyncTask> {
@@ -94,22 +94,22 @@ pub async fn get_context() -> Ptr<Context> {
 }
 
 pub unsafe fn with_context<T: Task>(context: Ptr<Context>, task: T) -> T::Output {
-	context.run(task)
+	context.as_ref().run(task)
 }
 
 #[asynchronous]
 pub async fn block_on<T: SyncTask>(task: T) -> T::Output {
-	get_context().await.block_on(task)
+	unsafe { get_context().await.as_ref() }.block_on(task)
 }
 
 #[asynchronous]
 pub async fn is_interrupted() -> bool {
-	get_context().await.interrupted()
+	unsafe { get_context().await.as_ref() }.interrupted()
 }
 
 #[asynchronous]
 pub async fn check_interrupt() -> Result<()> {
-	if unlikely(get_context().await.interrupted()) {
+	if unlikely(is_interrupted().await) {
 		Err(Core::Interrupted.new())
 	} else {
 		Ok(())
@@ -117,12 +117,16 @@ pub async fn check_interrupt() -> Result<()> {
 }
 
 #[asynchronous]
+pub async fn clear_interrupt() {
+	unsafe { get_context().await.as_ref() }.clear_interrupt()
+}
+
+#[asynchronous]
 pub async fn take_interrupt() -> bool {
-	let context = get_context().await;
-	let interrupted = context.interrupted();
+	let interrupted = is_interrupted().await;
 
 	if unlikely(interrupted) {
-		context.clear_interrupt();
+		clear_interrupt().await;
 	}
 
 	interrupted

@@ -37,16 +37,18 @@ impl<T> Request<T> {
 	}
 
 	pub unsafe fn complete(request: Ptr<Self>, value: T) {
-		(request.callback)(request, request.arg, value);
+		let Request { arg, callback } = *request.as_ref();
+
+		(callback)(request, arg, value);
 	}
 }
 
-/// A cancel token, allowing the user to cancel a running task
+/// A cancel token, allowing the user to cancel a running future
 pub unsafe trait Cancel {
 	/// Cancelling is on a best-effort basis
 	///
 	/// If the cancellation fails, the user should
-	/// ignore the error and pray that the task
+	/// ignore the error and pray that the future
 	/// completes in a reasonable amount of time
 	///
 	/// Unless running critically low on memory,
@@ -61,7 +63,7 @@ pub unsafe trait Cancel {
 	/// to be called before releasing the [`Request`]
 	///
 	/// Cancel operations must not expect captured references to
-	/// live until the cancel finishes, only until the task callback
+	/// live until the cancel finishes, only until the future callback
 	/// is called
 	///
 	/// It is possible that the callback is
@@ -80,11 +82,11 @@ pub enum Progress<Output, C: Cancel> {
 	Done(Output)
 }
 
-pub unsafe trait Task {
+pub unsafe trait Future {
 	type Output;
 	type Cancel: Cancel;
 
-	/// Run the task
+	/// Run the future
 	///
 	/// The user is responsible for ensuring any pointers/references passed
 	/// to the task stays alive until the callback is called.

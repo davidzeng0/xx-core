@@ -20,7 +20,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 	let return_type = get_return_type(&func.sig.output);
 
 	let mut cancel_closure_type = {
-		let mut types = vec![quote! { ::xx_core::task::ReqPtr<#return_type> }];
+		let mut types = vec![quote! { ::xx_core::future::ReqPtr<#return_type> }];
 
 		if let Some(rec) = func.sig.receiver() {
 			let ty = &rec.ty;
@@ -31,7 +31,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 		let default_cancel_capture = make_tuple_type(types);
 
 		quote! {
-			::xx_core::task::closure::CancelClosure<#default_cancel_capture>
+			::xx_core::future::closure::CancelClosure<#default_cancel_capture>
 		}
 	};
 
@@ -53,7 +53,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 		}
 
 		cancel.sig.inputs.push(parse_quote! {
-			request: ::xx_core::task::ReqPtr<#return_type>
+			request: ::xx_core::future::ReqPtr<#return_type>
 		});
 
 		cancel_closure_type = make_explicit_closure(
@@ -65,8 +65,9 @@ fn transform_func(func: &mut Function) -> Result<()> {
 				block: Some(&mut cancel.block)
 			},
 			vec![(quote! { () }, quote! { () })],
-			quote! { ::xx_core::task::closure::CancelClosure },
-			|capture, _| quote! { ::xx_core::task::closure::CancelClosure<#capture> }
+			quote! { ::xx_core::future::closure::CancelClosure },
+			|capture, _| quote! { ::xx_core::future::closure::CancelClosure<#capture> },
+			LifetimeAnnotations::Closure
 		)?;
 
 		let (inputs, output, block) = (&cancel.sig.inputs, &cancel.sig.output, &cancel.block);
@@ -79,22 +80,23 @@ fn transform_func(func: &mut Function) -> Result<()> {
 	}
 
 	func.sig.output = parse_quote! {
-		-> ::xx_core::task::Progress<#return_type, #cancel_closure_type>
+		-> ::xx_core::future::Progress<#return_type, #cancel_closure_type>
 	};
 
 	make_opaque_closure(
 		func,
 		vec![(
 			quote! { request },
-			quote! { ::xx_core::task::ReqPtr<#return_type> }
+			quote! { ::xx_core::future::ReqPtr<#return_type> }
 		)],
-		|_| quote! { ::xx_core::task::Progress<#return_type, #cancel_closure_type> },
+		|_| quote! { ::xx_core::future::Progress<#return_type, #cancel_closure_type> },
 		OpaqueClosureType::Custom(|_| {
 			(
-				quote! { ::xx_core::task::Task<Output = #return_type, Cancel = #cancel_closure_type> },
-				quote! { ::xx_core::task::closure::TaskClosureWrap }
+				quote! { ::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type> },
+				quote! { ::xx_core::future::closure::FutureClosure }
 			)
-		})
+		}),
+		true
 	)?;
 
 	Ok(())

@@ -18,14 +18,14 @@ unsafe fn block_resume<Resume: FnOnce(), Output>(_: ReqPtr<Output>, arg: Ptr<()>
 	resume();
 }
 
-/// Block on a sync task
+/// Block on a future
 ///
 /// `block` is a function that doesn't return until the task finishes,
 /// and is called with the task's cancel handle
 ///
 /// `resume` is a function that is called when the task finishes,
 /// to signal to the `block`ing function that it should return
-pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Task>(
+pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Future>(
 	block: Block, resume: Resume, task: T
 ) -> T::Output {
 	let mut state: BlockState<Resume, T::Output> = BlockState::Pending(resume);
