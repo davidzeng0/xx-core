@@ -30,9 +30,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 
 		let default_cancel_capture = make_tuple_type(types);
 
-		quote! {
-			::xx_core::future::closure::CancelClosure<#default_cancel_capture>
-		}
+		quote! { ::xx_core::future::closure::CancelClosure<#default_cancel_capture> }
 	};
 
 	loop {
@@ -52,9 +50,35 @@ fn transform_func(func: &mut Function) -> Result<()> {
 			break;
 		}
 
+		let Visibility::Inherited = cancel.vis else {
+			return Err(Error::new(cancel.vis.span(), "Visibility not allowed here"));
+		};
+
+		if let Some(constness) = &cancel.sig.constness {
+			return Err(Error::new(constness.span(), "`const` not allowed here"));
+		}
+
+		if let Some(asyncness) = &cancel.sig.asyncness {
+			return Err(Error::new(asyncness.span(), "`async` not allowed here"));
+		}
+
+		if let Some(abi) = &cancel.sig.abi {
+			return Err(Error::new(abi.span(), "ABI not allowed here"));
+		}
+
+		if let Some(generics) = &cancel.sig.generics.lt_token {
+			return Err(Error::new(generics.span(), "Generics not allowed here"));
+		}
+
+		if let Some(variadic) = &cancel.sig.variadic {
+			return Err(Error::new(variadic.span(), "Variadics not allowed here"));
+		}
+
 		cancel.sig.inputs.push(parse_quote! {
 			request: ::xx_core::future::ReqPtr<#return_type>
 		});
+
+		let attrs = cancel.attrs.clone();
 
 		cancel_closure_type = make_explicit_closure(
 			&mut Function {
@@ -70,9 +94,19 @@ fn transform_func(func: &mut Function) -> Result<()> {
 			LifetimeAnnotations::Closure
 		)?;
 
-		let (inputs, output, block) = (&cancel.sig.inputs, &cancel.sig.output, &cancel.block);
+		let (unsafety, inputs, output, block) = (
+			&cancel.sig.unsafety,
+			&cancel.sig.inputs,
+			&cancel.sig.output,
+			&cancel.block
+		);
 
-		*stmt = parse_quote! { let cancel = | #inputs | #output #block; };
+		*stmt = parse_quote! {
+			#(#attrs)*
+			let cancel = | #inputs | #output {
+				#unsafety #block
+			};
+		};
 
 		ReplaceSelf {}.visit_stmt_mut(stmt);
 
@@ -96,6 +130,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 				quote! { ::xx_core::future::closure::FutureClosure }
 			)
 		}),
+		false,
 		true
 	)?;
 

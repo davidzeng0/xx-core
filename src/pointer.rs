@@ -215,6 +215,7 @@ impl<P> Pinned<P> {
 		Self { pointer }
 	}
 
+	/// Safety: the contract for unpinning P must be satisfied
 	pub unsafe fn into_inner(self) -> P {
 		self.pointer
 	}
@@ -250,6 +251,7 @@ pub trait PinExt: Pin {
 	fn pin_local(&mut self) -> Pinned<&mut Self> {
 		let mut pinned = Pinned::new(self);
 
+		/* Safety: we are being pinned */
 		unsafe { pinned.pin() };
 
 		pinned
@@ -261,6 +263,7 @@ pub trait PinExt: Pin {
 	{
 		let mut this = Pinned::new(Box::new(self));
 
+		/* Safety: we are being pinned */
 		unsafe { this.pin() };
 
 		this
@@ -272,6 +275,7 @@ pub trait PinExt: Pin {
 	{
 		let mut this = Rc::new(self);
 
+		/* Safety: we are being pinned */
 		unsafe { Rc::get_mut(&mut this).unwrap().pin() };
 
 		Pinned::new(this)
@@ -294,12 +298,14 @@ impl<T> UnsafeCell<T> {
 		self.data.get().into()
 	}
 
-	pub fn as_ref<'a>(&self) -> &'a T {
-		unsafe { self.get().as_ref() }
+	/// Caller must enforce aliasing rules. See std::ptr::as_ref
+	pub unsafe fn as_ref<'a>(&self) -> &'a T {
+		self.get().as_ref()
 	}
 
-	pub fn as_mut<'a>(&self) -> &'a mut T {
-		unsafe { self.get().as_mut() }
+	/// Caller must enforce aliasing rules. See std::ptr::as_ref
+	pub unsafe fn as_mut<'a>(&self) -> &'a mut T {
+		self.get().as_mut()
 	}
 
 	pub fn into_inner(self) -> T {

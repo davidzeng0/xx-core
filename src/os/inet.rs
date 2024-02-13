@@ -1,7 +1,4 @@
-use std::{
-	net::{IpAddr, SocketAddr, SocketAddrV6},
-	ptr::copy
-};
+use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 
 use num_traits::FromPrimitive;
 
@@ -157,29 +154,11 @@ impl TryFrom<AddressStorage> for Address {
 	fn try_from(value: AddressStorage) -> Result<Self> {
 		match AddressFamily::from_u16(value.common.family) {
 			Some(AddressFamily::INet) => {
-				let addr = unsafe {
-					let mut addr: AddressV4 = zeroed();
-					let ptr = Ptr::from(&value).cast::<AddressV4>();
-
-					copy(ptr.as_ptr(), &mut addr, 1);
-
-					addr
-				};
-
-				Ok(Address::V4(addr))
+				Ok(Address::V4(unsafe { *Ptr::from(&value).cast().as_ref() }))
 			}
 
 			Some(AddressFamily::INet6) => {
-				let addr = unsafe {
-					let mut addr: AddressV6 = zeroed();
-					let ptr = Ptr::from(&value).cast::<AddressV6>();
-
-					copy(ptr.as_ptr(), &mut addr, 1);
-
-					addr
-				};
-
-				Ok(Address::V6(addr))
+				Ok(Address::V6(unsafe { *Ptr::from(&value).cast().as_ref() }))
 			}
 
 			_ => Err(Error::simple(ErrorKind::NotFound, "Unknown address family"))

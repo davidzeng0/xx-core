@@ -49,7 +49,7 @@ impl Node {
 	}
 
 	pub fn linked(&self) -> bool {
-		self.inner.as_ref().linked()
+		unsafe { self.inner.as_ref().linked() }
 	}
 
 	pub unsafe fn unlink_unchecked(&self) {
@@ -57,7 +57,7 @@ impl Node {
 	}
 
 	pub unsafe fn unlink(&self) {
-		assert!(self.linked());
+		debug_assert!(self.linked());
 
 		self.unlink_unchecked();
 	}

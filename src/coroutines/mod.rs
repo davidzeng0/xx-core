@@ -88,22 +88,29 @@ pub trait Task {
 	fn run(self, context: Ptr<Context>) -> Self::Output;
 }
 
+/// Get a pointer to the current context
 #[asynchronous]
 pub async fn get_context() -> Ptr<Context> {
 	__xx_internal_async_context
 }
 
+/// Safety: `context` and `task` must live across suspends, and any lifetimes
+/// captured by `task` must remain valid
 pub unsafe fn with_context<T: Task>(context: Ptr<Context>, task: T) -> T::Output {
 	context.as_ref().run(task)
 }
 
 #[asynchronous]
 pub async fn block_on<T: SyncTask>(task: T) -> T::Output {
+	/* Safety: context's validity must be upheld by the implementation when
+	 * running any async task */
 	unsafe { get_context().await.as_ref() }.block_on(task)
 }
 
 #[asynchronous]
 pub async fn is_interrupted() -> bool {
+	/* Safety: context's validity must be upheld by the implementation when
+	 * running any async task */
 	unsafe { get_context().await.as_ref() }.interrupted()
 }
 
@@ -118,6 +125,8 @@ pub async fn check_interrupt() -> Result<()> {
 
 #[asynchronous]
 pub async fn clear_interrupt() {
+	/* Safety: context's validity must be upheld by the implementation when
+	 * running any async task */
 	unsafe { get_context().await.as_ref() }.clear_interrupt()
 }
 
@@ -145,6 +154,9 @@ pub async fn check_interrupt_take() -> Result<()> {
 ///
 /// While this guard is held, any attempt to interrupt
 /// the current context will be ignored
+///
+/// Safety: the async context must outlive InterruptGuard, this is
+/// implementation defined
 #[asynchronous]
 pub async unsafe fn interrupt_guard() -> InterruptGuard {
 	InterruptGuard::new(get_context().await)

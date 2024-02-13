@@ -1,7 +1,8 @@
-use std::{mem::replace, result};
+use std::{cell::Cell, result};
 
 use super::*;
 
+#[derive(Debug)]
 pub enum Select<O1, O2> {
 	First(O1, Option<O2>),
 	Second(O2, Option<O1>)
@@ -73,16 +74,12 @@ struct SelectData<T1: SyncTask, T2: SyncTask> {
 	handle_1: TaskHandle<T1>,
 	handle_2: TaskHandle<T2>,
 	request: ReqPtr<Select<T1::Output, T2::Output>>,
-	sync_done: UnsafeCell<bool>
+	sync_done: Cell<bool>
 }
 
 impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 	unsafe fn complete(&mut self, is_first: bool) {
-		let sync_done = self.sync_done.as_mut();
-
-		if *sync_done {
-			*sync_done = false;
-
+		if self.sync_done.replace(false) {
 			return;
 		}
 
@@ -130,7 +127,7 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 			handle_1: TaskHandle::new(task_1, Self::complete_1),
 			handle_2: TaskHandle::new(task_2, Self::complete_2),
 			request: Ptr::null(),
-			sync_done: UnsafeCell::new(false)
+			sync_done: Cell::new(false)
 		}
 	}
 
@@ -168,11 +165,11 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 		unsafe { self.handle_2.run() };
 
 		if self.handle_2.done() {
-			*self.sync_done.as_mut() = true;
+			self.sync_done.set(true);
 
 			let _ = unsafe { self.handle_1.cancel() };
 
-			if !replace(self.sync_done.as_mut(), false) {
+			if !self.sync_done.replace(false) {
 				return Progress::Done(Select::Second(
 					self.handle_2.take_result(),
 					self.handle_1.result.take()

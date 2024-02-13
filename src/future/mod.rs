@@ -8,17 +8,17 @@ pub type ReqPtr<T> = Ptr<Request<T>>;
 
 pub type Complete<T> = unsafe fn(ReqPtr<T>, Ptr<()>, T);
 
-/// A pointer of a [`Request`] will be passed to a [`Task`] when [`Task::run`]
-/// is called
+/// A pointer of a [`Request`] will be passed to a [`Future`] when
+/// [`Future::run`] is called
 ///
-/// When the [`Task`] completes, the [`Request`]'s callback will be
+/// When the [`Future`] completes, the [`Request`]'s callback will be
 /// executed with the result
 ///
 /// The pointer will be used as the key for [`Cancel::run`],
-/// which will cancel atleast one Task with the same key
+/// which will cancel atleast one Future with the same key
 ///
 /// Each request pointer should be unique, as it may be possible that
-/// only one task can be queued for each request
+/// only one future can be queued for each request
 ///
 /// The lifetime of the request must last until the callback is executed
 pub struct Request<T> {
@@ -36,6 +36,8 @@ impl<T> Request<T> {
 		self.arg = arg;
 	}
 
+	// Safety: must not call after future completes, and must not call within
+	// `Future::run`
 	pub unsafe fn complete(request: Ptr<Self>, value: T) {
 		let Request { arg, callback } = *request.as_ref();
 

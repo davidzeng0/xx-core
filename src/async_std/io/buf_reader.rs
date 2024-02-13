@@ -21,8 +21,10 @@ impl<R: Read> BufReader<R> {
 		len
 	}
 
+	/// Safety: the `range` must be within the buffer's capacity
 	async unsafe fn fill_buf_range(&mut self, range: Range<usize>) -> Result<usize> {
-		let buf = self.buf.get_unchecked_mut(range.clone());
+		/* Safety: the contract is upheld by the caller */
+		let buf = unsafe { self.buf.get_unchecked_mut(range.clone()) };
 		let read = self.inner.read(buf).await?;
 
 		if likely(read != 0) {
@@ -36,6 +38,7 @@ impl<R: Read> BufReader<R> {
 
 	#[inline(never)]
 	async fn fill_buf(&mut self) -> Result<usize> {
+		/* Safety: the contract is met */
 		let read = unsafe { self.fill_buf_range(0..self.buf.capacity()).await? };
 
 		if likely(read != 0) {
@@ -157,6 +160,7 @@ impl<R: Read> BufRead for BufReader<R> {
 			}
 		}
 
+		/* Safety: start <= buf.capacity() and end <= buf.capacity() */
 		let read = unsafe { self.fill_buf_range(start..end).await? };
 
 		if unlikely(start == 0 && read != 0) {

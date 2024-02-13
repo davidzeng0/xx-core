@@ -66,29 +66,31 @@ macro_rules! seek_wrapper {
 			inner = self.$inner;
 			mut inner = self.$inner_mut;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn seek(&mut self, seek: std::io::SeekFrom) -> Result<u64>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn stream_len_fast(&self) -> bool;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn stream_len(&mut self) -> Result<u64>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			fn stream_position_fast(&self) -> bool;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn stream_position(&mut self) -> Result<u64>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn rewind(&mut self) -> Result<()>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn rewind_exact(&mut self, amount: u64) -> Result<u64>;
 
-			#[async_trait_impl]
+			#[asynchronous(traitfn)]
 			async fn skip_exact(&mut self, amount: u64) -> Result<u64>;
 		}
 	}
 }
+
+pub use seek_wrapper;

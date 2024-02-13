@@ -98,16 +98,30 @@ impl WrapperFunctions {
 
 			let mut sig = function.sig.clone();
 			let mut attrs = function.attrs.clone();
-			let call = quote! { (#inner).#ident (#pats) #maybe_await };
+			let mut stmts = Vec::new();
 
-			sig.ident = function.ident.clone();
+			stmts.push(quote! { (#inner).#ident (#pats) #maybe_await });
 			attrs.push(parse_quote! { #[inline(always )] });
+			sig.ident = function.ident.clone();
+
+			if let Some(position) = attrs.iter().position(|attr| match &attr.meta {
+				Meta::Path(Path { leading_colon: None, segments }) => {
+					segments.len() == 1 &&
+						segments[0].arguments.is_none() &&
+						segments[0].ident == "chain"
+				}
+
+				_ => false
+			}) {
+				attrs.remove(position);
+				stmts.push(quote! { ; self });
+			}
 
 			fns.push(ItemFn {
 				attrs,
 				vis: function.vis.clone(),
 				sig,
-				block: parse_quote! {{ #call }}
+				block: parse_quote! {{ #(#stmts)* }}
 			});
 		}
 

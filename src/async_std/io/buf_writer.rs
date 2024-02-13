@@ -18,7 +18,8 @@ impl<W: Write> BufWriter<W> {
 
 	/// Reads from `buf` into our internal buffer
 	///
-	/// Safety: buf len must not exceed spare capacity
+	/// Safety: buf len must not exceed spare capacity. there is nothing unsafe
+	/// about this, but we don't want our buf to expand at all
 	unsafe fn write_buffered(&mut self, buf: &[u8]) -> usize {
 		self.buf.extend_from_slice(buf);
 
@@ -74,6 +75,7 @@ impl<W: Write> BufWriter<W> {
 impl<W: Write> Write for BufWriter<W> {
 	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		if self.buf.spare_capacity_mut().len() >= buf.len() {
+			/* Safety: we just checked */
 			return Ok(unsafe { self.write_buffered(buf) });
 		}
 
@@ -82,6 +84,7 @@ impl<W: Write> Write for BufWriter<W> {
 		if buf.len() >= self.buf.capacity() {
 			self.inner.write(buf).await
 		} else {
+			/* Safety: we just checked */
 			Ok(unsafe { self.write_buffered(buf) })
 		}
 	}

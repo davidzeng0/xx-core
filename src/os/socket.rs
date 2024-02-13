@@ -1,3 +1,4 @@
+use self::iovec::{BorrowedIoVec, BorrowedIoVecMut};
 use super::{inet::Address, iovec::IoVec, tcp::TcpOption, *};
 
 define_enum! {
@@ -339,18 +340,63 @@ define_struct! {
 }
 
 impl MsgHdr {
-	pub fn set_addr<A>(&mut self, addr: MutPtr<A>) {
-		self.address = addr.as_unit();
-		self.address_len = size_of::<A>() as u32;
-	}
-
 	pub fn flags(&self) -> BitFlags<MessageFlag> {
 		unsafe { BitFlags::from_bits_unchecked(self.flags) }
 	}
+}
 
-	pub fn set_vecs(&mut self, vecs: &[IoVec]) {
-		self.iov = Ptr::from(vecs.as_ptr()).cast_mut();
-		self.iov_len = vecs.len();
+mod internal {
+	use super::*;
+
+	#[repr(transparent)]
+	pub struct MessageHeader<'a, const MUTABLE: bool> {
+		pub(super) msg_hdr: MsgHdr,
+		pub(super) phantom: PhantomData<&'a ()>
+	}
+}
+
+pub type MessageHeader<'a> = internal::MessageHeader<'a, false>;
+pub type MessageHeaderMut<'a> = internal::MessageHeader<'a, true>;
+
+impl<'a, const MUTABLE: bool> internal::MessageHeader<'a, MUTABLE> {
+	pub fn new() -> Self {
+		Self { msg_hdr: MsgHdr::default(), phantom: PhantomData }
+	}
+
+	pub fn flags(&self) -> BitFlags<MessageFlag> {
+		self.msg_hdr.flags()
+	}
+}
+
+impl<'a> MessageHeader<'a> {
+	pub fn set_addr<A>(&mut self, addr: &'a A) {
+		self.msg_hdr.address = Ptr::from(addr).cast_mut().as_unit();
+		self.msg_hdr.address_len = size_of::<A>() as u32;
+	}
+
+	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b [BorrowedIoVec<'c>])
+	where
+		'b: 'a,
+		'c: 'a
+	{
+		self.msg_hdr.iov = Ptr::from(vecs.as_ptr()).cast_mut().cast();
+		self.msg_hdr.iov_len = vecs.len();
+	}
+}
+
+impl<'a> MessageHeaderMut<'a> {
+	pub fn set_addr<A>(&mut self, addr: &'a mut A) {
+		self.msg_hdr.address = MutPtr::from(addr).as_unit();
+		self.msg_hdr.address_len = size_of::<A>() as u32;
+	}
+
+	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b mut [BorrowedIoVecMut<'c>])
+	where
+		'b: 'a,
+		'c: 'a
+	{
+		self.msg_hdr.iov = MutPtr::from(vecs.as_mut_ptr()).cast();
+		self.msg_hdr.iov_len = vecs.len();
 	}
 }
 

@@ -31,9 +31,9 @@ impl Pool {
 			Some(mut fiber) => {
 				trace!(target: self, "== Reusing stack for worker");
 
-				unsafe { fiber.set_start(start) }
+				unsafe { fiber.set_start(start) };
 
-				return fiber;
+				fiber
 			}
 
 			None => {

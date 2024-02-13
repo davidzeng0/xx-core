@@ -2,11 +2,22 @@ pub(crate) use xx_core_macros::syscall_impl;
 pub use xx_core_macros::{asynchronous, compact_error, duration, future, wrapper_functions};
 
 #[macro_export]
+macro_rules! require_unsafe {
+	() => {
+		({
+			unsafe fn require_unsafe() {}
+
+			require_unsafe();
+		})
+	};
+}
+
+pub use require_unsafe;
+
+#[macro_export]
 macro_rules! offset_of {
 	($type: ty, $field: ident) => {{
-		unsafe fn require_unsafe() {}
-
-		require_unsafe();
+		$crate::macros::require_unsafe!();
 
 		let invalid = $crate::pointer::Ptr::<$type>::null().as_ref();
 		let field = ::std::ptr::addr_of!(invalid.$field);

@@ -1,5 +1,3 @@
-use std::ptr::copy_nonoverlapping;
-
 use memchr::memchr;
 
 use super::*;
@@ -13,10 +11,7 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	 *
 	 * a call to memcpy should do those checks anyway
 	 */
-	unsafe {
-		copy_nonoverlapping(src.as_ptr(), dest.as_mut_ptr(), len);
-	}
-
+	dest[0..len].copy_from_slice(&src[0..len]);
 	len
 }
 
@@ -205,6 +200,8 @@ macro_rules! read_wrapper {
 	}
 }
 
+pub use read_wrapper;
+
 pub struct ReadRef<'a, R: Read + ?Sized> {
 	reader: &'a mut R
 }
@@ -390,6 +387,8 @@ macro_rules! bufread_wrapper {
 		}
 	}
 }
+
+pub use bufread_wrapper;
 
 impl<'a, R: BufRead + ?Sized> BufRead for ReadRef<'a, R> {
 	bufread_wrapper! {

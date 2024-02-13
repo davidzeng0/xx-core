@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, rc::Rc};
+use std::{cell::Cell, marker::PhantomData, rc::Rc};
 
 use super::*;
 use crate::{trace, warn};
@@ -10,7 +10,7 @@ struct SpawnWorker<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> {
 	/* pass back */
 	result: Option<T::Output>,
 	context: Ptr<Context>,
-	is_async: Ptr<UnsafeCell<bool>>,
+	is_async: Ptr<Cell<bool>>,
 
 	phantom: PhantomData<R>
 }
@@ -27,7 +27,7 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 
 			let runtime = entry(Ptr::from(&*worker));
 			let context = runtime.context();
-			let is_async = UnsafeCell::new(false);
+			let is_async = Cell::new(false);
 
 			/* pass back a pointer to is_async. only the caller will know
 			 * if we've suspended from this function
@@ -42,7 +42,7 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 
 			let result = context.run(task);
 
-			if *is_async.as_ref() {
+			if is_async.get() {
 				unsafe { Request::complete(request, result) };
 			} else {
 				this.result = Some(result);
@@ -73,13 +73,13 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 		let pass = (entry, task, executor.as_ref().new_worker(start));
 		let worker = &mut data.move_to_worker.insert(pass).2;
 
-		unsafe { executor.as_ref().start(worker.into()) };
+		executor.as_ref().start(worker.into());
 
 		if data.result.is_some() {
 			Progress::Done(data.result.take().unwrap())
 		} else {
 			/* worker suspended without producing a result (aka completing) */
-			*data.is_async.as_ref().as_mut() = true;
+			data.is_async.as_ref().set(true);
 
 			Progress::Pending(cancel(data.context, request))
 		}
@@ -197,7 +197,7 @@ impl<Output> JoinHandle<Output> {
 			unsafe { task.as_mut().cancel() }
 		}
 
-		self.task.as_mut().waiter = request;
+		unsafe { self.task.as_mut().waiter = request };
 
 		/* we could make JoinTask return Progress::Done instead of checking below,
 		 * but we want to avoid calling task::block_on if possible
@@ -206,7 +206,7 @@ impl<Output> JoinHandle<Output> {
 	}
 
 	pub fn is_done(&self) -> bool {
-		self.task.as_mut().output.is_some()
+		unsafe { self.task.get().as_ref().output.is_some() }
 	}
 
 	/// Signals the task to cancel, without waiting for the result
@@ -246,7 +246,7 @@ impl<Output> Task for JoinHandle<Output> {
 	type Output = Output;
 
 	fn run(self, context: Ptr<Context>) -> Output {
-		if let Some(output) = self.task.as_mut().output.take() {
+		if let Some(output) = unsafe { self.task.as_mut().output.take() } {
 			/* task finished inbetween spawn and await */
 			return output;
 		}

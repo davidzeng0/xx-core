@@ -164,12 +164,10 @@ async fn buf_read_bytes<R: BufRead + ?Sized, const N: usize>(
 		/* bytes variable is separated to improve optimizations */
 		let mut bytes = [0u8; N];
 
-		unsafe {
-			/* this gets optimized to a single load instruction of size N */
-			read_into_slice(&mut bytes, reader.buffer().get_unchecked(0..N));
+		/* this gets optimized to a single load instruction of size N */
+		read_into_slice(&mut bytes, &available[0..N]);
 
-			reader.consume_unchecked(N);
-		}
+		reader.consume(N);
 
 		Some(bytes)
 	} else {
@@ -281,7 +279,11 @@ impl<'a, W: Write> FmtAdapter<'a, W> {
 
 impl<W: Write> fmt::Write for FmtAdapter<'_, W> {
 	fn write_str(&mut self, s: &str) -> fmt::Result {
-		match unsafe { with_context(self.context, self.writer.write_string_all_or_err(s)) } {
+		/* Safety: this is called from an async fn, so context is valid, and all our
+		 * references */
+		let result = unsafe { with_context(self.context, self.writer.write_string_all_or_err(s)) };
+
+		match result {
 			Err(err) => {
 				self.error = Some(err);
 

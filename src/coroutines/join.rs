@@ -2,6 +2,7 @@ use std::result;
 
 use super::*;
 
+#[derive(Debug)]
 pub struct Join<O1, O2>(pub O1, pub O2);
 
 impl<O1, O2, E> Join<result::Result<O1, E>, result::Result<O2, E>> {

@@ -52,6 +52,8 @@ pub fn advance_slices(bufs: &mut &mut [IoSlice<'_>], mut amount: usize) {
 		} else {
 			let left = &buf[amount..];
 
+			/* Safety: this mimics the IoSliceMut::advance function, no lifetimes are
+			 * violated here */
 			*buf = IoSlice::new(unsafe { transmute(left) });
 
 			break;
@@ -73,6 +75,8 @@ pub fn advance_slices_mut(bufs: &mut &mut [IoSliceMut<'_>], mut amount: usize) {
 		} else {
 			let left = &mut buf[amount..];
 
+			/* Safety: this mimics the IoSliceMut::advance function, no lifetimes are
+			 * violated here */
 			*buf = IoSliceMut::new(unsafe { transmute(left) });
 
 			break;

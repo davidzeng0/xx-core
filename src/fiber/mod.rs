@@ -62,7 +62,9 @@ unsafe fn exit_fiber(arg: Ptr<()>) {
 	 * the stack, which for now it doesn't, unless you're exiting
 	 * the fiber to a pool
 	 */
-	drop(ManuallyDrop::take(fiber));
+	let fiber = unsafe { ManuallyDrop::take(fiber) };
+
+	drop(fiber);
 }
 
 unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
@@ -70,7 +72,8 @@ unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
 		.cast::<(ManuallyDrop<Fiber>, MutPtr<Pool>)>()
 		.cast_mut()
 		.as_mut();
-	let mut fiber = ManuallyDrop::take(&mut arg.0);
+	/* Safety: ownership of the fiber is passed to us */
+	let mut fiber = unsafe { ManuallyDrop::take(&mut arg.0) };
 
 	fiber.clear_stack();
 	arg.1.as_ref().exit_fiber(fiber);
@@ -107,6 +110,7 @@ impl Fiber {
 	pub fn new_with_start(start: Start) -> Self {
 		let mut this = Self::new();
 
+		/* Safety: the fiber was never started */
 		unsafe { this.set_start(start) };
 
 		this
@@ -116,11 +120,15 @@ impl Fiber {
 	///
 	/// Safety: fiber is exited, or wasn't started
 	pub unsafe fn set_start(&mut self, start: Start) {
-		/* set the stack back to the beginning. unuse all the stack that the previous
-		 * worker used */
-		self.context
-			.set_stack(self.stack.addr().cast_const(), self.stack.length());
-		self.context.set_start(start);
+		/* Safety: contract upheld by caller. the fiber isn't in running, so we can
+		 * reset its state */
+		unsafe {
+			/* set the stack back to the beginning. unuse all the stack that the previous
+			 * worker used */
+			self.context
+				.set_stack(self.stack.addr().cast_const(), self.stack.length());
+			self.context.set_start(start);
+		}
 	}
 
 	/// Switch from the fiber `self` to the new fiber `to`
@@ -145,29 +153,39 @@ impl Fiber {
 	/// Same as switch, except drops the `self` fiber
 	///
 	/// Worker is unpinned and consumed
+	///
+	/// Safety: same as switch
 	pub unsafe fn exit(self, to: &mut Fiber) {
 		let mut fiber = ManuallyDrop::new(self);
 
-		to.context.set_intercept(Intercept {
-			intercept: exit_fiber,
-			arg: MutPtr::from(&mut fiber).as_unit().into(),
-			ret: to.context.program_counter()
-		});
+		/* Safety: contract upheld by caller */
+		unsafe {
+			to.context.set_intercept(Intercept {
+				intercept: exit_fiber,
+				arg: MutPtr::from(&mut fiber).as_unit().into(),
+				ret: to.context.program_counter()
+			});
 
-		fiber.switch(to);
+			fiber.switch(to);
+		}
 	}
 
 	/// Exits the fiber, storing the stack into a pool
 	/// to be reused when a new fiber is spawned
+	///
+	/// Safety: same as above
 	pub unsafe fn exit_to_pool(self, to: &mut Fiber, pool: Ptr<Pool>) {
 		let mut arg = (ManuallyDrop::new(self), pool);
 
-		to.context.set_intercept(Intercept {
-			intercept: exit_fiber_to_pool,
-			arg: MutPtr::from(&mut arg).as_unit().into(),
-			ret: to.context.program_counter()
-		});
+		/* Safety: contract upheld by caller */
+		unsafe {
+			to.context.set_intercept(Intercept {
+				intercept: exit_fiber_to_pool,
+				arg: MutPtr::from(&mut arg).as_unit().into(),
+				ret: to.context.program_counter()
+			});
 
-		arg.0.switch(to);
+			arg.0.switch(to);
+		}
 	}
 }

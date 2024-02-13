@@ -119,6 +119,8 @@ macro_rules! write_wrapper {
 	}
 }
 
+pub use write_wrapper;
+
 pub struct WriteRef<'a, W: Write + ?Sized> {
 	writer: &'a mut W
 }

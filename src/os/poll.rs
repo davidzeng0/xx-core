@@ -1,3 +1,5 @@
+use xx_core_macros::wrapper_functions;
+
 use self::time::TimeSpec;
 use super::*;
 
@@ -51,12 +53,8 @@ define_struct! {
 }
 
 impl PollFd {
-	pub fn new(fd: i32, events: BitFlags<PollFlag>) -> Self {
-		Self {
-			fd,
-			events: events.bits() as u16,
-			returned_events: 0
-		}
+	pub fn events(&self) -> BitFlags<PollFlag> {
+		unsafe { BitFlags::from_bits_unchecked(self.events as u32) }
 	}
 
 	pub fn returned_events(&self) -> BitFlags<PollFlag> {
@@ -64,7 +62,33 @@ impl PollFd {
 	}
 }
 
-pub unsafe fn poll(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
+#[repr(transparent)]
+pub struct BorrowedPollFd<'a> {
+	poll_fd: PollFd,
+	phantom: PhantomData<&'a ()>
+}
+
+impl<'a> BorrowedPollFd<'a> {
+	wrapper_functions! {
+		inner = self.poll_fd;
+
+		pub fn events(&self) -> BitFlags<PollFlag>;
+		pub fn returned_events(&self) -> BitFlags<PollFlag>;
+	}
+
+	pub fn new(fd: BorrowedFd<'a>, events: BitFlags<PollFlag>) -> Self {
+		Self {
+			poll_fd: PollFd {
+				fd: fd.as_raw_fd(),
+				events: events.bits() as u16,
+				returned_events: 0
+			},
+			phantom: PhantomData
+		}
+	}
+}
+
+pub unsafe fn poll_raw(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
 	debug_assert!(timeout >= 0);
 
 	let ts = TimeSpec::from_ms(timeout as u64);
@@ -72,4 +96,8 @@ pub unsafe fn poll(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
 		unsafe { syscall_int!(Ppoll, fds.as_mut_ptr(), fds.len(), &ts, Ptr::<()>::null())? };
 
 	Ok(events as u32)
+}
+
+pub fn poll(fds: &mut [BorrowedPollFd<'_>], timeout: i32) -> Result<u32> {
+	unsafe { poll_raw(transmute(fds), timeout) }
 }

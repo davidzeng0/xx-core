@@ -73,39 +73,44 @@ impl Context {
 		task.run(self.into())
 	}
 
+	/// Safety: same as Worker::suspend
 	unsafe fn suspend(&self) {
 		self.worker.as_ref().suspend();
 	}
 
+	/// Safety: same as Worker::resume
 	unsafe fn resume(&self) {
 		self.worker.as_ref().resume();
 	}
 
 	/// Runs and blocks on future `T`
 	pub fn block_on<T: SyncTask>(&self, task: T) -> T::Output {
-		unsafe {
-			sync_block_on(
-				|cancel| {
-					/* avoid allocations by storing on the stack */
-					let mut cancel = Some(cancel);
-					let canceller =
-						Closure::new(MutPtr::from(&mut cancel).as_unit(), run_cancel::<T::Cancel>);
+		let block = |cancel| {
+			/* avoid allocations by storing on the stack */
+			let mut cancel = Some(cancel);
+			let canceller =
+				Closure::new(MutPtr::from(&mut cancel).as_unit(), run_cancel::<T::Cancel>);
 
-					self.inner.as_mut().cancel = Some(canceller);
-					self.suspend();
-					self.inner.as_mut().cancel = None;
-				},
-				|| {
-					self.resume();
-				},
-				task
-			)
-		}
+			/* Safety: contract upheld by the implementation */
+			unsafe {
+				self.inner.as_mut().cancel = Some(canceller);
+				self.suspend();
+				self.inner.as_mut().cancel = None;
+			}
+		};
+
+		let resume = || {
+			/* Safety: contract upheld by the implementation */
+			unsafe { self.resume() };
+		};
+
+		/* Safety: we are blocked until the task completes */
+		unsafe { sync_block_on(block, resume, task) }
 	}
 
 	/// Interrupt the current running task
 	pub fn interrupt(&self) -> Result<()> {
-		let inner = self.inner.as_mut();
+		let inner = unsafe { self.inner.as_mut() };
 
 		inner.interrupted = true;
 
@@ -125,7 +130,7 @@ impl Context {
 	///
 	/// In the presence of interrupt guards, this returns false
 	pub fn interrupted(&self) -> bool {
-		let inner = self.inner.as_ref();
+		let inner = unsafe { self.inner.as_ref() };
 
 		inner.guards == 0 && inner.interrupted
 	}
@@ -133,7 +138,7 @@ impl Context {
 	/// Clears any interrupts or pending interrupts (due to guards) on the
 	/// current worker
 	pub fn clear_interrupt(&self) {
-		let inner = self.inner.as_mut();
+		let inner = unsafe { self.inner.as_mut() };
 
 		inner.interrupted = false;
 	}
@@ -152,6 +157,7 @@ pub struct InterruptGuard {
 }
 
 impl InterruptGuard {
+	/// Safety: self.context must be valid
 	unsafe fn update_guard_count(&self, rel: i32) {
 		let inner = self.context.as_ref().inner.as_mut();
 
@@ -163,9 +169,11 @@ impl InterruptGuard {
 			.expect("Interrupt guards count overflowed");
 	}
 
+	/// Safety: self.context must be valid
 	pub(super) unsafe fn new(context: Ptr<Context>) -> Self {
 		let this = Self { context };
 
+		/* Safety: contract upheld by caller */
 		unsafe { this.update_guard_count(1) };
 
 		this

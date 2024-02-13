@@ -4,39 +4,6 @@ use super::*;
 mod traits;
 use traits::*;
 
-struct ReplaceAwait;
-
-impl VisitMut for ReplaceAwait {
-	fn visit_expr_mut(&mut self, expr: &mut Expr) {
-		visit_expr_mut(self, expr);
-
-		let Expr::Await(inner) = expr else { return };
-		let (attrs, base) = (&inner.attrs, inner.base.as_ref());
-
-		*expr = parse_quote! {
-			#(#attrs)*
-			::xx_core::coroutines::Context::run(
-				unsafe { __xx_internal_async_context.as_ref() },
-				#base
-			)
-		};
-	}
-
-	fn visit_expr_closure_mut(&mut self, _: &mut ExprClosure) {}
-
-	fn visit_macro_mut(&mut self, mac: &mut Macro) {
-		if let Ok(mut exprs) =
-			Punctuated::<Expr, Token![,]>::parse_terminated.parse2(mac.tokens.clone())
-		{
-			for expr in &mut exprs {
-				self.visit_expr_mut(expr);
-			}
-
-			mac.tokens = exprs.to_token_stream();
-		}
-	}
-}
-
 struct HasAsync(bool);
 
 impl VisitMut for HasAsync {
@@ -49,17 +16,20 @@ impl VisitMut for HasAsync {
 	}
 }
 
-struct ReplaceAsync;
+struct TransformAsync;
 
-impl ReplaceAsync {
+impl TransformAsync {
 	fn transform_async(&mut self, inner: &mut ExprAsync) -> Expr {
-		let (attrs, capture, block) = (&inner.attrs, &inner.capture, &mut inner.block);
+		self.visit_expr_async_mut(inner);
 
-		self.visit_block_mut(block);
+		let (span, attrs, capture, block) =
+			(inner.span(), &inner.attrs, &inner.capture, &mut inner.block);
 
-		ReplaceAwait {}.visit_block_mut(block);
+		TransformAsync {}.visit_block_mut(block);
 
-		parse_quote! {
+		parse_quote_spanned! {
+			span =>
+
 			#(#attrs)*
 			{
 				::xx_core::coroutines::closure::OpaqueClosure::new(
@@ -72,6 +42,23 @@ impl ReplaceAsync {
 		}
 	}
 
+	fn transform_await(&mut self, inner: &mut ExprAwait) -> Expr {
+		self.visit_expr_await_mut(inner);
+
+		let (attrs, base) = (&inner.attrs, inner.base.as_ref());
+
+		parse_quote_spanned! {
+			inner.span() => {
+				#(#attrs)*
+				::xx_core::coroutines::Context::run(
+					#[allow(unused_unsafe)]
+					unsafe { __xx_internal_async_context.as_ref() },
+					#base
+				)
+			}
+		}
+	}
+
 	fn transform_closure(&mut self, closure: &mut ExprClosure) -> Expr {
 		let asyncness = closure.asyncness.take();
 		let body = closure.body.as_mut();
@@ -79,8 +66,8 @@ impl ReplaceAsync {
 
 		has_async.visit_expr_mut(body);
 
-		if asyncness.is_some() {
-			*body = parse_quote! { #asyncness move { #body } };
+		if let Some(asyncness) = &asyncness {
+			*body = parse_quote_spanned! { asyncness.span() => #asyncness move { #body } };
 		} else if !has_async.0 {
 			return Expr::Closure(closure.clone());
 		}
@@ -91,8 +78,8 @@ impl ReplaceAsync {
 			.map(|idx| format_ident!("Arg{}", idx))
 			.collect();
 
-		parse_quote! {
-			({
+		parse_quote_spanned! {
+			closure.span() => ({
 				fn coerce_lifetime<'closure, F, #(#template_idents,)* Output>(closure: F) -> F
 				where
 					F: Fn(#(#template_idents),*) -> Output,
@@ -108,13 +95,26 @@ impl ReplaceAsync {
 	}
 }
 
-impl VisitMut for ReplaceAsync {
+impl VisitMut for TransformAsync {
 	fn visit_expr_mut(&mut self, expr: &mut Expr) {
 		*expr = match expr {
 			Expr::Async(inner) => self.transform_async(inner),
+			Expr::Await(inner) => self.transform_await(inner),
 			Expr::Closure(inner) => self.transform_closure(inner),
 			_ => return visit_expr_mut(self, expr)
 		};
+	}
+
+	fn visit_macro_mut(&mut self, mac: &mut Macro) {
+		if let Ok(mut exprs) =
+			Punctuated::<Expr, Token![,]>::parse_terminated.parse2(mac.tokens.clone())
+		{
+			for expr in &mut exprs {
+				self.visit_expr_mut(expr);
+			}
+
+			mac.tokens = exprs.to_token_stream();
+		}
 	}
 }
 
@@ -144,8 +144,7 @@ fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()>
 	}
 
 	if let Some(block) = &mut func.block {
-		ReplaceAwait {}.visit_block_mut(*block);
-		ReplaceAsync {}.visit_block_mut(*block);
+		TransformAsync {}.visit_block_mut(*block);
 	}
 
 	match closure_type {
@@ -169,6 +168,7 @@ fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()>
 						quote! { ::xx_core::coroutines::closure::OpaqueClosure }
 					)
 				}),
+				closure_type == ClosureType::OpaqueTrait,
 				closure_type == ClosureType::Opaque
 			)?;
 		}

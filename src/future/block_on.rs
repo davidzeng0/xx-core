@@ -12,7 +12,12 @@ unsafe fn block_resume<Resume: FnOnce(), Output>(_: ReqPtr<Output>, arg: Ptr<()>
 	let resume = replace(arg, BlockState::Done(value));
 
 	let BlockState::Pending(resume) = resume else {
+		#[cfg(debug_assertions)]
 		panic!("Double resume detected");
+		#[cfg(not(debug_assertions))]
+		unsafe {
+			std::hint::unreachable_unchecked()
+		};
 	};
 
 	resume();
@@ -25,17 +30,18 @@ unsafe fn block_resume<Resume: FnOnce(), Output>(_: ReqPtr<Output>, arg: Ptr<()>
 ///
 /// `resume` is a function that is called when the task finishes,
 /// to signal to the `block`ing function that it should return
-pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Future>(
+pub unsafe fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Future>(
 	block: Block, resume: Resume, task: T
 ) -> T::Output {
 	let mut state: BlockState<Resume, T::Output> = BlockState::Pending(resume);
 
-	unsafe {
-		let request = Request::new(
-			MutPtr::from(&mut state).as_unit().into(),
-			block_resume::<Resume, T::Output>
-		);
+	let request = Request::new(
+		MutPtr::from(&mut state).as_unit().into(),
+		block_resume::<Resume, T::Output>
+	);
 
+	/* Safety: contract upheld by caller */
+	unsafe {
 		match task.run(Ptr::from(&request)) {
 			Progress::Pending(cancel) => block(cancel),
 			Progress::Done(value) => return value
@@ -43,7 +49,12 @@ pub fn block_on<Block: FnOnce(T::Cancel), Resume: FnOnce(), T: Future>(
 	};
 
 	let BlockState::Done(output) = state else {
+		#[cfg(debug_assertions)]
 		panic!("Blocking function ended before producing a result");
+		#[cfg(not(debug_assertions))]
+		unsafe {
+			std::hint::unreachable_unchecked()
+		};
 	};
 
 	output

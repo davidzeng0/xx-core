@@ -11,7 +11,7 @@ mod test {
 		os::{
 			error::{result_from_int, result_from_ptr, OsError},
 			mman::{MemoryAdvice, MemoryFlag, MemoryMap, MemoryProtection, MemoryType},
-			poll::{poll, PollFd, PollFlag},
+			poll::{poll_raw, PollFd, PollFlag},
 			resource::{get_rlimit, Resource},
 			time::{time, ClockId},
 			unistd::close
@@ -39,9 +39,13 @@ mod test {
 
 	#[test]
 	fn test_poll() {
-		let mut fds = [PollFd::new(1, make_bitflags!(PollFlag::{Out}))];
+		let mut fds = [PollFd {
+			fd: 1,
+			events: make_bitflags!(PollFlag::{Out}).bits() as u16,
+			returned_events: 0
+		}];
 
-		unsafe { poll(&mut fds, 0).unwrap() };
+		unsafe { poll_raw(&mut fds, 0).unwrap() };
 
 		assert!(fds[0].returned_events().intersects(PollFlag::Out));
 	}

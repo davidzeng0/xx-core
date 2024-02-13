@@ -151,7 +151,7 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&Generics>) ->
 
 fn add_lifetime(
 	sig: &mut Signature, env_generics: &Option<&Generics>, annotations: LifetimeAnnotations,
-	workaround: bool
+	is_trait: bool, workaround: bool
 ) -> TokenStream {
 	if annotations == LifetimeAnnotations::None {
 		return quote! {};
@@ -223,10 +223,39 @@ fn add_lifetime(
 		}
 	}
 
-	if has_receiver {
-		clause
-			.predicates
-			.push(parse_quote! { Self: #closure_lifetime });
+	let has_self_bound = clause.predicates.iter().any(|predicate| {
+		loop {
+			let WherePredicate::Type(PredicateType { bounded_ty: Type::Path(path), .. }) =
+				predicate
+			else {
+				break;
+			};
+
+			let TypePath { qself: None, path } = path else {
+				break;
+			};
+
+			if path.leading_colon.is_some() ||
+				path.segments.len() != 1 ||
+				path.segments[0].ident != "Self"
+			{
+				break;
+			}
+
+			return true;
+		}
+
+		false
+	});
+
+	if !has_self_bound && is_trait {
+		if has_receiver {
+			clause
+				.predicates
+				.push(parse_quote! { Self: #closure_lifetime });
+		} else {
+			clause.predicates.push(parse_quote! { Self: 'static });
+		}
 	}
 
 	sig.generics.params.push(closure_lifetime_parsed());
@@ -302,7 +331,7 @@ pub fn make_explicit_closure(
 	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream,
 	annotations: LifetimeAnnotations
 ) -> Result<TokenStream> {
-	add_lifetime(&mut func.sig, &func.env_generics, annotations, false);
+	add_lifetime(&mut func.sig, &func.env_generics, annotations, false, false);
 
 	let (types, construct, destruct) = build_tuples(&mut func.sig.inputs, |arg| match arg {
 		FnArg::Typed(pat) => {
@@ -371,12 +400,13 @@ pub fn make_opaque_closure(
 	func: &mut Function, args: Vec<(TokenStream, TokenStream)>,
 	transform_return: impl Fn(TokenStream) -> TokenStream,
 	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>,
-	workaround: bool
+	is_trait: bool, workaround: bool
 ) -> Result<TokenStream> {
 	let addl_lifetimes = add_lifetime(
 		&mut func.sig,
 		&func.env_generics,
 		LifetimeAnnotations::Auto,
+		is_trait,
 		workaround
 	);
 

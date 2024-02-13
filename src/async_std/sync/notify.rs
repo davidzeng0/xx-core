@@ -17,17 +17,23 @@ pub struct Notify {
 
 #[asynchronous]
 impl Notify {
+	/// Safety: caller must
+	/// - pin this Notify
+	/// - call Notify::pin
+	/// - never move this datta
 	pub unsafe fn new_unpinned() -> Self {
 		Self { waiters: LinkedList::new() }
 	}
 
 	pub fn new() -> Pinned<Rc<Self>> {
+		/* Safety: Self cannot be unpinned */
 		unsafe { Self::new_unpinned() }.pin_rc()
 	}
 
 	#[future]
 	fn wait_notified(&self, waiter: &mut Waiter) -> Result<()> {
 		fn cancel(waiter: &Waiter) -> Result<()> {
+			/* Safety: our linked list is always in a consistent state */
 			unsafe {
 				waiter.node.unlink();
 
@@ -39,6 +45,7 @@ impl Notify {
 
 		waiter.request = request;
 
+		/* Safety: our linked list is always in a consistent state */
 		unsafe { self.waiters.append(&waiter.node) };
 
 		Progress::Pending(cancel(waiter, request))
@@ -51,6 +58,7 @@ impl Notify {
 	}
 
 	pub fn notify(&self) {
+		/* Safety: our linked list is always in a consistent state */
 		unsafe {
 			let mut list = LinkedList::new();
 			let mut list = list.pin_local();
@@ -59,11 +67,11 @@ impl Notify {
 
 			while !list.empty() {
 				let head = list.head();
-				let waiter = container_of!(head, Waiter:node);
+				let waiter = container_of!(head, Waiter:node).as_ref();
 
 				head.as_ref().unlink();
 
-				Request::complete(waiter.as_ref().request, Ok(()));
+				Request::complete(waiter.request, Ok(()));
 			}
 		}
 	}

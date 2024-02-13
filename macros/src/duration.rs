@@ -2,6 +2,8 @@ use nom::number::complete::double;
 
 use super::*;
 
+type Result = std::result::Result<TokenStream, &'static str>;
+
 #[derive(PartialEq, Eq)]
 enum Format {
 	Unit,
@@ -29,13 +31,7 @@ fn test_prefix(input: &mut &str, prefixes: &[&str]) -> Option<usize> {
 	})
 }
 
-fn parse_time_string(mut amount: &str, item: TokenStream) -> Result<TokenStream> {
-	macro_rules! error {
-		($message: literal) => {
-			Err(Error::new(item.span(), $message))
-		};
-	}
-
+fn parse_time_string(mut amount: &str) -> Result {
 	let mut format = None;
 	let mut tokens = Vec::new();
 
@@ -47,12 +43,12 @@ fn parse_time_string(mut amount: &str, item: TokenStream) -> Result<TokenStream>
 			}
 
 			Err(_) => {
-				return error!("Expected a number literal");
+				return Err("Expected a number literal");
 			}
 		};
 
 		if lit < 0.0 {
-			return error!("Cannot be negative");
+			return Err("Cannot be negative");
 		}
 
 		if format == Some(Format::Colon) && amount.is_empty() {
@@ -72,7 +68,7 @@ fn parse_time_string(mut amount: &str, item: TokenStream) -> Result<TokenStream>
 			let scales = [24.0, 60.0, 60.0, 1_000.0, 1_000.0, 1_000.0];
 
 			if index > 0 && lit >= scales[index - 1] as f64 {
-				return error!("Amount exceeds maximum");
+				return Err("Amount exceeds maximum");
 			}
 
 			current_format = Some(Format::Unit);
@@ -83,42 +79,43 @@ fn parse_time_string(mut amount: &str, item: TokenStream) -> Result<TokenStream>
 					.fold(1.0, |acc, value| acc * value)
 			);
 		} else {
-			return error!("Unknown format");
+			return Err("Unknown format");
 		}
 
 		if format == None {
 			format = current_format;
 		} else if format != current_format {
-			return error!("Cannot use mismatched formats");
+			return Err("Cannot use mismatched formats");
 		}
 
 		tokens.push((lit, scale));
 	}
 
-	let mut duration = 0.0;
-
-	match format {
-		None => return error!("Unknown format"),
+	let nanos = match format {
+		None => return Err("Unknown format"),
 		Some(Format::Unit) => {
+			let mut duration = 0.0;
+
 			for (lit, scale) in &tokens {
 				duration += lit * scale.unwrap() as f64;
 			}
 
-			duration /= 1_000_000_000.0;
+			duration as u128
 		}
 
 		Some(Format::Colon) => {
+			let mut duration = 0.0;
 			let scales = [60.0, 60.0, 24.0];
 
 			tokens.reverse();
 
 			if tokens.len() > scales.len() + 1 {
-				return error!("Too many tokens");
+				return Err("Too many tokens");
 			}
 
 			for (scale, (lit, _)) in scales.iter().zip(tokens.iter()) {
 				if lit >= scale {
-					return error!("Amount exceeds maximum");
+					return Err("Amount exceeds maximum");
 				}
 			}
 
@@ -131,31 +128,27 @@ fn parse_time_string(mut amount: &str, item: TokenStream) -> Result<TokenStream>
 
 				duration += amount;
 			}
-		}
-	}
 
-	Ok(quote! { #duration })
+			(duration * 1_000_000_000.0) as u128
+		}
+	};
+
+	Ok(quote! { #nanos })
 }
 
-fn parse_inverse(expr: TokenStream) -> Result<TokenStream> {
-	macro_rules! error {
-		($message: literal) => {
-			Err(Error::new(expr.span(), $message))
-		};
-	}
-
-	let Expr::Binary(binary) = parse2(expr.clone())? else {
-		return error!("Expected a binary op");
+fn parse_inverse(expr: TokenStream) -> Result {
+	let Ok(Expr::Binary(binary)) = parse2(expr.clone()) else {
+		return Err("Expected a binary op");
 	};
 
 	let BinOp::Div(_) = binary.op else {
-		return error!("Expected a divide op");
+		return Err("Expected a divide op");
 	};
 
 	let (left, right) = (&binary.left, &binary.right);
 
 	Ok(quote! {
-		(#left) as f64 / (#right) as f64
+		(#left) as u128 * 1_000_000_000 / (#right) as u128
 	})
 }
 
@@ -164,13 +157,13 @@ pub fn duration(item: TokenStream) -> TokenStream {
 	let amount = &amount as &str;
 
 	let duration = if amount.contains("/") {
-		parse_inverse(item)
+		parse_inverse(item.clone())
 	} else {
-		parse_time_string(amount, item)
+		parse_time_string(amount)
 	};
 
 	match duration {
-		Ok(duration) => quote! { ::std::time::Duration::from_secs_f64(#duration) },
-		Err(err) => err.to_compile_error()
+		Ok(duration) => quote! { ::std::time::Duration::from_nanos((#duration) as u64) },
+		Err(err) => Error::new(item.span(), err).to_compile_error()
 	}
 }

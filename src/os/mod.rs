@@ -17,7 +17,8 @@ pub mod time;
 pub mod unistd;
 
 use std::{
-	mem::{size_of, zeroed},
+	marker::PhantomData,
+	mem::{size_of, transmute},
 	os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd}
 };
 
