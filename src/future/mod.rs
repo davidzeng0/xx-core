@@ -28,6 +28,12 @@ pub struct Request<T> {
 }
 
 impl<T> Request<T> {
+	pub const fn no_op() -> Self {
+		fn no_op<T>(_: ReqPtr<T>, _: Ptr<()>, _: T) {}
+
+		Request::new(Ptr::null(), no_op)
+	}
+
 	pub const fn new(arg: Ptr<()>, callback: Complete<T>) -> Self {
 		Self { arg, callback }
 	}
