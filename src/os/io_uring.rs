@@ -1,3 +1,5 @@
+use io_uring::error::OsError;
+
 use super::{time::TimeSpec, *};
 
 define_enum! {
@@ -138,7 +140,9 @@ define_enum! {
 		Socket,
 		UringCmd,
 		SendZeroCopy,
-		SendMsgZeroCopy
+		SendMsgZeroCopy,
+		WaitId,
+		Last
 	}
 }
 
@@ -490,13 +494,33 @@ define_struct! {
 	}
 }
 
+impl ProbeOp {
+	pub fn flags(&self) -> BitFlags<ProbeOpFlags> {
+		unsafe { BitFlags::from_bits_unchecked(self.flags) }
+	}
+}
+
+define_struct! {
+	pub struct ProbeReg {
+		pub last_op: u8,
+		pub length: u8,
+		pub resv: [u16; 1],
+		pub resv2: [u32; 3],
+	}
+}
+
 #[repr(C)]
 pub struct Probe {
-	pub last_op: u8,
-	pub length: u8,
-	pub resv: [u16; 1],
-	pub resv2: [u32; 3],
+	pub probe: ProbeReg,
 	pub ops: [ProbeOp]
+}
+
+pub fn io_uring_opcode_supported(ops: &[ProbeOp], op: OpCode) -> bool {
+	if op as usize >= ops.len() {
+		false
+	} else {
+		ops[op as usize].flags().intersects(ProbeOpFlags::Supported)
+	}
 }
 
 define_enum! {
@@ -656,4 +680,210 @@ pub unsafe fn io_uring_register(
 	fd: BorrowedFd<'_>, opcode: u32, arg: Ptr<()>, arg_count: u32
 ) -> Result<i32> {
 	syscall_int!(IoUringRegister, fd, opcode, arg, arg_count).map(|result| result as i32)
+}
+
+define_struct! {
+	pub struct IoRingFeatures {
+		pub min_ver: u32,
+		pub features: BitFlags<Feature>,
+		pub ops: [bool; OpCode::Last as usize],
+		pub setup_flags: BitFlags<SetupFlag>
+	}
+}
+
+impl IoRingFeatures {
+	pub fn opcode_supported(&self, op: OpCode) -> bool {
+		self.ops[op as usize]
+	}
+
+	pub fn setup_flag_supported(&self, flag: SetupFlag) -> bool {
+		self.setup_flags.intersects(flag)
+	}
+}
+
+pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
+	const OPS_COUNT: usize = 256;
+
+	#[repr(C)]
+	struct Probe {
+		probe: ProbeReg,
+		ops: [ProbeOp; OPS_COUNT]
+	}
+
+	let mut params = Parameters::default();
+
+	params.sq_entries = 8;
+
+	let fd = match io_uring_setup(params.sq_entries, &mut params) {
+		Ok(fd) => fd,
+		Err(err) => match err.os_error().unwrap() {
+			OsError::NoSys => return Ok(None),
+			_ => return Err(err)
+		}
+	};
+
+	let mut probe = Probe {
+		probe: ProbeReg::default(),
+		ops: [ProbeOp::default(); OPS_COUNT]
+	};
+
+	let probe_result = unsafe {
+		io_uring_register(
+			fd.as_fd(),
+			RegisterOp::RegisterProbe as u32,
+			MutPtr::from(&mut probe).cast_const().as_unit(),
+			OPS_COUNT as u32
+		)
+	};
+
+	let feature_map = [
+		(Feature::SingleMmap, 504),
+		(Feature::NoDrop, 505),
+		(Feature::SubmitStable, 505),
+		(Feature::RwCurPos, 506),
+		(Feature::CurPersonality, 506),
+		(Feature::FastPoll, 507),
+		(Feature::Poll32Bits, 509),
+		(Feature::SqPollNonFixed, 511),
+		(Feature::ExtArg, 511),
+		(Feature::NativeWorkers, 512),
+		(Feature::RsrcTags, 513),
+		(Feature::CqeSkip, 517),
+		(Feature::LinkedFile, 517),
+		(Feature::RegRegRing, 603)
+	];
+
+	let op_map = [
+		(OpCode::NoOp, 501),
+		(OpCode::ReadVector, 501),
+		(OpCode::WriteVector, 501),
+		(OpCode::ReadFixed, 501),
+		(OpCode::WriteFixed, 501),
+		(OpCode::FileSync, 501),
+		(OpCode::PollAdd, 501),
+		(OpCode::PollRemove, 501),
+		(OpCode::SyncFileRange, 502),
+		(OpCode::SendMsg, 503),
+		(OpCode::RecvMsg, 503),
+		(OpCode::Timeout, 504),
+		(OpCode::TimeoutRemove, 505),
+		(OpCode::Accept, 505),
+		(OpCode::AsyncCancel, 505),
+		(OpCode::LinkTimeout, 505),
+		(OpCode::Connect, 505),
+		(OpCode::EPollCtl, 506),
+		(OpCode::Send, 506),
+		(OpCode::Recv, 506),
+		(OpCode::FileAllocate, 506),
+		(OpCode::FileAdvise, 506),
+		(OpCode::MemoryAdvise, 506),
+		(OpCode::OpenAt, 506),
+		(OpCode::OpenAt2, 506),
+		(OpCode::Close, 506),
+		(OpCode::Statx, 506),
+		(OpCode::Read, 506),
+		(OpCode::Write, 506),
+		(OpCode::FilesUpdate, 506),
+		(OpCode::Splice, 507),
+		(OpCode::ProvideBuffers, 507),
+		(OpCode::RemoveBuffers, 507),
+		(OpCode::Tee, 508),
+		(OpCode::Shutdown, 511),
+		(OpCode::RenameAt, 511),
+		(OpCode::UnlinkAt, 511),
+		(OpCode::MkdirAt, 515),
+		(OpCode::SymlinkAt, 515),
+		(OpCode::LinkAt, 515),
+		(OpCode::MsgRing, 518),
+		(OpCode::FileSetXAttr, 519),
+		(OpCode::SetXAttr, 519),
+		(OpCode::FileGetXAttr, 519),
+		(OpCode::GetXAttr, 519),
+		(OpCode::Socket, 519),
+		(OpCode::UringCmd, 519),
+		(OpCode::SendZeroCopy, 600),
+		(OpCode::SendMsgZeroCopy, 601),
+		(OpCode::WaitId, 605)
+	];
+
+	let setup_flag_map = [
+		(SetupFlag::IoPoll, 501),
+		(SetupFlag::SubmissionQueuePolling, 501),
+		(SetupFlag::SubmissionQueueAffinity, 501),
+		(SetupFlag::CompletionRingSize, 501),
+		(SetupFlag::Clamp, 501),
+		(SetupFlag::AttachWq, 501),
+		(SetupFlag::RingDisabled, 510),
+		(SetupFlag::SubmitAll, 518),
+		(SetupFlag::CoopTaskrun, 519),
+		(SetupFlag::TaskRun, 519),
+		(SetupFlag::SubmissionEntryWide, 519),
+		(SetupFlag::CompletionEntryWide, 519),
+		(SetupFlag::SingleIssuer, 600),
+		(SetupFlag::DeferTaskrun, 601),
+		// TODO: these need more work
+		(SetupFlag::NoMmap, 605),
+		(SetupFlag::RegisteredFdOnly, 605)
+	];
+
+	let mut features = IoRingFeatures {
+		min_ver: 501,
+		features: params.features(),
+		ops: [false; OpCode::Last as usize],
+		setup_flags: BitFlags::default()
+	};
+
+	for (feature, version) in feature_map.iter().rev() {
+		if params.features().intersects(*feature) {
+			features.min_ver = *version;
+
+			break;
+		}
+	}
+
+	if let Err(err) = probe_result {
+		match err.os_error().unwrap() {
+			OsError::Inval => (),
+			_ => return Err(err)
+		}
+
+		for (op, version) in &op_map {
+			if features.min_ver < *version {
+				break;
+			}
+
+			features.ops[*op as usize] = true;
+		}
+	} else {
+		features.min_ver = features.min_ver.max(506);
+
+		let ops = &probe.ops[..probe.probe.last_op as usize + 1];
+
+		for (op, version) in &op_map {
+			let supported = io_uring_opcode_supported(ops, *op);
+
+			features.ops[*op as usize] = supported;
+
+			if supported {
+				features.min_ver = features.min_ver.max(*version);
+			}
+		}
+	}
+
+	for (flag, version) in setup_flag_map.iter().rev() {
+		if features.min_ver >= *version {
+			features.setup_flags |= *flag;
+		} else {
+			let mut params = Parameters::default();
+
+			params.sq_entries = 8;
+			params.flags = *flag as u32;
+
+			if let Ok(_) = io_uring_setup(params.sq_entries, &mut params) {
+				features.min_ver = *version;
+			}
+		}
+	}
+
+	Ok(Some(features))
 }
