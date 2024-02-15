@@ -17,16 +17,16 @@ pub fn compact_error(_: TokenStream, item: TokenStream) -> TokenStream {
 
 	for (index, variant) in error.variants.iter_mut().enumerate() {
 		let (eq, expr) = match variant.discriminant.take() {
-			None => return Error::new(variant.span(), "Expected error data").to_compile_error(),
+			None => return Error::new_spanned(variant, "Expected error data").to_compile_error(),
 			Some(discr) => discr
 		};
 
 		let Expr::Tuple(tuple) = expr else {
-			return Error::new(expr.span(), "Expected a tuple").to_compile_error();
+			return Error::new_spanned(expr, "Expected a tuple").to_compile_error();
 		};
 
 		if tuple.elems.len() != 2 {
-			return Error::new(tuple.span(), "Expected error kind and message").to_compile_error();
+			return Error::new_spanned(tuple, "Expected error kind and message").to_compile_error();
 		}
 
 		variants.push(variant.ident.clone());

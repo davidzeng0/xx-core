@@ -42,9 +42,7 @@ fn parse_time_string(mut amount: &str) -> Result {
 				lit
 			}
 
-			Err(_) => {
-				return Err("Expected a number literal");
-			}
+			Err(_) => return Err("Expected a number literal")
 		};
 
 		if lit < 0.0 {
@@ -164,6 +162,6 @@ pub fn duration(item: TokenStream) -> TokenStream {
 
 	match duration {
 		Ok(duration) => quote! { ::std::time::Duration::from_nanos((#duration) as u64) },
-		Err(err) => Error::new(item.span(), err).to_compile_error()
+		Err(err) => Error::new_spanned(item, err).to_compile_error()
 	}
 }

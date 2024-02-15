@@ -692,6 +692,14 @@ define_struct! {
 }
 
 impl IoRingFeatures {
+	pub fn version(&self) -> String {
+		format!("{}.{}", self.min_ver / 100, self.min_ver % 100)
+	}
+
+	pub fn feature_supported(&self, feature: Feature) -> bool {
+		self.features.intersects(feature)
+	}
+
 	pub fn opcode_supported(&self, op: OpCode) -> bool {
 		self.ops[op as usize]
 	}
@@ -810,9 +818,9 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 		(SetupFlag::IoPoll, 501),
 		(SetupFlag::SubmissionQueuePolling, 501),
 		(SetupFlag::SubmissionQueueAffinity, 501),
-		(SetupFlag::CompletionRingSize, 501),
-		(SetupFlag::Clamp, 501),
-		(SetupFlag::AttachWq, 501),
+		(SetupFlag::CompletionRingSize, 505),
+		(SetupFlag::Clamp, 506),
+		(SetupFlag::AttachWq, 506),
 		(SetupFlag::RingDisabled, 510),
 		(SetupFlag::SubmitAll, 518),
 		(SetupFlag::CoopTaskrun, 519),

@@ -41,7 +41,7 @@ impl Parse for SyscallImpl {
 			match kind.to_string().as_ref() {
 				"out" => {
 					if regs.len() != 1 {
-						return Err(Error::new(kind.span(), "invalid output register list"));
+						return Err(Error::new_spanned(kind, "invalid output register list"));
 					}
 
 					out = Some(regs[0].clone());
@@ -49,7 +49,7 @@ impl Parse for SyscallImpl {
 
 				"num" => {
 					if regs.len() != 1 {
-						return Err(Error::new(kind.span(), "invalid number register list"));
+						return Err(Error::new_spanned(kind, "invalid number register list"));
 					}
 
 					num = Some(regs[0].clone());
@@ -58,7 +58,7 @@ impl Parse for SyscallImpl {
 				"arg" => args = Some(regs),
 				"clobber" => clobber = Some(regs),
 
-				_ => return Err(Error::new(kind.span(), "unknown kind"))
+				_ => return Err(Error::new_spanned(kind, "unknown kind"))
 			}
 		}
 

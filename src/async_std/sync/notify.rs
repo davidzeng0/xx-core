@@ -32,6 +32,7 @@ impl Notify {
 
 	#[future]
 	fn wait_notified(&self, waiter: &mut Waiter) -> Result<()> {
+		#[cancel]
 		fn cancel(waiter: &Waiter) -> Result<()> {
 			/* Safety: our linked list is always in a consistent state */
 			unsafe {

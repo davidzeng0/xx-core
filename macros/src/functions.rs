@@ -33,3 +33,16 @@ pub fn get_args(sig: &Signature, include_receiver: bool) -> Punctuated<Expr, Tok
 
 	args
 }
+
+pub fn remove_attr(attrs: &mut Vec<Attribute>, target: &str) -> bool {
+	if let Some(index) = attrs.iter().position(|attr| match &attr.meta {
+		Meta::Path(path) => path.get_ident().is_some_and(|ident| ident == target),
+		_ => false
+	}) {
+		attrs.remove(index);
+
+		true
+	} else {
+		false
+	}
+}

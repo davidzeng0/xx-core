@@ -25,11 +25,12 @@ impl Parse for WrapperFunctions {
 
 			let mutability: Option<Token![mut]> = input.parse()?;
 			let ident: Ident = input.parse()?;
-			let rhs: Expr;
 
 			if ident != "inner" {
-				return Err(input.error("unexpected ident"));
+				return Err(Error::new_spanned(ident, "Expected`inner`"));
 			}
+
+			let rhs: Expr;
 
 			input.parse::<Token![=]>()?;
 			rhs = input.parse()?;
@@ -77,20 +78,19 @@ impl WrapperFunctions {
 		let mut fns = Vec::new();
 
 		for function in &self.functions {
-			let mutable = function
-				.sig
-				.receiver()
-				.is_some_and(|rec| rec.mutability.is_some());
 			let pats = get_args(&function.sig, false);
 			let ident = &function.sig.ident;
-
 			let maybe_await = if function.sig.asyncness.is_some() {
 				quote! { .await }
 			} else {
 				quote! {}
 			};
 
-			let inner = if mutable {
+			let inner = if function
+				.sig
+				.receiver()
+				.is_some_and(|rec| rec.mutability.is_some())
+			{
 				&self.inner_mut
 			} else {
 				&self.inner
@@ -100,20 +100,11 @@ impl WrapperFunctions {
 			let mut attrs = function.attrs.clone();
 			let mut stmts = Vec::new();
 
-			stmts.push(quote! { (#inner).#ident (#pats) #maybe_await });
 			attrs.push(parse_quote! { #[inline(always )] });
+			stmts.push(quote! { (#inner).#ident (#pats) #maybe_await });
 			sig.ident = function.ident.clone();
 
-			if let Some(position) = attrs.iter().position(|attr| match &attr.meta {
-				Meta::Path(Path { leading_colon: None, segments }) => {
-					segments.len() == 1 &&
-						segments[0].arguments.is_none() &&
-						segments[0].ident == "chain"
-				}
-
-				_ => false
-			}) {
-				attrs.remove(position);
+			if remove_attr(&mut attrs, "chain") {
 				stmts.push(quote! { ; self });
 			}
 

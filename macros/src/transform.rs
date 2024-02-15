@@ -117,7 +117,7 @@ pub fn transform_fn(
 	};
 
 	if !allowed(&parsed) {
-		return Error::new(item.span(), "Unexpected declaration").to_compile_error();
+		return Error::new_spanned(item, "Unexpected declaration").to_compile_error();
 	}
 
 	match transform_functions(parsed, callback) {

@@ -2,15 +2,7 @@ use super::*;
 
 fn transform_func(func: &mut Function) -> Result<()> {
 	if !func.is_root {
-		if let Some(index) = func.attrs.iter().position(|attr| match &attr.meta {
-			Meta::Path(path) => path
-				.segments
-				.last()
-				.is_some_and(|last| last.ident == "future" && last.arguments.is_none()),
-			_ => false
-		}) {
-			func.attrs.remove(index);
-		} else {
+		if !remove_attr(func.attrs, "future") {
 			return Ok(());
 		}
 	}
@@ -33,84 +25,81 @@ fn transform_func(func: &mut Function) -> Result<()> {
 		quote! { ::xx_core::future::closure::CancelClosure<#default_cancel_capture> }
 	};
 
-	loop {
-		let Some(block) = &mut func.block else {
-			break;
-		};
-
-		let Some(stmt) = (*block).stmts.first_mut() else {
-			break;
-		};
-
-		let Stmt::Item(Item::Fn(cancel)) = stmt else {
-			break;
-		};
-
-		if cancel.sig.ident != "cancel" {
-			break;
-		}
-
-		let Visibility::Inherited = cancel.vis else {
-			return Err(Error::new(cancel.vis.span(), "Visibility not allowed here"));
-		};
-
-		if let Some(constness) = &cancel.sig.constness {
-			return Err(Error::new(constness.span(), "`const` not allowed here"));
-		}
-
-		if let Some(asyncness) = &cancel.sig.asyncness {
-			return Err(Error::new(asyncness.span(), "`async` not allowed here"));
-		}
-
-		if let Some(abi) = &cancel.sig.abi {
-			return Err(Error::new(abi.span(), "ABI not allowed here"));
-		}
-
-		if let Some(generics) = &cancel.sig.generics.lt_token {
-			return Err(Error::new(generics.span(), "Generics not allowed here"));
-		}
-
-		if let Some(variadic) = &cancel.sig.variadic {
-			return Err(Error::new(variadic.span(), "Variadics not allowed here"));
-		}
-
-		cancel.sig.inputs.push(parse_quote! {
-			request: ::xx_core::future::ReqPtr<#return_type>
-		});
-
-		let attrs = cancel.attrs.clone();
-
-		cancel_closure_type = make_explicit_closure(
-			&mut Function {
-				is_root: true,
-				attrs: &mut cancel.attrs,
-				env_generics: func.env_generics,
-				sig: &mut cancel.sig,
-				block: Some(&mut cancel.block)
-			},
-			vec![(quote! { () }, quote! { () })],
-			quote! { ::xx_core::future::closure::CancelClosure },
-			|capture, _| quote! { ::xx_core::future::closure::CancelClosure<#capture> },
-			LifetimeAnnotations::Closure
-		)?;
-
-		let (unsafety, inputs, output, block) = (
-			&cancel.sig.unsafety,
-			&cancel.sig.inputs,
-			&cancel.sig.output,
-			&cancel.block
-		);
-
-		*stmt = parse_quote! {
-			#(#attrs)*
-			let cancel = | #inputs | #output {
-				#unsafety #block
+	if let Some(block) = &mut func.block {
+		for stmt in block.stmts.iter_mut() {
+			let Stmt::Item(Item::Fn(cancel)) = stmt else {
+				continue;
 			};
-		};
 
-		ReplaceSelf {}.visit_stmt_mut(stmt);
+			if !remove_attr(&mut cancel.attrs, "cancel") {
+				continue;
+			}
 
-		break;
+			let Visibility::Inherited = cancel.vis else {
+				return Err(Error::new_spanned(
+					&cancel.vis,
+					"Visibility not allowed here"
+				));
+			};
+
+			if let Some(constness) = &cancel.sig.constness {
+				return Err(Error::new_spanned(constness, "`const` not allowed here"));
+			}
+
+			if let Some(asyncness) = &cancel.sig.asyncness {
+				return Err(Error::new_spanned(asyncness, "`async` not allowed here"));
+			}
+
+			if let Some(abi) = &cancel.sig.abi {
+				return Err(Error::new_spanned(abi, "ABI not allowed here"));
+			}
+
+			if let Some(generics) = &cancel.sig.generics.lt_token {
+				return Err(Error::new_spanned(generics, "Generics not allowed here"));
+			}
+
+			if let Some(variadic) = &cancel.sig.variadic {
+				return Err(Error::new_spanned(variadic, "Variadics not allowed here"));
+			}
+
+			cancel.sig.inputs.push(parse_quote! {
+				request: ::xx_core::future::ReqPtr<#return_type>
+			});
+
+			let attrs = cancel.attrs.clone();
+
+			cancel_closure_type = make_explicit_closure(
+				&mut Function {
+					is_root: true,
+					attrs: &mut cancel.attrs,
+					env_generics: func.env_generics,
+					sig: &mut cancel.sig,
+					block: Some(&mut cancel.block)
+				},
+				vec![(quote! { () }, quote! { () })],
+				quote! { ::xx_core::future::closure::CancelClosure },
+				|capture, _| quote! { ::xx_core::future::closure::CancelClosure<#capture> },
+				LifetimeAnnotations::Closure
+			)?;
+
+			let (unsafety, inputs, output, block) = (
+				&cancel.sig.unsafety,
+				&cancel.sig.inputs,
+				&cancel.sig.output,
+				&cancel.block
+			);
+
+			*stmt = parse_quote! {
+				#(#attrs)*
+				let cancel = | #inputs | #output {
+					#unsafety #block
+				};
+			};
+
+			ReplaceSelf {}.visit_stmt_mut(stmt);
+
+			break;
+		}
 	}
 
 	func.sig.output = parse_quote! {

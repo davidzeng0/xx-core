@@ -66,6 +66,7 @@ impl<T1: SyncTask, T2: SyncTask> JoinData<T1, T2> {
 
 	#[future]
 	unsafe fn join(&mut self) -> Join<T1::Output, T2::Output> {
+		#[cancel]
 		fn cancel(self: &mut Self) -> Result<()> {
 			let (cancel_1, cancel_2) =
 				unsafe { (self.handle_1.try_cancel(), self.handle_2.try_cancel()) };

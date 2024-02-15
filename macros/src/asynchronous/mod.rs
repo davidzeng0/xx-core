@@ -25,13 +25,9 @@ impl TransformAsync {
 		let (span, attrs, capture, block) =
 			(inner.span(), &inner.attrs, &inner.capture, &mut inner.block);
 
-		TransformAsync {}.visit_block_mut(block);
-
 		parse_quote_spanned! {
-			span =>
-
-			#(#attrs)*
-			{
+			span => {
+				#(#attrs)*
 				::xx_core::coroutines::closure::OpaqueClosure::new(
 					#capture
 					|__xx_internal_async_context: ::xx_core::pointer::Ptr<
@@ -62,35 +58,42 @@ impl TransformAsync {
 	fn transform_closure(&mut self, closure: &mut ExprClosure) -> Expr {
 		let asyncness = closure.asyncness.take();
 		let body = closure.body.as_mut();
-		let mut has_async = HasAsync(false);
-
-		has_async.visit_expr_mut(body);
 
 		if let Some(asyncness) = &asyncness {
 			*body = parse_quote_spanned! { asyncness.span() => #asyncness move { #body } };
-		} else if !has_async.0 {
-			return Expr::Closure(closure.clone());
+		} else {
+			let mut has_async = HasAsync(false);
+
+			has_async.visit_expr_mut(body);
+
+			if !has_async.0 {
+				return Expr::Closure(closure.clone());
+			}
 		}
 
 		self.visit_expr_mut(body);
 
-		let template_idents: Vec<_> = (0..closure.inputs.len())
+		let attrs = &closure.attrs;
+		let args: Vec<_> = (0..closure.inputs.len())
 			.map(|idx| format_ident!("Arg{}", idx))
 			.collect();
 
 		parse_quote_spanned! {
-			closure.span() => ({
-				fn coerce_lifetime<'closure, F, #(#template_idents,)* Output>(closure: F) -> F
-				where
-					F: Fn(#(#template_idents),*) -> Output,
-					#(#template_idents: 'closure,)*
-					Output: 'closure
-				{
-					closure
-				}
+			closure.span() => {
+				#(#attrs)*
+				({
+					fn coerce_lifetime<'closure, F, #(#args,)* Output>(closure: F) -> F
+					where
+						F: Fn(#(#args),*) -> Output,
+						#(#args: 'closure,)*
+						Output: 'closure
+					{
+						closure
+					}
 
-				coerce_lifetime
-			})(#closure)
+					coerce_lifetime
+				})(#closure)
+			}
 		}
 	}
 }
@@ -203,15 +206,9 @@ fn try_transform(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
 		loop {
 			let Meta::Path(path) = option else { break };
+			let Some(ident) = path.get_ident() else { break };
 
-			if path.leading_colon.is_some() ||
-				path.segments.len() != 1 ||
-				!path.segments[0].arguments.is_none()
-			{
-				break;
-			}
-
-			match path.segments[0].ident.to_string().as_ref() {
+			match ident.to_string().as_ref() {
 				"explicit" => explicit = true,
 				"traitfn" => trait_impl = true,
 				_ => break
@@ -223,12 +220,15 @@ fn try_transform(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
 		}
 
 		if !success {
-			return Err(Error::new(option.span(), "Invalid option"));
+			return Err(Error::new_spanned(option, "Unknown option"));
 		}
 	}
 
 	if explicit && trait_impl {
-		return Err(Error::new(options.span(), "Invalid combination of options"));
+		return Err(Error::new_spanned(
+			options,
+			"Invalid combination of options"
+		));
 	}
 
 	if explicit {

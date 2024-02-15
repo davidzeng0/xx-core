@@ -133,6 +133,7 @@ impl<T1: SyncTask, T2: SyncTask> SelectData<T1, T2> {
 
 	#[future]
 	unsafe fn select(&mut self) -> Select<T1::Output, T2::Output> {
+		#[cancel]
 		fn cancel(self: &mut Self) -> Result<()> {
 			let (cancel_1, cancel_2) = unsafe {
 				/* must prevent cancel 1 from calling cancel 2 in callback, as we need to

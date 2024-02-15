@@ -56,6 +56,7 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 
 	#[future]
 	unsafe fn spawn(executor: Ptr<Executor>, entry: Entry, task: T) -> T::Output {
+		#[cancel]
 		fn cancel(context: Ptr<Context>) -> Result<()> {
 			context.as_ref().interrupt()
 		}
@@ -96,6 +97,7 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 pub unsafe fn spawn_future<R: Environment, T: Task>(
 	executor: Ptr<Executor>, entry: impl FnOnce(Ptr<Worker>) -> R, task: T
 ) -> T::Output {
+	#[cancel]
 	fn cancel(_context: Ptr<Context>) -> Result<()> {
 		/* use this fn to generate the cancel closure type */
 		Ok(())
@@ -110,6 +112,7 @@ pub unsafe fn spawn_future<R: Environment, T: Task>(
 pub unsafe fn spawn_future_with_env<R: Environment, T: Task>(
 	runtime: Ptr<R>, task: T
 ) -> T::Output {
+	#[cancel]
 	fn cancel(_context: Ptr<Context>) -> Result<()> {
 		Ok(())
 	}
@@ -193,6 +196,7 @@ pub struct JoinHandle<Output> {
 impl<Output> JoinHandle<Output> {
 	#[future]
 	fn join(self) -> Output {
+		#[cancel]
 		fn cancel(task: AsyncSpawn<Output>) -> Result<()> {
 			unsafe { task.as_mut().cancel() }
 		}
