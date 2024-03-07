@@ -8,7 +8,46 @@ use std::{
 
 use ctor::ctor;
 use lazy_static::lazy_static;
-use log::{set_boxed_logger, set_max_level, Level, LevelFilter, Log, Metadata, Record};
+use log::{set_boxed_logger, Log, Metadata, Record};
+pub use log::{set_max_level, Level, LevelFilter};
+
+use crate::pointer::*;
+
+pub mod internal {
+	pub use log::{log, log_enabled};
+
+	use super::*;
+
+	fn get_struct_name<T>(_: Ptr<T>) -> &'static str {
+		type_name::<T>().split("::").last().unwrap()
+	}
+
+	fn get_struct_addr_low<T>(val: Ptr<T>) -> usize {
+		val.int_addr() & 0xffffffff
+	}
+
+	#[inline(never)]
+	pub fn log_target<T>(level: Level, target: Ptr<T>, args: fmt::Arguments<'_>) {
+		let mut fmt_buf = Cursor::new([0u8; 64]);
+
+		fmt_buf
+			.write_fmt(format_args!(
+				"@ {:0>8x} {: >13}",
+				get_struct_addr_low(target),
+				get_struct_name(target)
+			))
+			.expect("Log struct name too long");
+
+		let pos = fmt_buf.position() as usize;
+
+		log::log!(
+			target: unsafe { from_utf8_unchecked(&fmt_buf.get_ref()[0..pos]) },
+			level,
+			"{}",
+			args
+		);
+	}
+}
 
 struct Logger;
 
@@ -123,84 +162,56 @@ fn init() {
 	set_max_level(LevelFilter::Info)
 }
 
-fn get_struct_name<T>(_: *const T) -> &'static str {
-	type_name::<T>().split("::").last().unwrap()
-}
-
-fn get_struct_addr<T>(val: *const T) -> usize {
-	val as usize
-}
-
-fn get_struct_addr_low<T>(val: *const T) -> usize {
-	get_struct_addr(val) & 0xffffffff
-}
-
-#[inline(never)]
-pub fn log_target<T>(level: Level, target: *const T, args: fmt::Arguments<'_>) {
-	let mut fmt_buf = Cursor::new([0u8; 64]);
-
-	fmt_buf
-		.write_fmt(format_args!(
-			"@ {:0>8x} {: >13}",
-			get_struct_addr_low(target),
-			get_struct_name(target)
-		))
-		.expect("Log struct name too long");
-
-	let pos = fmt_buf.position() as usize;
-
-	log::log!(
-		target: unsafe { from_utf8_unchecked(&fmt_buf.get_ref()[0..pos]) },
-		level,
-		"{}",
-		args
-	);
-}
-
 #[macro_export]
 macro_rules! log {
 	($level: expr, target: $target: expr, $($arg: tt)+) => {
-		if $crate::opt::hint::unlikely(::log::log_enabled!($level)) {
-			$crate::log::log_target($level, $target as *const _, format_args!($($arg)+));
+		if $crate::opt::hint::unlikely($crate::log::internal::log_enabled!($level)) {
+			$crate::log::internal::log_target($level, $crate::pointer::Ptr::from($target as *const _), format_args!($($arg)+));
+		}
+	};
+
+	($level: expr, target: &$target: expr, $($arg: tt)+) => {
+		if $crate::opt::hint::unlikely($crate::log::internal::log_enabled!($level)) {
+			$crate::log::internal::log_target($level, $crate::pointer::Ptr::from(::std::ptr::addr_of!($target)), format_args!($($arg)+));
 		}
 	};
 
 	($level: expr, $($arg: tt)+) => {
-		::log::log!($level, $($arg)+)
+		$crate::log::internal::log!($level, $($arg)+)
 	};
 }
 
 #[macro_export]
 macro_rules! error {
 	($($arg: tt)+) => {
-		$crate::log!(::log::Level::Error, $($arg)+)
+		$crate::log!($crate::log::Level::Error, $($arg)+)
 	}
 }
 
 #[macro_export]
 macro_rules! warn {
 	($($arg: tt)+) => {
-		$crate::log!(::log::Level::Warn, $($arg)+)
+		$crate::log!($crate::log::Level::Warn, $($arg)+)
 	}
 }
 
 #[macro_export]
 macro_rules! info {
 	($($arg: tt)+) => {
-		$crate::log!(::log::Level::Info, $($arg)+)
+		$crate::log!($crate::log::Level::Info, $($arg)+)
 	}
 }
 
 #[macro_export]
 macro_rules! debug {
 	($($arg: tt)+) => {
-		$crate::log!(::log::Level::Debug, $($arg)+)
+		$crate::log!($crate::log::Level::Debug, $($arg)+)
 	}
 }
 
 #[macro_export]
 macro_rules! trace {
 	($($arg: tt)+) => {
-		$crate::log!(::log::Level::Trace, $($arg)+)
+		$crate::log!($crate::log::Level::Trace, $($arg)+)
 	}
 }

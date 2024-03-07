@@ -122,7 +122,7 @@ impl Context {
 				.expect("Task interrupted while active")
 				.call(())
 		} else {
-			Err(Error::simple(ErrorKind::Other, "Interrupt pending"))
+			Err(Core::Pending.as_err_with_msg("Interrupt pending"))
 		}
 	}
 

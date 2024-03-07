@@ -38,7 +38,7 @@ impl Notify {
 			unsafe {
 				waiter.node.unlink();
 
-				Request::complete(waiter.request, Err(Core::Interrupted.new()));
+				Request::complete(waiter.request, Err(Core::Interrupted.as_err()));
 			}
 
 			Ok(())

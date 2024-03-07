@@ -11,8 +11,6 @@ pub mod macros;
 pub mod opt;
 pub mod os;
 pub mod pointer;
+pub mod threadpool;
 
 extern crate self as xx_core;
-
-#[cfg(any(test, feature = "test"))]
-pub mod test;

@@ -5,8 +5,9 @@ xx_core_fiber_arm64_start:
 
 .global xx_core_fiber_arm64_intercept
 xx_core_fiber_arm64_intercept:
-	ldp x30, x0, [sp, #-0x18]
-	br x30
+	ldp x1, x0, [sp, #-0x18]
+	ldr x30, [sp, #-0x08]
+	br x1
 
 .global xx_core_fiber_arm64_switch
 .align 16

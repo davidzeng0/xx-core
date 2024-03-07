@@ -161,7 +161,10 @@ impl TryFrom<AddressStorage> for Address {
 				Ok(Address::V6(unsafe { *Ptr::from(&value).cast().as_ref() }))
 			}
 
-			_ => Err(Error::simple(ErrorKind::NotFound, "Unknown address family"))
+			_ => Err(Error::simple(
+				ErrorKind::NotFound,
+				Some("Unknown address family")
+			))
 		}
 	}
 }

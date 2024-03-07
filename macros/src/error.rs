@@ -45,8 +45,8 @@ pub fn compact_error(_: TokenStream, item: TokenStream) -> TokenStream {
 
 		impl ::xx_core::error::CompactError for #ident {
 			const STRINGS: &'static [&'static str] = &[
-				stringify!(#ident),
-				#(#strings),*
+				::std::stringify!(#ident),
+				#(::std::stringify!(#variants), #strings),*
 			];
 
 			fn kind(&self) -> ErrorKind {

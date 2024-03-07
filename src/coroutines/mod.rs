@@ -91,7 +91,7 @@ pub trait Task {
 /// Get a pointer to the current context
 #[asynchronous]
 pub async fn get_context() -> Ptr<Context> {
-	__xx_internal_async_context
+	__xx_internal_async_context.into()
 }
 
 /// Safety: `context` and `task` must live across suspends, and any lifetimes
@@ -117,7 +117,7 @@ pub async fn is_interrupted() -> bool {
 #[asynchronous]
 pub async fn check_interrupt() -> Result<()> {
 	if unlikely(is_interrupted().await) {
-		Err(Core::Interrupted.new())
+		Err(Core::Interrupted.as_err())
 	} else {
 		Ok(())
 	}
@@ -144,7 +144,7 @@ pub async fn take_interrupt() -> bool {
 #[asynchronous]
 pub async fn check_interrupt_take() -> Result<()> {
 	if unlikely(take_interrupt().await) {
-		Err(Core::Interrupted.new())
+		Err(Core::Interrupted.as_err())
 	} else {
 		Ok(())
 	}

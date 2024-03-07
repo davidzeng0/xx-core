@@ -12,16 +12,9 @@ impl VisitMut for ReplaceSelf {
 			*ident = format_ident!("{}", SELF_IDENT, span = ident.span());
 		}
 	}
-}
 
-pub struct RemoveRefMut;
-
-impl VisitMut for RemoveRefMut {
-	fn visit_pat_ident_mut(&mut self, ident: &mut PatIdent) {
-		visit_pat_ident_mut(self, ident);
-
-		ident.by_ref.take();
-		ident.mutability.take();
+	fn visit_macro_mut(&mut self, mac: &mut Macro) {
+		visit_macro_punctuated_exprs(self, mac);
 	}
 }
 
@@ -131,8 +124,7 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&Generics>) ->
 			GenericParam::Lifetime(param) => {
 				let lifetime = &param.lifetime;
 
-				addl_bounds
-					.push(parse_quote! { ::xx_core::closure::lifetime::Captures<#lifetime> });
+				addl_bounds.push(parse_quote! { ::xx_core::impls::Captures<#lifetime> });
 			}
 		});
 	});
@@ -141,7 +133,7 @@ fn lifetime_workaround(sig: &mut Signature, env_generics: &Option<&Generics>) ->
 	for param in sig.generics.lifetimes() {
 		let lifetime = &param.lifetime;
 
-		addl_bounds.push(parse_quote! { ::xx_core::closure::lifetime::Captures<#lifetime> });
+		addl_bounds.push(parse_quote! { ::xx_core::impls::Captures<#lifetime> });
 	}
 
 	addl_bounds.push(closure_lifetime_parsed());
@@ -224,28 +216,15 @@ fn add_lifetime(
 	}
 
 	let has_self_bound = clause.predicates.iter().any(|predicate| {
-		loop {
-			let WherePredicate::Type(PredicateType { bounded_ty: Type::Path(path), .. }) =
-				predicate
-			else {
-				break;
-			};
+		let WherePredicate::Type(PredicateType {
+			bounded_ty: Type::Path(TypePath { qself: None, path }),
+			..
+		}) = predicate
+		else {
+			return false;
+		};
 
-			let TypePath { qself: None, path } = path else {
-				break;
-			};
-
-			if path.leading_colon.is_some() ||
-				path.segments.len() != 1 ||
-				path.segments[0].ident != "Self"
-			{
-				break;
-			}
-
-			return true;
-		}
-
-		false
+		path.get_ident().is_some_and(|ident| ident == "Self")
 	});
 
 	if !has_self_bound && is_trait {
@@ -306,7 +285,7 @@ fn build_tuples(
 	)
 }
 
-pub fn get_return_type(ret: &ReturnType) -> TokenStream {
+pub fn get_return_type_or_unit(ret: &ReturnType) -> TokenStream {
 	if let ReturnType::Type(_, ty) = ret {
 		quote! { #ty }
 	} else {
@@ -368,8 +347,7 @@ pub fn make_explicit_closure(
 	});
 
 	let (args, _) = make_args(args);
-
-	let return_type = get_return_type(&func.sig.output);
+	let return_type = get_return_type_or_unit(&func.sig.output);
 	let closure_return_type = transform_return(types.clone(), return_type.clone());
 
 	func.sig.output = parse_quote! { -> #closure_return_type };
@@ -413,7 +391,7 @@ pub fn make_opaque_closure(
 	let (args, args_types) = make_args(args);
 
 	let return_type = &mut func.sig.output;
-	let closure_return_type = transform_return(get_return_type(&return_type));
+	let closure_return_type = transform_return(get_return_type_or_unit(&return_type));
 	let (closure_return_type, trait_impl_wrap) = match closure_type {
 		OpaqueClosureType::Custom(transform) => {
 			let (trait_type, trait_impl) = transform(closure_return_type);

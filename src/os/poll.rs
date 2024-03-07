@@ -89,7 +89,7 @@ impl<'a> BorrowedPollFd<'a> {
 }
 
 pub unsafe fn poll_raw(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
-	debug_assert!(timeout >= 0);
+	assert!(timeout >= 0);
 
 	let ts = TimeSpec::from_ms(timeout as u64);
 	let events =

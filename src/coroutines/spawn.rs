@@ -22,6 +22,8 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 		let (entry, task, mut worker) = this.move_to_worker.take().unwrap();
 		let request = this.request;
 
+		trace!(target: &worker, "== Entered worker");
+
 		{
 			let worker = worker.pin_local();
 
@@ -38,8 +40,6 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 			this.is_async = Ptr::from(&is_async);
 			this.context = context.into();
 
-			trace!(target: &worker, "++ Spawned");
-
 			let result = context.run(task);
 
 			if is_async.get() {
@@ -47,9 +47,9 @@ impl<R: Environment, Entry: FnOnce(Ptr<Worker>) -> R, T: Task> SpawnWorker<R, En
 			} else {
 				this.result = Some(result);
 			}
-
-			trace!(target: &worker, "-- Completed");
 		}
+
+		trace!(target: &worker, "== Completed");
 
 		worker.exit();
 	}

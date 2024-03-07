@@ -2,14 +2,14 @@ use super::*;
 
 fn transform_func(func: &mut Function) -> Result<()> {
 	if !func.is_root {
-		if !remove_attr(func.attrs, "future") {
+		if !remove_attr_path(func.attrs, "future") {
 			return Ok(());
 		}
 	}
 
 	func.attrs.push(parse_quote!( #[must_use] ));
 
-	let return_type = get_return_type(&func.sig.output);
+	let return_type = get_return_type_or_unit(&func.sig.output);
 
 	let mut cancel_closure_type = {
 		let mut types = vec![quote! { ::xx_core::future::ReqPtr<#return_type> }];
@@ -26,12 +26,20 @@ fn transform_func(func: &mut Function) -> Result<()> {
 	};
 
 	if let Some(block) = &mut func.block {
+		fn not_allowed<T: ToTokens>(what: &Option<T>, message: &'static str) -> Result<()> {
+			if let Some(tokens) = what {
+				Err(Error::new_spanned(tokens, message))
+			} else {
+				Ok(())
+			}
+		}
+
 		for stmt in block.stmts.iter_mut() {
 			let Stmt::Item(Item::Fn(cancel)) = stmt else {
 				continue;
 			};
 
-			if !remove_attr(&mut cancel.attrs, "cancel") {
+			if !remove_attr_path(&mut cancel.attrs, "cancel") {
 				continue;
 			}
 
@@ -42,25 +50,11 @@ fn transform_func(func: &mut Function) -> Result<()> {
 				));
 			};
 
-			if let Some(constness) = &cancel.sig.constness {
-				return Err(Error::new_spanned(constness, "`const` not allowed here"));
-			}
-
-			if let Some(asyncness) = &cancel.sig.asyncness {
-				return Err(Error::new_spanned(asyncness, "`async` not allowed here"));
-			}
-
-			if let Some(abi) = &cancel.sig.abi {
-				return Err(Error::new_spanned(abi, "ABI not allowed here"));
-			}
-
-			if let Some(generics) = &cancel.sig.generics.lt_token {
-				return Err(Error::new_spanned(generics, "Generics not allowed here"));
-			}
-
-			if let Some(variadic) = &cancel.sig.variadic {
-				return Err(Error::new_spanned(variadic, "Variadics not allowed here"));
-			}
+			not_allowed(&cancel.sig.constness, "`const` not allowed here")?;
+			not_allowed(&cancel.sig.asyncness, "`async` not allowed here")?;
+			not_allowed(&cancel.sig.abi, "ABI not allowed here")?;
+			not_allowed(&cancel.sig.generics.lt_token, "Generics not allowed here")?;
+			not_allowed(&cancel.sig.variadic, "Variadics not allowed here")?;
 
 			cancel.sig.inputs.push(parse_quote! {
 				request: ::xx_core::future::ReqPtr<#return_type>

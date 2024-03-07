@@ -29,7 +29,7 @@ impl Pool {
 
 		match data.pool.pop() {
 			Some(mut fiber) => {
-				trace!(target: self, "== Reusing stack for worker");
+				trace!(target: self, "@@ Reusing stack for worker");
 
 				unsafe { fiber.set_start(start) };
 
@@ -37,7 +37,7 @@ impl Pool {
 			}
 
 			None => {
-				trace!(target: self, "== Creating stack for worker");
+				trace!(target: self, "++ Creating stack for worker");
 
 				Fiber::new_with_start(start)
 			}
@@ -58,11 +58,11 @@ impl Pool {
 		let ideal = Self::calculate_ideal(data.active);
 
 		if data.pool.len() < ideal as usize {
-			trace!(target: self, "== Preserving worker stack");
+			trace!(target: self, "@@ Preserving worker stack");
 
 			data.pool.push(fiber);
 		} else {
-			trace!(target: self, "== Dropping worker stack");
+			trace!(target: self, "-- Dropping worker stack");
 		}
 	}
 }

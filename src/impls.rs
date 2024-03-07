@@ -1,3 +1,5 @@
+use paste::paste;
+
 pub trait UIntExtensions {
 	type Signed;
 
@@ -41,7 +43,7 @@ uint_impl!(usize, isize);
 
 macro_rules! async_fns_type {
 	([$($type: ident)?][$($indexes: literal)*] $args: literal $($remaining: literal)*) => {
-		paste::paste! {
+		paste! {
 			pub trait [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>:
 				[<Fn $($type)?>]($([<Arg $indexes>]),*) ->
 				<Self as [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>>::Future
@@ -50,10 +52,13 @@ macro_rules! async_fns_type {
 				type Output;
 			}
 
-			impl<T, F, $([<Arg $indexes>]),*> [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*> for T
+			impl<'c, 'a, 'f, T, F, $([<Arg $indexes>]),*> [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*> for T
 			where
-				T: [<Fn $($type)?>]($([<Arg $indexes>]),*) -> F,
-				F: crate::coroutines::Task,
+				'c: 'f,
+				'a: 'f,
+				T: [<Fn $($type)?>]($([<Arg $indexes>]),*) -> F + 'c,
+				$([<Arg $indexes>]: 'a,)*
+				F: crate::coroutines::Task + 'f,
 			{
 				type Future = F;
 				type Output = F::Output;
@@ -86,3 +91,7 @@ macro_rules! async_fns {
 
 /* https://docs.rs/async_fn_traits */
 async_fns!(0 1 2 3 4 5 6 7 8 9 10 11 12);
+
+pub trait Captures<'__> {}
+
+impl<T: ?Sized> Captures<'_> for T {}

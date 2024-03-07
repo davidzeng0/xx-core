@@ -42,7 +42,7 @@ pub trait Seek {
 
 	/// Rewind `amount` bytes on the stream
 	async fn rewind_exact(&mut self, amount: u64) -> Result<u64> {
-		let amount: i64 = amount.try_into().map_err(|_| Core::Overflow.new())?;
+		let amount: i64 = amount.try_into().map_err(|_| Core::Overflow.as_err())?;
 
 		self.seek(SeekFrom::Current(-amount)).await
 	}
@@ -50,7 +50,7 @@ pub trait Seek {
 	/// Skips `amount` bytes from the stream
 	async fn skip_exact(&mut self, amount: u64) -> Result<u64> {
 		self.seek(SeekFrom::Current(
-			amount.try_into().map_err(|_| Core::Overflow.new())?
+			amount.try_into().map_err(|_| Core::Overflow.as_err())?
 		))
 		.await
 	}

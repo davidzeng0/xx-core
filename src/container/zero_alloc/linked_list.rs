@@ -57,7 +57,7 @@ impl Node {
 	}
 
 	pub unsafe fn unlink(&self) {
-		debug_assert!(self.linked());
+		assert!(self.linked());
 
 		self.unlink_unchecked();
 	}

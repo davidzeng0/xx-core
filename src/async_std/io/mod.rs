@@ -29,7 +29,7 @@ pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	if from_utf8(buf).is_ok() {
 		Ok(())
 	} else {
-		Err(Core::InvalidUtf8.new())
+		Err(Core::InvalidUtf8.as_err())
 	}
 }
 
@@ -89,7 +89,7 @@ pub fn advance_slices_mut(bufs: &mut &mut [IoSliceMut<'_>], mut amount: usize) {
 }
 
 pub fn length_check(buf: &[u8], len: usize) -> usize {
-	debug_assert!(len <= buf.len());
+	assert!(len <= buf.len());
 
 	len
 }
@@ -99,7 +99,7 @@ pub async fn short_io_error_unless_interrupt() -> Error {
 	check_interrupt()
 		.await
 		.err()
-		.unwrap_or_else(|| Core::UnexpectedEof.new())
+		.unwrap_or_else(|| Core::UnexpectedEof.as_err())
 }
 
 #[macro_export]

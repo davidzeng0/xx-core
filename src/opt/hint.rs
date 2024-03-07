@@ -19,3 +19,11 @@ pub fn unlikely(cond: bool) -> bool {
 
 	cond
 }
+
+#[inline(always)]
+pub unsafe fn unreachable_unchecked() {
+	#[cfg(debug_assertions)]
+	assert!(false);
+	#[cfg(not(debug_assertions))]
+	std::hint::unreachable_unchecked();
+}

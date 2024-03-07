@@ -57,7 +57,7 @@ impl<R: Read> BufReader<R> {
 	}
 
 	pub fn from_parts(inner: R, buf: Vec<u8>, pos: usize) -> Self {
-		debug_assert!(pos <= buf.len());
+		assert!(pos <= buf.len());
 
 		#[cfg(any(test, feature = "test"))]
 		let buf = {
@@ -132,7 +132,7 @@ impl<R: Read> Read for BufReader<R> {
 #[asynchronous]
 impl<R: Read> BufRead for BufReader<R> {
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize> {
-		debug_assert!(amount <= self.buf.capacity());
+		assert!(amount <= self.buf.capacity());
 
 		let mut start = self.buf.len();
 		let mut end = self.pos + amount;
@@ -142,13 +142,12 @@ impl<R: Read> BufRead for BufReader<R> {
 		}
 
 		if unlikely(end > self.buf.capacity()) {
-			end = self.buf.capacity();
+			end = amount;
 
 			if self.buffer().len() == 0 {
 				/* try not to discard existing data if read returns EOF, assuming the read
 				 * impl doesn't write junk even when returning zero */
 				start = 0;
-				end = amount;
 			} else {
 				self.move_data_to_beginning();
 
@@ -185,7 +184,7 @@ impl<R: Read> BufRead for BufReader<R> {
 	}
 
 	fn consume(&mut self, count: usize) {
-		debug_assert!(count <= self.buffer().len());
+		assert!(count <= self.buffer().len());
 
 		self.pos += count;
 	}
@@ -195,7 +194,7 @@ impl<R: Read> BufRead for BufReader<R> {
 	}
 
 	fn unconsume(&mut self, count: usize) {
-		debug_assert!(count <= self.pos);
+		assert!(count <= self.pos);
 
 		self.pos -= count;
 	}
@@ -215,17 +214,25 @@ impl<R: Read + Seek> BufReader<R> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
 		let pos = rel
 			.checked_add_unsigned(self.pos as u64)
-			.ok_or_else(|| Core::Overflow.new())?;
+			.ok_or_else(|| Core::Overflow.as_err())?;
 
 		if pos >= 0 && pos as usize <= self.buf.len() {
 			self.pos = pos as usize;
 			self.stream_position().await
 		} else {
-			self.seek_inner(SeekFrom::Current(pos)).await
+			self.seek_inner(SeekFrom::Current(rel)).await
 		}
 	}
 
-	async fn seek_inner(&mut self, seek: SeekFrom) -> Result<u64> {
+	async fn seek_inner(&mut self, mut seek: SeekFrom) -> Result<u64> {
+		if let SeekFrom::Current(pos) = &mut seek {
+			let remainder = self.buffer().len();
+
+			*pos = pos
+				.checked_sub(remainder as i64)
+				.ok_or_else(|| Core::Overflow.as_err())?;
+		}
+
 		self.discard();
 		self.inner.seek(seek).await
 	}
@@ -261,7 +268,7 @@ impl<R: Read + Seek> Seek for BufReader<R> {
 		let remaining = self.buffer().len();
 
 		pos.checked_sub(remaining as u64)
-			.ok_or_else(|| Core::Overflow.new())
+			.ok_or_else(|| Core::Overflow.as_err())
 	}
 
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
@@ -281,7 +288,7 @@ impl<R: Read + Seek> Seek for BufReader<R> {
 						.stream_len()
 						.await?
 						.checked_add_signed(pos)
-						.ok_or_else(|| Core::Overflow.new())?;
+						.ok_or_else(|| Core::Overflow.as_err())?;
 
 					self.seek_abs(new_pos, seek).await
 				} else {

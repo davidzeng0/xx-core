@@ -31,3 +31,23 @@ impl OpenFlag {
 	pub const Sync: u32 = 0x101000;
 	pub const TempFile: u32 = 0x400000;
 }
+
+define_enum! {
+	#[bitflags]
+	#[repr(u32)]
+	pub enum AtFlag {
+		SymlinkNoFollow = 1 << 8,
+		EAccess = 1 << 9,
+		SymlinkFollow = 1 << 10,
+		NoAutoMount = 1 << 11,
+		EmptyPath = 1 << 12,
+		ForceSync = 1 << 13,
+		DontSync = 1 << 14,
+		Recursive = 1 << 15
+	}
+}
+
+#[allow(non_upper_case_globals)]
+impl AtFlag {
+	pub const RemoveDir: AtFlag = AtFlag::EAccess;
+}

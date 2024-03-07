@@ -36,7 +36,7 @@ impl<W: Write> BufWriter<W> {
 			length_check(buf, wrote);
 
 			if unlikely(wrote == 0) {
-				return Err(Core::WriteZero.new());
+				return Err(Core::WriteZero.as_err());
 			}
 
 			self.pos += wrote;
@@ -56,7 +56,7 @@ impl<W: Write> BufWriter<W> {
 	}
 
 	pub fn from_parts(inner: W, buf: Vec<u8>, pos: usize) -> Self {
-		debug_assert!(pos <= buf.len());
+		assert!(pos <= buf.len());
 
 		BufWriter { inner, buf, pos }
 	}
@@ -104,7 +104,7 @@ impl<W: Write + Seek> BufWriter<W> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
 		let pos = rel
 			.checked_add_unsigned(self.buf.len() as u64)
-			.ok_or_else(|| Core::Overflow.new())?;
+			.ok_or_else(|| Core::Overflow.as_err())?;
 
 		if pos >= 0 && (self.pos..=self.buf.len()).contains(&(pos as usize)) {
 			self.buf.truncate(pos as usize);
@@ -150,7 +150,7 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 		let buffered = self.buf.len();
 
 		pos.checked_add(buffered as u64)
-			.ok_or_else(|| Core::Overflow.new())
+			.ok_or_else(|| Core::Overflow.as_err())
 	}
 
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
@@ -170,7 +170,7 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 						.stream_len()
 						.await?
 						.checked_add_signed(pos)
-						.ok_or_else(|| Core::Overflow.new())?;
+						.ok_or_else(|| Core::Overflow.as_err())?;
 
 					self.seek_abs(new_pos, seek).await
 				} else {

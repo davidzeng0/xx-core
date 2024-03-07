@@ -42,9 +42,21 @@ impl Parse for Functions {
 	}
 }
 
-type Transform = fn(&mut Function) -> Result<()>;
+pub fn transform_functions(
+	item: Functions, callback: impl Fn(&mut Function) -> Result<()>,
+	allowed: impl FnOnce(&Functions) -> bool
+) -> Result<TokenStream> {
+	if !allowed(&item) {
+		let tokens = match &item {
+			Functions::Fn(func) => func.to_token_stream(),
+			Functions::TraitFn(func) => func.to_token_stream(),
+			Functions::Impl(item) => item.to_token_stream(),
+			Functions::Trait(item) => item.to_token_stream()
+		};
 
-pub fn transform_functions(item: Functions, callback: Transform) -> Result<TokenStream> {
+		return Err(Error::new_spanned(tokens, "Unexpected declaration"));
+	}
+
 	Ok(match item {
 		Functions::Fn(mut func) => {
 			callback(&mut Function {
@@ -109,18 +121,15 @@ pub fn transform_functions(item: Functions, callback: Transform) -> Result<Token
 }
 
 pub fn transform_fn(
-	item: TokenStream, callback: Transform, allowed: impl FnOnce(&Functions) -> bool
+	item: TokenStream, callback: impl Fn(&mut Function) -> Result<()>,
+	allowed: impl FnOnce(&Functions) -> bool
 ) -> TokenStream {
 	let parsed = match parse2::<Functions>(item.clone()) {
 		Ok(parsed) => parsed,
 		Err(err) => return err.to_compile_error()
 	};
 
-	if !allowed(&parsed) {
-		return Error::new_spanned(item, "Unexpected declaration").to_compile_error();
-	}
-
-	match transform_functions(parsed, callback) {
+	match transform_functions(parsed, callback, allowed) {
 		Ok(ts) => ts,
 		Err(err) => err.to_compile_error()
 	}

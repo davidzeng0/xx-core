@@ -94,7 +94,7 @@ macro_rules! define_union {
 		#[allow(deprecated)]
 		impl ::std::fmt::Debug for $name {
 			fn fmt(&self, fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-				fmt.debug_struct(stringify!($name)).finish()
+				fmt.debug_struct(::std::stringify!($name)).finish()
 			}
 		}
 	}

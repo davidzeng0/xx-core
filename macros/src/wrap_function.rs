@@ -74,37 +74,43 @@ impl Parse for WrapperFunctions {
 }
 
 impl WrapperFunctions {
-	pub fn expand(&self) -> TokenStream {
+	fn expand(&self) -> TokenStream {
 		let mut fns = Vec::new();
 
 		for function in &self.functions {
-			let pats = get_args(&function.sig, false);
-			let ident = &function.sig.ident;
-			let maybe_await = if function.sig.asyncness.is_some() {
-				quote! { .await }
-			} else {
-				quote! {}
-			};
+			let mut call = Vec::new();
 
-			let inner = if function
+			if function
 				.sig
 				.receiver()
 				.is_some_and(|rec| rec.mutability.is_some())
 			{
-				&self.inner_mut
+				call.push(self.inner_mut.to_token_stream());
 			} else {
-				&self.inner
+				call.push(self.inner.to_token_stream());
 			};
+
+			let ident = &function.sig.ident;
+
+			call.push(quote! { .#ident });
+
+			let pats = get_args(&function.sig, false);
+
+			call.push(quote! { (#pats) });
+
+			if function.sig.asyncness.is_some() {
+				call.push(quote! { .await });
+			}
 
 			let mut sig = function.sig.clone();
 			let mut attrs = function.attrs.clone();
 			let mut stmts = Vec::new();
 
 			attrs.push(parse_quote! { #[inline(always )] });
-			stmts.push(quote! { (#inner).#ident (#pats) #maybe_await });
+			stmts.push(quote! { #(#call)* });
 			sig.ident = function.ident.clone();
 
-			if remove_attr(&mut attrs, "chain") {
+			if remove_attr_path(&mut attrs, "chain") {
 				stmts.push(quote! { ; self });
 			}
 

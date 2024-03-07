@@ -67,3 +67,9 @@ define_struct! {
 		pub resv1: [u64; 12]
 	}
 }
+
+impl Statx {
+	pub fn mask(&self) -> BitFlags<StatxMask> {
+		unsafe { BitFlags::from_bits_unchecked(self.mask) }
+	}
+}

@@ -1,4 +1,4 @@
-use syn::parse::Parser;
+use std::mem::take;
 
 use super::*;
 mod traits;
@@ -14,6 +14,10 @@ impl VisitMut for HasAsync {
 	fn visit_expr_async_mut(&mut self, _: &mut ExprAsync) {
 		self.0 = true;
 	}
+
+	fn visit_macro_mut(&mut self, mac: &mut Macro) {
+		visit_macro_punctuated_exprs(self, mac);
+	}
 }
 
 struct TransformAsync;
@@ -22,11 +26,17 @@ impl TransformAsync {
 	fn transform_async(&mut self, inner: &mut ExprAsync) -> Expr {
 		self.visit_expr_async_mut(inner);
 
-		let (span, attrs, capture, block) =
-			(inner.span(), &inner.attrs, &inner.capture, &mut inner.block);
+		let (attrs, capture, mut block) = (&inner.attrs, &inner.capture, inner.block.clone());
+
+		block.stmts.insert(
+			0,
+			parse_quote! {
+				let __xx_internal_async_context = unsafe { __xx_internal_async_context.as_ref() };
+			}
+		);
 
 		parse_quote_spanned! {
-			span => {
+			inner.span() => {
 				#(#attrs)*
 				::xx_core::coroutines::closure::OpaqueClosure::new(
 					#capture
@@ -47,8 +57,7 @@ impl TransformAsync {
 			inner.span() => {
 				#(#attrs)*
 				::xx_core::coroutines::Context::run(
-					#[allow(unused_unsafe)]
-					unsafe { __xx_internal_async_context.as_ref() },
+					__xx_internal_async_context,
 					#base
 				)
 			}
@@ -73,28 +82,7 @@ impl TransformAsync {
 
 		self.visit_expr_mut(body);
 
-		let attrs = &closure.attrs;
-		let args: Vec<_> = (0..closure.inputs.len())
-			.map(|idx| format_ident!("Arg{}", idx))
-			.collect();
-
-		parse_quote_spanned! {
-			closure.span() => {
-				#(#attrs)*
-				({
-					fn coerce_lifetime<'closure, F, #(#args,)* Output>(closure: F) -> F
-					where
-						F: Fn(#(#args),*) -> Output,
-						#(#args: 'closure,)*
-						Output: 'closure
-					{
-						closure
-					}
-
-					coerce_lifetime
-				})(#closure)
-			}
-		}
+		Expr::Closure(closure.clone())
 	}
 }
 
@@ -109,15 +97,7 @@ impl VisitMut for TransformAsync {
 	}
 
 	fn visit_macro_mut(&mut self, mac: &mut Macro) {
-		if let Ok(mut exprs) =
-			Punctuated::<Expr, Token![,]>::parse_terminated.parse2(mac.tokens.clone())
-		{
-			for expr in &mut exprs {
-				self.visit_expr_mut(expr);
-			}
-
-			mac.tokens = exprs.to_token_stream();
-		}
+		visit_macro_punctuated_exprs(self, mac);
 	}
 }
 
@@ -147,6 +127,13 @@ fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()>
 	}
 
 	if let Some(block) = &mut func.block {
+		block.stmts.insert(
+			0,
+			parse_quote! {
+				let __xx_internal_async_context = unsafe { __xx_internal_async_context.as_ref() };
+			}
+		);
+
 		TransformAsync {}.visit_block_mut(*block);
 	}
 
@@ -195,11 +182,9 @@ fn transform_async(func: &mut Function, closure_type: ClosureType) -> Result<()>
 	Ok(())
 }
 
-fn try_transform(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
+fn parse_attrs(attrs: TokenStream) -> Result<Option<ClosureType>> {
 	let options = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(attrs)?;
-
-	let mut explicit = false;
-	let mut trait_impl = false;
+	let mut closure_type = None;
 
 	for option in &options {
 		let mut success = false;
@@ -208,10 +193,15 @@ fn try_transform(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
 			let Meta::Path(path) = option else { break };
 			let Some(ident) = path.get_ident() else { break };
 
+			if closure_type.is_some() {
+				break;
+			}
+
 			match ident.to_string().as_ref() {
-				"explicit" => explicit = true,
-				"traitfn" => trait_impl = true,
-				_ => break
+				"explicit" => closure_type = Some(ClosureType::Explicit),
+				"traitfn" => closure_type = Some(ClosureType::None),
+				"traitext" => closure_type = Some(ClosureType::OpaqueTrait),
+				_ => return Err(Error::new_spanned(option, "Unknown option"))
 			}
 
 			success = true;
@@ -220,48 +210,57 @@ fn try_transform(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
 		}
 
 		if !success {
-			return Err(Error::new_spanned(option, "Unknown option"));
+			return Err(Error::new_spanned(
+				options,
+				"Invalid combination of options"
+			));
 		}
 	}
 
-	if explicit && trait_impl {
-		return Err(Error::new_spanned(
-			options,
-			"Invalid combination of options"
-		));
-	}
+	Ok(closure_type)
+}
 
-	if explicit {
-		return Ok(transform_fn(
-			item,
-			|func| transform_async(func, ClosureType::Explicit),
-			|item| match item {
-				Functions::Trait(_) | Functions::TraitFn(_) => false,
-				_ => true
-			}
-		));
-	}
-
+fn try_transform(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
+	let closure_type = parse_attrs(attrs)?;
 	let item = parse2::<Functions>(item)?;
 
-	if trait_impl {
-		return async_impl(item);
+	match closure_type {
+		Some(closure_type @ (ClosureType::OpaqueTrait | ClosureType::Explicit)) => {
+			return transform_functions(
+				item,
+				|func| transform_async(func, closure_type),
+				|item| match item {
+					Functions::Trait(_) | Functions::TraitFn(_) => false,
+					_ => true
+				}
+			);
+		}
+
+		Some(ClosureType::None) => {
+			return async_impl(item);
+		}
+
+		_ => ()
 	}
 
 	match &item {
 		Functions::Trait(item) => async_trait(item.clone()),
 
-		Functions::Fn(_) => transform_functions(item.clone(), |func| {
-			transform_async(func, ClosureType::Opaque)
-		}),
+		Functions::Fn(_) => transform_functions(
+			item.clone(),
+			|func| transform_async(func, ClosureType::Opaque),
+			|_| true
+		),
 
 		Functions::Impl(imp) => {
 			if imp.trait_.is_some() {
 				async_impl(item.clone())
 			} else {
-				transform_functions(item.clone(), |func| {
-					transform_async(func, ClosureType::Opaque)
-				})
+				transform_functions(
+					item.clone(),
+					|func| transform_async(func, ClosureType::Opaque),
+					|_| true
+				)
 			}
 		}
 

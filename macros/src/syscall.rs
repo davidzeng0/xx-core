@@ -64,8 +64,8 @@ impl Parse for SyscallImpl {
 
 		Ok(Self {
 			instruction,
-			out: out.ok_or(Error::new(Span::call_site(), "expected output register"))?,
-			num: num.ok_or(Error::new(Span::call_site(), "expected number register"))?,
+			out: out.ok_or(input.error("expected output register"))?,
+			num: num.ok_or(input.error("expected number register"))?,
 			regs: args.unwrap_or(Vec::new()),
 			clobber: clobber.unwrap_or(Vec::new())
 		})
@@ -83,11 +83,7 @@ impl SyscallImpl {
 		);
 
 		let mut functions = Vec::new();
-		let args: Vec<_> = regs
-			.iter()
-			.enumerate()
-			.map(|(i, _)| format_ident!("arg{}", i))
-			.collect();
+		let args: Vec<_> = (0..regs.len()).map(|i| format_ident!("arg{}", i)).collect();
 
 		for argc in 0..=regs.len() {
 			let regs = &regs[0..argc];

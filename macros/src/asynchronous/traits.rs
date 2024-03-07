@@ -8,9 +8,8 @@ fn format_trait_ident(ident: &Ident) -> Ident {
 	format_ident!("{}Ext", ident)
 }
 
-fn trait_ext(item: &ItemTrait) -> Result<TokenStream> {
-	let mut item = item.clone();
-	let mut generics = item.generics.clone();
+fn get_generics_without_bounds(generics: &Generics) -> Generics {
+	let mut generics = generics.clone();
 
 	for generic in &mut generics.params {
 		match generic {
@@ -24,20 +23,34 @@ fn trait_ext(item: &ItemTrait) -> Result<TokenStream> {
 		}
 	}
 
-	let ident = &item.ident;
-	let supertrait: TypeParamBound = parse_quote_spanned! { ident.span() => #ident #generics };
+	generics
+}
 
-	item.supertraits.push(supertrait.clone());
-	item.ident = format_trait_ident(ident);
+fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
+	let name = ext.ident.clone();
 
-	let mut trait_items = Vec::new();
+	ext.ident = format_trait_ident(&name);
 
-	for trait_item in item.items {
+	let generics = get_generics_without_bounds(&ext.generics);
+	let super_trait: TypeParamBound = parse_quote_spanned! { name.span() => #name #generics };
+
+	ext.supertraits.push(super_trait.clone());
+
+	for trait_item in take(&mut ext.items) {
 		let TraitItem::Fn(mut func) = trait_item else {
 			continue;
 		};
 
+		let mut call = Vec::new();
 		let ident = format_fn_ident(&func.sig.ident);
+
+		call.push(quote! { <Self as #super_trait>::#ident });
+
+		if func.sig.generics.params.len() > 0 {
+			call.push(quote! { :: });
+			call.push(get_generics_without_bounds(&func.sig.generics).to_token_stream());
+		}
+
 		let mut args: Punctuated<Expr, Token![,]> = get_args(&func.sig, true);
 
 		if func.sig.asyncness.is_some() {
@@ -46,9 +59,8 @@ fn trait_ext(item: &ItemTrait) -> Result<TokenStream> {
 			});
 		}
 
-		func.default = Some(parse_quote! {{
-			Self::#ident (#args)
-		}});
+		call.push(quote! { (#args) });
+		func.default = Some(parse_quote! {{ #(#call)* }});
 
 		RemoveRefMut {}.visit_signature_mut(&mut func.sig);
 
@@ -57,7 +69,7 @@ fn trait_ext(item: &ItemTrait) -> Result<TokenStream> {
 				&mut Function {
 					is_root: false,
 					attrs: &mut func.attrs,
-					env_generics: Some(&item.generics),
+					env_generics: Some(&ext.generics),
 					sig: &mut func.sig,
 					block: func.default.as_mut()
 				},
@@ -65,28 +77,24 @@ fn trait_ext(item: &ItemTrait) -> Result<TokenStream> {
 			)?;
 		}
 
-		trait_items.push(TraitItem::Fn(func));
+		ext.items.push(TraitItem::Fn(func));
 	}
 
-	item.items = trait_items;
-
-	let mut new_generics = item.generics.clone();
-	let ident = &item.ident;
-	let thistrait = quote_spanned! { ident.span() => #ident #generics };
+	let ident = &ext.ident;
+	let mut new_generics = ext.generics.clone();
 
 	new_generics
 		.params
-		.push(parse_quote! { XXInternalTraitImplementer: #supertrait + ?Sized });
-
+		.push(parse_quote! { XXInternalTraitImplementer: #super_trait + ?Sized });
 	Ok(quote! {
-		#item
+		#ext
 
-		impl #new_generics #thistrait for XXInternalTraitImplementer {}
+		impl #new_generics #ident #generics for XXInternalTraitImplementer {}
 	})
 }
 
 pub fn async_trait(mut item: ItemTrait) -> Result<TokenStream> {
-	let ext = trait_ext(&item)?;
+	let ext = trait_ext(item.clone())?;
 
 	for trait_item in &mut item.items {
 		let TraitItem::Fn(func) = trait_item else {
@@ -115,15 +123,17 @@ pub fn async_trait(mut item: ItemTrait) -> Result<TokenStream> {
 }
 
 pub fn async_impl(item: Functions) -> Result<TokenStream> {
-	match &item {
-		Functions::Fn(_) | Functions::Impl(_) => (),
-		_ => return Err(Error::new(Span::call_site(), "Unexpected declaration"))
-	}
+	transform_functions(
+		item,
+		|func| {
+			func.is_root = false;
+			func.sig.ident = format_fn_ident(&func.sig.ident);
 
-	transform_functions(item, |func| {
-		func.is_root = false;
-		func.sig.ident = format_fn_ident(&func.sig.ident);
-
-		transform_async(func, ClosureType::None)
-	})
+			transform_async(func, ClosureType::None)
+		},
+		|item| match &item {
+			Functions::Fn(_) | Functions::Impl(_) => true,
+			_ => false
+		}
+	)
 }
