@@ -32,7 +32,7 @@ jobs:
       - name: Finalize setup
         run: |
           rm -rf .cargo
-          echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -v .:/base rust \"cd xx-core \&\& \$ARGS\" > ./docker_run
+          echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -v .:/base rust \"\$ARGS\" > ./docker_run
           chmod +x ./docker_run
       - name: Check & Lint
         run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo clippy --all-targets
