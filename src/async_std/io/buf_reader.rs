@@ -115,7 +115,16 @@ impl<R: Read> Read for BufReader<R> {
 			let read = self.read_into(buf);
 
 			#[cfg(feature = "tracing")]
-			crate::trace!(target: self, "## read(buf = &mut [u8; {}]) = Buffered({} / {})", buf.len(), read, self.buffer().len() + read);
+			crate::trace!(
+				target: self,
+				"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
+				buf.len(),
+				read,
+				{
+					#[allow(clippy::arithmetic_side_effects)]
+					(self.buffer().len() + read)
+				}
+			);
 
 			return Ok(read);
 		}
@@ -136,7 +145,16 @@ impl<R: Read> Read for BufReader<R> {
 		let read = self.read_into(buf);
 
 		#[cfg(feature = "tracing")]
-		crate::trace!(target: self, "## read(buf = &mut [u8; {}]) = Buffered({} / {})", buf.len(), read, self.buffer().len() + read);
+		crate::trace!(
+			target: self,
+			"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
+			buf.len(),
+			read,
+			{
+				#[allow(clippy::arithmetic_side_effects)]
+				(self.buffer().len() + read)
+			}
+		);
 
 		Ok(read)
 	}
