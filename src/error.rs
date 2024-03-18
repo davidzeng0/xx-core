@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 use std::{
 	error,
 	fmt::{self, Debug, Display, Formatter},
@@ -9,6 +11,7 @@ use std::{
 use crate::os::error::OsError;
 
 pub type Result<T> = result::Result<T, Error>;
+
 pub use io::ErrorKind;
 
 pub use crate::macros::compact_error;
@@ -21,7 +24,7 @@ pub enum ErrorMessage {
 impl AsRef<str> for ErrorMessage {
 	fn as_ref(&self) -> &str {
 		match self {
-			Self::Static(val) => *val,
+			Self::Static(val) => val,
 			Self::Owned(val) => val
 		}
 	}
@@ -39,53 +42,71 @@ impl From<String> for ErrorMessage {
 	}
 }
 
+#[allow(clippy::arithmetic_side_effects)]
+const fn compact_strs(
+	strings: &'static [&'static str], ordinal: u16
+) -> (&'static str, &'static str, &'static str) {
+	let offset = ordinal as usize * 2;
+
+	(strings[0], strings[offset + 1], strings[offset + 2])
+}
+
+/// # Safety
+/// `CompactError::ordinal` must return valid ordinals
+pub unsafe trait CompactError: Copy {
+	const STRINGS: &'static [&'static str];
+
+	fn as_err(self) -> Error {
+		self.into()
+	}
+
+	fn as_err_with_msg<M>(self, message: M) -> Error
+	where
+		M: Into<ErrorMessage>
+	{
+		Error::compact(self, Some(message))
+	}
+
+	fn kind(self) -> ErrorKind;
+
+	fn message(self) -> &'static str {
+		compact_strs(Self::STRINGS, self.ordinal()).2
+	}
+
+	fn ordinal(self) -> u16;
+
+	fn from_ordinal(ordinal: u16) -> Option<Self>;
+
+	/// # Safety
+	/// `ordinal` must be a valid variant
+	unsafe fn from_ordinal_unchecked(ordinal: u16) -> Self;
+}
+
+#[derive(Copy, Clone)]
 pub struct Simple {
 	kind: ErrorKind
 }
 
+#[derive(Copy, Clone)]
 pub struct Compact {
 	strings: &'static [&'static str],
 	kind: ErrorKind,
-	ordinal: u32
+	ordinal: u16
 }
 
 impl Compact {
-	fn name(&self) -> &'static str {
-		self.strings[0]
+	const fn variant(&self) -> &'static str {
+		compact_strs(self.strings, self.ordinal).1
 	}
 
-	fn variant(&self) -> &'static str {
-		self.strings[self.ordinal as usize * 2 + 1]
-	}
-
-	fn message(&self) -> &'static str {
-		self.strings[self.ordinal as usize * 2 + 2]
+	const fn message(&self) -> &'static str {
+		compact_strs(self.strings, self.ordinal).2
 	}
 }
 
 pub struct Extern {
-	kind: ErrorKind,
-	data: Box<dyn error::Error + Send + Sync>
-}
-
-pub trait CompactError: Copy {
-	const STRINGS: &'static [&'static str];
-
-	fn as_err(&self) -> Error {
-		(*self).into()
-	}
-
-	fn as_err_with_msg<M>(&self, message: M) -> Error
-	where
-		M: Into<ErrorMessage>
-	{
-		Error::compact(*self, Some(message))
-	}
-
-	fn kind(&self) -> ErrorKind;
-	fn ordinal(&self) -> u32;
-
-	unsafe fn from_ordinal_unchecked(ordinal: u32) -> Self;
+	data: Box<dyn error::Error + Send + Sync>,
+	kind: ErrorKind
 }
 
 enum Repr {
@@ -111,6 +132,7 @@ impl Error {
 		}
 	}
 
+	#[must_use]
 	pub fn from_raw_os_error(err: i32) -> Self {
 		Self {
 			repr: Repr::Os(OsError::from_raw(err)),
@@ -118,13 +140,15 @@ impl Error {
 		}
 	}
 
-	pub fn os_error(&self) -> Option<OsError> {
+	#[must_use]
+	pub const fn os_error(&self) -> Option<OsError> {
 		match &self.repr {
 			Repr::Os(code) => Some(*code),
 			_ => None
 		}
 	}
 
+	#[must_use]
 	pub fn kind(&self) -> ErrorKind {
 		match &self.repr {
 			Repr::Os(code) => code.kind(),
@@ -134,6 +158,7 @@ impl Error {
 		}
 	}
 
+	#[must_use]
 	pub fn is_interrupted(&self) -> bool {
 		self.kind() == ErrorKind::Interrupted
 	}
@@ -153,6 +178,7 @@ impl Error {
 		}
 	}
 
+	#[must_use]
 	pub fn map_as(kind: ErrorKind, err: Box<dyn error::Error + Send + Sync>) -> Self {
 		match err.downcast() {
 			Ok(this) => *this,
@@ -175,9 +201,14 @@ impl Error {
 		Self::map_as(ErrorKind::InvalidData, value.into())
 	}
 
-	pub fn downcast<T: CompactError>(&self) -> Option<T> {
+	#[must_use]
+	pub fn downcast<T>(&self) -> Option<T>
+	where
+		T: CompactError
+	{
 		match &self.repr {
 			Repr::Compact(compact) if compact.strings.as_ptr() == T::STRINGS.as_ptr() => {
+				/* Safety: guaranteed by unsafe trait impl */
 				Some(unsafe { T::from_ordinal_unchecked(compact.ordinal) })
 			}
 			_ => None
@@ -208,10 +239,13 @@ impl From<io::Error> for Error {
 			Self::from_raw_os_error(code)
 		} else if value.get_ref().is_some() {
 			let kind = value.kind();
+
+			#[allow(clippy::unwrap_used)]
 			let err = value.into_inner().unwrap();
 
 			Self::map_as(kind, err)
 		} else {
+			/* Safety: internally uses &'static str */
 			#[allow(deprecated)]
 			let description: &'static str = unsafe { transmute(error::Error::description(&value)) };
 
@@ -247,27 +281,36 @@ impl Debug for Error {
 				debug.finish()
 			}
 			Repr::Compact(compact) => fmt
-				.debug_struct(compact.name())
-				.field("what", &compact.variant())
+				.debug_struct(compact.variant())
+				.field("kind", &compact.kind)
 				.field(
 					"message",
 					&self
 						.message
 						.as_ref()
-						.map(AsRef::as_ref)
-						.unwrap_or(compact.message())
+						.map_or_else(|| compact.message(), AsRef::as_ref)
 				)
 				.finish(),
-			Repr::Extern(external) => fmt
-				.debug_struct("Extern")
-				.field("kind", &external.kind)
-				.field("data", &external.data)
-				.finish(),
+			Repr::Extern(external) => {
+				let mut debug = fmt.debug_struct("Extern");
+
+				debug.field("kind", &external.kind);
+				debug.field("data", &external.data);
+
+				if let Some(message) = &self.message {
+					debug.field("message", &message.as_ref());
+				}
+
+				debug.finish()
+			}
 			Repr::Os(code) => fmt
 				.debug_struct("Os")
 				.field("code", &(*code as i32))
 				.field("kind", &code.kind())
-				.field("message", &code.as_str())
+				.field(
+					"message",
+					&self.message.as_ref().map_or(code.as_str(), AsRef::as_ref)
+				)
 				.finish()
 		}
 	}
@@ -297,6 +340,7 @@ impl error::Error for Error {
 				if let Some(message) = &self.message {
 					message.as_ref()
 				} else {
+					/* Safety: internally uses &'static str */
 					unsafe { transmute(io::Error::from(simple.kind).description()) }
 				}
 			}
@@ -334,5 +378,6 @@ pub enum Core {
 	ConnectTimeout = (ErrorKind::TimedOut, "Connection timed out"),
 	Shutdown       = (ErrorKind::NotConnected, "Endpoint is shutdown"),
 	FormatterError = (ErrorKind::Other, "Formatter error"),
-	Pending        = (ErrorKind::Other, "Operation in progress")
+	Pending        = (ErrorKind::Other, "Operation in progress"),
+	Panic          = (ErrorKind::Other, "Panicked")
 }

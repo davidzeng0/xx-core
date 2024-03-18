@@ -1,8 +1,9 @@
 pub use crate::macros::future;
 use crate::{error::*, pointer::*};
 
-pub mod block_on;
+mod block_on;
 pub mod closure;
+pub use block_on::*;
 
 pub type ReqPtr<T> = Ptr<Request<T>>;
 
@@ -14,8 +15,8 @@ pub type Complete<T> = unsafe fn(ReqPtr<T>, Ptr<()>, T);
 /// When the [`Future`] completes, the [`Request`]'s callback will be
 /// executed with the result
 ///
-/// The pointer will be used as the key for [`Cancel::run`],
-/// which will cancel atleast one Future with the same key
+/// The pointer may be used as the key for [`Cancel::run`],
+/// which will cancel at least one Future with the same key
 ///
 /// Each request pointer should be unique, as it may be possible that
 /// only one future can be queued for each request
@@ -31,10 +32,14 @@ impl<T> Request<T> {
 	pub const fn no_op() -> Self {
 		fn no_op<T>(_: ReqPtr<T>, _: Ptr<()>, _: T) {}
 
-		Request::new(Ptr::null(), no_op)
+		/* Safety: no_op does not panic */
+		unsafe { Self::new(Ptr::null(), no_op) }
 	}
 
-	pub const fn new(arg: Ptr<()>, callback: Complete<T>) -> Self {
+	/// # Safety
+	/// `callback` must not panic, and its safety requirements must be
+	/// identical to `Request::complete`
+	pub const unsafe fn new(arg: Ptr<()>, callback: Complete<T>) -> Self {
 		Self { arg, callback }
 	}
 
@@ -42,16 +47,23 @@ impl<T> Request<T> {
 		self.arg = arg;
 	}
 
-	// Safety: must not call after future completes, and must not call within
-	// `Future::run`
+	/// # Safety
+	/// must not call after future already completed, and must not call within
+	/// `Future::run`
 	pub unsafe fn complete(request: Ptr<Self>, value: T) {
-		let Request { arg, callback } = *request.as_ref();
+		/* Safety: guaranteed by caller and Future's contract */
+		let Self { arg, callback } = *unsafe { request.as_ref() };
 
-		(callback)(request, arg, value);
+		/* Safety: guaranteed by caller */
+		unsafe { (callback)(request, arg, value) };
 	}
 }
 
 /// A cancel token, allowing the user to cancel a running future
+///
+/// # Safety
+/// If `run` panics, the callback must not be called from within, and the future
+/// is assumed to still be in progress
 pub unsafe trait Cancel {
 	/// Cancelling is on a best-effort basis
 	///
@@ -76,6 +88,11 @@ pub unsafe trait Cancel {
 	///
 	/// It is possible that the callback is
 	/// immediately executed in the call to cancel
+	///
+	/// # Safety
+	/// The future must be in progress and this function cannot be called more
+	/// than once. The caller must be prepared for the callback to be executed
+	/// from within this call
 	unsafe fn run(self) -> Result<()>;
 }
 
@@ -90,15 +107,25 @@ pub enum Progress<Output, C: Cancel> {
 	Done(Output)
 }
 
+/// # Safety
+/// Must not use any references once the callback is called
+/// If `run` panics, the future must not be in progress, and the callback must
+/// not be called
 pub unsafe trait Future {
 	type Output;
 	type Cancel: Cancel;
 
 	/// Run the future
 	///
-	/// The user is responsible for ensuring any pointers/references passed
-	/// to the task stays alive until the callback is called.
+	/// The user is responsible for ensuring all pointers/references passed
+	/// to the future implementer stays valid until the callback is called
 	///
-	/// Which pointers need to stay valid will depend on the implementation
+	/// If the future can be constructed with raw pointers and integers in safe
+	/// code, the constructor must be marked as unsafe, as safe blocking
+	/// functions cannot guarantee all lifetimes are captured and life for the
+	/// blocking duration
+	///
+	/// # Safety
+	/// All pointers must live until the callback is called
 	unsafe fn run(self, request: ReqPtr<Self::Output>) -> Progress<Self::Output, Self::Cancel>;
 }

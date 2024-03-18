@@ -1,7 +1,4 @@
 use super::*;
 
-pub fn close(fd: OwnedFd) -> Result<()> {
-	unsafe { syscall_int!(Close, fd)? };
-
-	Ok(())
-}
+#[syscall_define(Close)]
+pub fn close(fd: OwnedFd) -> Result<()>;

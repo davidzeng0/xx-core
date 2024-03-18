@@ -18,19 +18,34 @@ pub struct Pool {
 }
 
 impl Pool {
+	#[must_use]
+	#[allow(clippy::new_without_default)]
 	pub const fn new() -> Self {
 		Self { data: Mutex::new(Data::new()) }
 	}
 
+	/// # Panics
+	/// if creating a fiber fails
+	#[must_use]
 	pub fn new_fiber(&self, start: Start) -> Fiber {
-		let mut data = self.data.lock().unwrap();
+		let fiber = {
+			/* we never panic with the lock */
+			#[allow(clippy::unwrap_used)]
+			let mut data = self.data.lock().unwrap();
 
-		data.active = data.active.checked_add(1).unwrap();
+			data.active = match data.active.checked_add(1) {
+				Some(active) => active,
+				None => abort!("Fatal error: fiber count overflow")
+			};
 
-		match data.pool.pop() {
+			data.pool.pop()
+		};
+
+		match fiber {
 			Some(mut fiber) => {
-				trace!(target: self, "@@ Reusing stack for worker");
+				trace!(target: self, "== Reusing stack for worker");
 
+				/* Safety: fiber was exited to us */
 				unsafe { fiber.set_start(start) };
 
 				fiber
@@ -44,21 +59,32 @@ impl Pool {
 		}
 	}
 
-	fn calculate_ideal(count: u64) -> u64 {
+	const fn calculate_ideal(count: u64) -> u64 {
 		const RATIO: u64 = 20;
 
-		count * RATIO / 100 + 16
+		#[allow(clippy::arithmetic_side_effects)]
+		(count * RATIO / 100 + 16)
 	}
 
-	pub fn exit_fiber(&self, fiber: Fiber) {
+	/// # Safety
+	/// fiber must be exited
+	///
+	/// This function never panics
+	#[allow(clippy::missing_panics_doc)]
+	pub unsafe fn exit_fiber(&self, fiber: Fiber) {
+		/* we never panic with the lock */
+		#[allow(clippy::unwrap_used)]
 		let mut data = self.data.lock().unwrap();
 
-		data.active = data.active.checked_sub(1).unwrap();
+		data.active = match data.active.checked_sub(1) {
+			Some(active) => active,
+			None => abort!("Fatal error: fiber count overflow")
+		};
 
 		let ideal = Self::calculate_ideal(data.active);
 
-		if data.pool.len() < ideal as usize {
-			trace!(target: self, "@@ Preserving worker stack");
+		if ideal > data.pool.len() as u64 && data.pool.try_reserve(1).is_ok() {
+			trace!(target: self, "== Preserving worker stack");
 
 			data.pool.push(fiber);
 		} else {

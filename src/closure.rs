@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 use std::marker::PhantomData;
 
 pub struct Closure<Capture, Args, Output> {

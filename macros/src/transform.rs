@@ -1,5 +1,13 @@
 use super::*;
 
+pub struct Function<'a> {
+	pub is_root: bool,
+	pub attrs: &'a mut Vec<Attribute>,
+	pub env_generics: Option<&'a Generics>,
+	pub sig: &'a mut Signature,
+	pub block: Option<&'a mut Block>
+}
+
 #[derive(Clone)]
 pub enum Functions {
 	Fn(ImplItemFn),
@@ -9,7 +17,7 @@ pub enum Functions {
 }
 
 impl Parse for Functions {
-	fn parse(item: ParseStream) -> Result<Self> {
+	fn parse(item: ParseStream<'_>) -> Result<Self> {
 		let lookahead = item.fork();
 
 		lookahead.call(Attribute::parse_outer)?;
@@ -18,11 +26,11 @@ impl Parse for Functions {
 		lookahead.parse::<Option<Token![unsafe]>>()?;
 
 		if lookahead.peek(Token![auto]) || lookahead.peek(Token![trait]) {
-			return item.parse().map(|item| Self::Trait(item));
+			return item.parse().map(Self::Trait);
 		}
 
 		if lookahead.peek(Token![impl]) {
-			return item.parse().map(|item| Self::Impl(item));
+			return item.parse().map(Self::Impl);
 		}
 
 		lookahead.parse::<Option<Token![const]>>()?;
@@ -30,7 +38,7 @@ impl Parse for Functions {
 		lookahead.parse::<Option<Token![unsafe]>>()?;
 		lookahead.parse::<Option<Abi>>()?;
 
-		if !lookahead.parse::<Token![fn]>().is_ok() {
+		if lookahead.parse::<Token![fn]>().is_err() {
 			return Err(lookahead.error("Expected a function, trait, or impl"));
 		}
 
@@ -38,12 +46,12 @@ impl Parse for Functions {
 			return Ok(Self::Fn(item));
 		}
 
-		item.parse().map(|item| Self::TraitFn(item))
+		item.parse().map(Self::TraitFn)
 	}
 }
 
 pub fn transform_functions(
-	item: Functions, callback: impl Fn(&mut Function) -> Result<()>,
+	item: Functions, callback: impl Fn(&mut Function<'_>) -> Result<()>,
 	allowed: impl FnOnce(&Functions) -> bool
 ) -> Result<TokenStream> {
 	if !allowed(&item) {
@@ -121,10 +129,10 @@ pub fn transform_functions(
 }
 
 pub fn transform_fn(
-	item: TokenStream, callback: impl Fn(&mut Function) -> Result<()>,
+	item: TokenStream, callback: impl Fn(&mut Function<'_>) -> Result<()>,
 	allowed: impl FnOnce(&Functions) -> bool
 ) -> TokenStream {
-	let parsed = match parse2::<Functions>(item.clone()) {
+	let parsed = match parse2::<Functions>(item) {
 		Ok(parsed) => parsed,
 		Err(err) => return err.to_compile_error()
 	};

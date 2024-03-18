@@ -117,5 +117,5 @@ define_enum! {
 
 #[allow(non_upper_case_globals)]
 impl TcpOption {
-	pub const CmInq: TcpOption = TcpOption::Inq;
+	pub const CmInq: Self = Self::Inq;
 }

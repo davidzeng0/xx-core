@@ -17,10 +17,9 @@ impl<W: Write> BufWriter<W> {
 	}
 
 	/// Reads from `buf` into our internal buffer
-	///
-	/// Safety: buf len must not exceed spare capacity. there is nothing unsafe
-	/// about this, but we don't want our buf to expand at all
-	unsafe fn write_buffered(&mut self, buf: &[u8]) -> usize {
+	fn write_buffered(&mut self, buf: &[u8]) -> usize {
+		assert!(buf.len() <= self.buf.spare_capacity_mut().len());
+
 		self.buf.extend_from_slice(buf);
 
 		buf.len()
@@ -33,14 +32,19 @@ impl<W: Write> BufWriter<W> {
 			let buf = &self.buf[self.pos..];
 			let wrote = self.inner.write(buf).await?;
 
-			length_check(buf, wrote);
-
 			if unlikely(wrote == 0) {
 				return Err(Core::WriteZero.as_err());
 			}
 
-			self.pos += wrote;
+			#[allow(clippy::arithmetic_side_effects)]
+			(self.pos += length_check(buf, wrote));
+
+			#[cfg(feature = "tracing")]
+			crate::trace!(target: self, "## flush_buf: write(buf = &[u8; {}]) = Ok({})", buf.len(), wrote);
 		}
+
+		#[cfg(feature = "tracing")]
+		crate::trace!(target: self, "## flush_buf: complete()");
 
 		self.discard();
 
@@ -55,10 +59,12 @@ impl<W: Write> BufWriter<W> {
 		Self::from_parts(inner, Vec::with_capacity(capacity), 0)
 	}
 
+	/// # Panics
+	/// if `pos` > `buf.len()`
 	pub fn from_parts(inner: W, buf: Vec<u8>, pos: usize) -> Self {
 		assert!(pos <= buf.len());
 
-		BufWriter { inner, buf, pos }
+		Self { inner, buf, pos }
 	}
 
 	/// Calling `into_inner` without flushing will lead to data loss
@@ -75,17 +81,30 @@ impl<W: Write> BufWriter<W> {
 impl<W: Write> Write for BufWriter<W> {
 	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		if self.buf.spare_capacity_mut().len() >= buf.len() {
-			/* Safety: we just checked */
-			return Ok(unsafe { self.write_buffered(buf) });
+			let wrote = self.write_buffered(buf);
+
+			#[cfg(feature = "tracing")]
+			crate::trace!(target: self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
+
+			return Ok(wrote);
 		}
 
 		self.flush_buf().await?;
 
 		if buf.len() >= self.buf.capacity() {
-			self.inner.write(buf).await
+			let wrote = self.inner.write(buf).await?;
+
+			#[cfg(feature = "tracing")]
+			crate::trace!(target: self, "## write(buf = &[u8; {}]) = Direct({})", buf.len(), wrote);
+
+			Ok(wrote)
 		} else {
-			/* Safety: we just checked */
-			Ok(unsafe { self.write_buffered(buf) })
+			let wrote = self.write_buffered(buf);
+
+			#[cfg(feature = "tracing")]
+			crate::trace!(target: self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
+
+			Ok(wrote)
 		}
 	}
 
@@ -102,21 +121,36 @@ impl<W: Write> Write for BufWriter<W> {
 #[asynchronous]
 impl<W: Write + Seek> BufWriter<W> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
-		let pos = rel
-			.checked_add_unsigned(self.buf.len() as u64)
-			.ok_or_else(|| Core::Overflow.as_err())?;
+		#[allow(clippy::never_loop)]
+		loop {
+			let Some(pos) = rel.checked_add_unsigned(self.pos as u64) else {
+				break;
+			};
 
-		if pos >= 0 && (self.pos..=self.buf.len()).contains(&(pos as usize)) {
+			/* wrap cannot happen due to limits of vec's len */
+			#[allow(clippy::cast_possible_wrap)]
+			if pos < self.pos as i64 || pos > self.buf.len() as i64 {
+				break;
+			}
+
+			#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 			self.buf.truncate(pos as usize);
-			self.stream_position().await
-		} else {
-			self.seek_inner(SeekFrom::Current(rel)).await
+
+			return self.stream_position().await;
 		}
+
+		self.seek_inner(SeekFrom::Current(rel)).await
 	}
 
 	async fn seek_inner(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.flush_buf().await?;
-		self.inner.seek(seek).await
+
+		let pos = self.inner.seek(seek).await;
+
+		#[cfg(feature = "tracing")]
+		crate::trace!(target: self, "## seek_inner(seek = {:?}) = {:?}", seek, pos);
+
+		pos
 	}
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
@@ -149,8 +183,10 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 		let pos = self.inner.stream_position().await?;
 		let buffered = self.buf.len();
 
-		pos.checked_add(buffered as u64)
-			.ok_or_else(|| Core::Overflow.as_err())
+		#[allow(clippy::expect_used)]
+		Ok(pos
+			.checked_add(buffered as u64)
+			.expect("Overflow occurred calculating stream position"))
 	}
 
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
@@ -166,11 +202,12 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 
 			SeekFrom::End(pos) => {
 				if self.stream_len_fast() && self.stream_position_fast() {
+					#[allow(clippy::expect_used)]
 					let new_pos = self
 						.stream_len()
 						.await?
 						.checked_add_signed(pos)
-						.ok_or_else(|| Core::Overflow.as_err())?;
+						.expect("Overflow occured calculating absolute offset");
 
 					self.seek_abs(new_pos, seek).await
 				} else {

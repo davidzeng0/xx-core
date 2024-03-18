@@ -14,11 +14,13 @@ struct WrapperFunctions {
 }
 
 impl Parse for WrapperFunctions {
-	fn parse(input: ParseStream) -> Result<Self> {
+	fn parse(input: ParseStream<'_>) -> Result<Self> {
 		let mut inner = None;
 		let mut inner_mut = None;
 
 		for _ in 0..2 {
+			/* reason: readability */
+			#[allow(clippy::nonminimal_bool)]
 			if !input.peek(Ident) && !(input.peek(Token![mut]) && input.peek2(Ident)) {
 				break;
 			}
@@ -26,11 +28,12 @@ impl Parse for WrapperFunctions {
 			let mutability: Option<Token![mut]> = input.parse()?;
 			let ident: Ident = input.parse()?;
 
-			if ident != "inner" {
-				return Err(Error::new_spanned(ident, "Expected`inner`"));
-			}
-
+			#[allow(clippy::needless_late_init)]
 			let rhs: Expr;
+
+			if ident != "inner" {
+				return Err(Error::new_spanned(ident, "Expected `inner`"));
+			}
 
 			input.parse::<Token![=]>()?;
 			rhs = input.parse()?;
@@ -44,11 +47,11 @@ impl Parse for WrapperFunctions {
 		}
 
 		if inner.is_none() && inner_mut.is_none() {
-			return Err(input.error("expected an inner expression"));
+			return Err(input.error("Expected an inner expression"));
 		}
 
 		let inner = inner.unwrap_or_else(|| inner_mut.clone().unwrap());
-		let inner_mut = inner_mut.unwrap_or(inner.clone());
+		let inner_mut = inner_mut.unwrap_or_else(|| inner.clone());
 
 		let mut functions = Vec::new();
 
@@ -63,7 +66,7 @@ impl Parse for WrapperFunctions {
 			let vis: Visibility = input.parse()?;
 			let sig: Signature = input.parse()?;
 
-			let ident = ident.unwrap_or(sig.ident.clone());
+			let ident = ident.unwrap_or_else(|| sig.ident.clone());
 
 			input.parse::<Token![;]>()?;
 			functions.push(Function { attrs, ident, vis, sig });
@@ -80,38 +83,39 @@ impl WrapperFunctions {
 		for function in &self.functions {
 			let mut call = Vec::new();
 
-			if function
+			let inner = if function
 				.sig
 				.receiver()
 				.is_some_and(|rec| rec.mutability.is_some())
 			{
-				call.push(self.inner_mut.to_token_stream());
+				self.inner_mut.to_token_stream()
 			} else {
-				call.push(self.inner.to_token_stream());
+				self.inner.to_token_stream()
 			};
 
+			call.push(quote_spanned! { function.sig.span() => (#inner) });
+
 			let ident = &function.sig.ident;
+			let pats = get_args(&function.sig.inputs, false);
 
-			call.push(quote! { .#ident });
-
-			let pats = get_args(&function.sig, false);
-
-			call.push(quote! { (#pats) });
+			call.push(quote_spanned! { function.sig.span() => .#ident });
+			call.push(quote_spanned! { pats.span() => (#pats) });
 
 			if function.sig.asyncness.is_some() {
-				call.push(quote! { .await });
+				call.push(quote_spanned! { function.sig.span() => .await });
 			}
 
 			let mut sig = function.sig.clone();
 			let mut attrs = function.attrs.clone();
 			let mut stmts = Vec::new();
 
-			attrs.push(parse_quote! { #[inline(always )] });
+			attrs.push(parse_quote! { #[inline(always)] });
+			attrs.push(parse_quote! { #[allow(unsafe_op_in_unsafe_fn)] });
 			stmts.push(quote! { #(#call)* });
 			sig.ident = function.ident.clone();
 
-			if remove_attr_path(&mut attrs, "chain") {
-				stmts.push(quote! { ; self });
+			if let Some(attr) = remove_attr_path(&mut attrs, "chain") {
+				stmts.push(quote_spanned! { attr.span() => ; self });
 			}
 
 			fns.push(ItemFn {

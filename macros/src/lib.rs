@@ -1,5 +1,5 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::{
 	parse::{Parse, ParseStream, Parser},
 	punctuated::Punctuated,
@@ -12,14 +12,12 @@ use xx_macro_support::{attribute::*, function::*, macro_expr::*};
 mod asynchronous;
 mod duration;
 mod error;
-mod functions;
 mod future;
 mod make_closure;
 mod syscall;
 mod transform;
 mod wrap_function;
 
-use functions::*;
 use make_closure::*;
 use transform::*;
 
@@ -45,6 +43,13 @@ pub fn wrapper_functions(item: proc_macro::TokenStream) -> proc_macro::TokenStre
 #[proc_macro]
 pub fn syscall_impl(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 	syscall::syscall_impl(item.into()).into()
+}
+
+#[proc_macro_attribute]
+pub fn syscall_define(
+	attr: proc_macro::TokenStream, item: proc_macro::TokenStream
+) -> proc_macro::TokenStream {
+	syscall::syscall_define(attr.into(), item.into()).into()
 }
 
 #[proc_macro_attribute]

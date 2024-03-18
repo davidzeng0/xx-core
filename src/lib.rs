@@ -11,6 +11,10 @@ pub mod macros;
 pub mod opt;
 pub mod os;
 pub mod pointer;
+pub mod runtime;
 pub mod threadpool;
 
 extern crate self as xx_core;
+
+pub extern crate enumflags2;
+pub extern crate num_traits;

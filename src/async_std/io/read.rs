@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 use memchr::memchr;
 
 use super::*;
@@ -13,6 +15,39 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	 */
 	dest[0..len].copy_from_slice(&src[0..len]);
 	len
+}
+
+pub fn append_to_string<F>(buf: &mut String, read: F) -> Result<Option<usize>>
+where
+	F: FnOnce(&mut Vec<u8>) -> Result<Option<usize>>
+{
+	/* panic guard */
+	struct Guard<'a> {
+		buf: &'a mut Vec<u8>,
+		len: usize
+	}
+
+	impl Drop for Guard<'_> {
+		fn drop(&mut self) {
+			self.buf.truncate(self.len);
+		}
+	}
+
+	let mut guard = Guard {
+		len: buf.len(),
+		/* Safety: we truncate if the utf8 check fails */
+		buf: unsafe { buf.as_mut_vec() }
+	};
+
+	let read = read(guard.buf)?;
+
+	if read.is_some() {
+		check_utf8(&guard.buf[guard.len..])?;
+
+		guard.len = guard.buf.len();
+	}
+
+	Ok(read)
 }
 
 #[asynchronous]
@@ -33,6 +68,7 @@ pub trait Read {
 		while read < buf.len() {
 			let available = &mut buf[read..];
 
+			#[allow(clippy::arithmetic_side_effects)]
 			match self.read(available).await {
 				Ok(0) => break,
 				Ok(n) => read += length_check(available, n),
@@ -47,6 +83,8 @@ pub trait Read {
 	/// Same as above, except returns err on partial reads, even
 	/// when interrupted
 	async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+		read_into!(buf);
+
 		let read = self.read_fully(buf).await?;
 
 		length_check(buf, read);
@@ -63,6 +101,7 @@ pub trait Read {
 	/// On interrupted, returns the number of bytes read if it is not zero
 	async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
 		let start_len = buf.len();
+		let mut len = buf.len();
 
 		loop {
 			if is_interrupted().await {
@@ -71,60 +110,59 @@ pub trait Read {
 			}
 
 			let mut capacity = buf.capacity();
-			let len = buf.len();
 
 			if len == capacity {
 				buf.reserve(32);
 				capacity = buf.capacity();
+				buf.resize(capacity, 0);
 			}
 
-			unsafe {
-				let available = buf.get_unchecked_mut(len..capacity);
+			let available = &mut buf[len..];
 
-				match self.read(available).await {
-					Ok(0) => break,
-					Ok(n) => {
-						let new_len = len + length_check(available, n);
-
-						buf.set_len(new_len)
-					}
-
-					Err(err) if err.is_interrupted() => break,
-					Err(err) => return Err(err)
-				}
+			#[allow(clippy::arithmetic_side_effects)]
+			match self.read(available).await {
+				Ok(0) => break,
+				Ok(n) => len += length_check(available, n),
+				Err(err) if err.is_interrupted() => break,
+				Err(err) => return Err(err)
 			}
 
-			if buf.len() == capacity {
-				/* avoid doubling the capacity if EOF. try probing for more data */
-				let mut probe = [0u8; 32];
+			if len < capacity {
+				continue;
+			}
 
-				match self.read(&mut probe).await {
-					Ok(0) => break,
-					Ok(n) => buf.extend_from_slice(&probe[0..n]),
-					Err(err) if err.is_interrupted() => break,
-					Err(err) => return Err(err)
+			/* avoid doubling the capacity if EOF. try probing for more data */
+			let mut probe = [0u8; 32];
+
+			match self.read(&mut probe).await {
+				Ok(0) => break,
+				Ok(n) => {
+					#[allow(clippy::arithmetic_side_effects)]
+					(len += length_check(&probe, n));
+
+					buf.extend_from_slice(&probe[0..n]);
+					buf.resize(buf.capacity(), 0);
 				}
+
+				Err(err) if err.is_interrupted() => break,
+				Err(err) => return Err(err)
 			}
 		}
 
-		check_interrupt_if_zero(buf.len() - start_len).await
+		buf.truncate(len);
+
+		#[allow(clippy::arithmetic_side_effects)]
+		check_interrupt_if_zero(len - start_len).await
 	}
 
 	async fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
-		let vec = unsafe { buf.as_mut_vec() };
-		let start_len = vec.len();
+		let context = get_context().await;
 
-		let result = self.read_to_end(vec).await.and_then(|read| {
-			check_utf8(&vec[start_len..])?;
-
-			Ok(read)
-		});
-
-		if result.is_err() {
-			vec.truncate(start_len);
-		}
-
-		return result;
+		/* Safety: we are in an async function */
+		append_to_string(buf, |vec| unsafe {
+			with_context(context, self.read_to_end(vec)).map(Some)
+		})
+		.map(Option::unwrap)
 	}
 
 	fn is_read_vectored(&self) -> bool {
@@ -141,7 +179,7 @@ pub trait Read {
 	async fn read_all_vectored(&mut self, mut bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
 		let mut total = 0;
 
-		while bufs.len() > 0 {
+		while !bufs.is_empty() {
 			let read = match self.read_vectored(bufs).await {
 				Ok(0) => break,
 				Ok(n) => n,
@@ -149,9 +187,11 @@ pub trait Read {
 				Err(err) => return Err(err)
 			};
 
-			total += read;
-
 			advance_slices_mut(&mut bufs, read);
+
+			/* checked by `advance_slices_mut` */
+			#[allow(clippy::arithmetic_side_effects)]
+			(total += read);
 		}
 
 		Ok(total)
@@ -177,25 +217,25 @@ macro_rules! read_wrapper {
 			mut inner = self.$inner_mut;
 
 			#[asynchronous(traitfn)]
-			async fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
+			async fn read(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_fully(&mut self, buf: &mut [u8]) -> Result<usize>;
+			async fn read_fully(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize>;
+			async fn read_exact(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize>;
+			async fn read_to_end(&mut self, buf: &mut ::std::vec::Vec<u8>) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_to_string(&mut self, buf: &mut String) -> Result<usize>;
+			async fn read_to_string(&mut self, buf: &mut ::std::string::String) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
 			fn is_read_vectored(&self) -> bool;
 
 			#[asynchronous(traitfn)]
-			async fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> Result<usize>;
+			async fn read_vectored(&mut self, bufs: &mut [::std::io::IoSliceMut<'_>]) -> $crate::error::Result<usize>;
 		}
 	}
 }
@@ -212,7 +252,7 @@ impl<'a, R: Read + ?Sized> ReadRef<'a, R> {
 	}
 }
 
-impl<'a, R: Read + ?Sized> Read for ReadRef<'a, R> {
+impl<R: Read + ?Sized> Read for ReadRef<'_, R> {
 	read_wrapper! {
 		inner = reader;
 		mut inner = reader;
@@ -241,6 +281,9 @@ pub trait BufRead: Read {
 
 		loop {
 			let available = self.buffer();
+
+			/* `index` < `len`, therefore `index + 1` <= `len` */
+			#[allow(clippy::arithmetic_side_effects)]
 			let (used, done) = match memchr(byte, available) {
 				Some(index) => (index + 1, true),
 				None => (available.len(), false)
@@ -263,6 +306,7 @@ pub trait BufRead: Read {
 			}
 		}
 
+		#[allow(clippy::arithmetic_side_effects)]
 		Ok(Some(buf.len() - start_len))
 	}
 
@@ -270,44 +314,25 @@ pub trait BufRead: Read {
 	///
 	/// On interrupt, this function cannot be called again because it may stop
 	/// reading in the middle of a utf8 character
+	///
+	/// Returns the number of bytes read, if any
 	async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>> {
-		let vec = unsafe { buf.as_mut_vec() };
-		let start_len = vec.len();
+		let context = get_context().await;
 
-		let mut result = self.read_until(b'\n', vec).await;
-
-		result = result.and_then(|read| match read {
-			Some(read) => {
-				check_utf8(&vec[start_len..])?;
-
-				Ok(Some(read))
-			}
-
-			None => Ok(None)
+		/* Safety: we are in an async function */
+		let result = append_to_string(buf, |vec| unsafe {
+			with_context(context, self.read_until(b'\n', vec))
 		});
 
-		match result {
-			Ok(Some(_)) => {
-				if buf.ends_with('\n') {
-					buf.pop();
+		if buf.ends_with('\n') {
+			buf.pop();
 
-					if buf.ends_with('\r') {
-						buf.pop();
-					}
-				}
-
-				Ok(Some(buf.len() - start_len))
-			}
-
-			Ok(None) => Ok(None),
-			Err(err) => {
-				unsafe {
-					vec.set_len(start_len);
-				}
-
-				Err(err)
+			if buf.ends_with('\r') {
+				buf.pop();
 			}
 		}
+
+		result
 	}
 
 	fn capacity(&self) -> usize;
@@ -318,10 +343,14 @@ pub trait BufRead: Read {
 
 	fn consume(&mut self, count: usize);
 
+	/// # Safety
+	/// `count` must be within the valid range
 	unsafe fn consume_unchecked(&mut self, count: usize);
 
 	fn unconsume(&mut self, count: usize);
 
+	/// # Safety
+	/// `count` must be within the valid range
 	unsafe fn unconsume_unchecked(&mut self, count: usize);
 
 	/// Discard all data in the buffer
@@ -350,16 +379,16 @@ macro_rules! bufread_wrapper {
 			mut inner = self.$inner_mut;
 
 			#[asynchronous(traitfn)]
-			async fn fill_amount(&mut self, amount: usize) -> Result<usize>;
+			async fn fill_amount(&mut self, amount: usize) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn fill(&mut self) -> Result<usize>;
+			async fn fill(&mut self) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>>;
+			async fn read_until(&mut self, byte: u8, buf: &mut ::std::vec::Vec<u8>) -> $crate::error::Result<::std::option::Option<usize>>;
 
 			#[asynchronous(traitfn)]
-			async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>>;
+			async fn read_line(&mut self, buf: &mut ::std::string::String) -> $crate::error::Result<::std::option::Option<usize>>;
 
 			#[asynchronous(traitfn)]
 			fn capacity(&self) -> usize;
@@ -390,7 +419,7 @@ macro_rules! bufread_wrapper {
 
 pub use bufread_wrapper;
 
-impl<'a, R: BufRead + ?Sized> BufRead for ReadRef<'a, R> {
+impl<R: BufRead + ?Sized> BufRead for ReadRef<'_, R> {
 	bufread_wrapper! {
 		inner = reader;
 		mut inner = reader;
@@ -402,7 +431,7 @@ pub struct Lines<R: BufRead> {
 }
 
 impl<R: BufRead> Lines<R> {
-	pub fn new(reader: R) -> Self {
+	pub const fn new(reader: R) -> Self {
 		Self { reader }
 	}
 }

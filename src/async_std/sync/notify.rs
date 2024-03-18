@@ -2,7 +2,11 @@ use std::rc::Rc;
 
 use super::*;
 use crate::{
-	container::zero_alloc::linked_list::*, container_of, coroutines::block_on, error::*, future::*,
+	container::zero_alloc::linked_list::*,
+	container_of,
+	coroutines::{block_on, is_interrupted},
+	error::*,
+	future::*,
 	pointer::*
 };
 
@@ -17,69 +21,87 @@ pub struct Notify {
 
 #[asynchronous]
 impl Notify {
-	/// Safety: caller must
+	/// # Safety
+	/// caller must
 	/// - pin this Notify
 	/// - call Notify::pin
-	/// - never move this datta
-	pub unsafe fn new_unpinned() -> Self {
+	/// # Unpin
+	/// only if waiters is empty
+	#[must_use]
+	pub const unsafe fn new_unpinned() -> Self {
 		Self { waiters: LinkedList::new() }
 	}
 
+	#[must_use]
 	pub fn new() -> Pinned<Rc<Self>> {
 		/* Safety: Self cannot be unpinned */
 		unsafe { Self::new_unpinned() }.pin_rc()
 	}
 
+	/// # Safety
+	/// Waiter must be pinned, unlinked, and live as long as it is linked
 	#[future]
-	fn wait_notified(&self, waiter: &mut Waiter) -> Result<()> {
+	unsafe fn wait_notified(&self, waiter: &mut Waiter) -> Result<()> {
 		#[cancel]
 		fn cancel(waiter: &Waiter) -> Result<()> {
-			/* Safety: our linked list is always in a consistent state */
-			unsafe {
-				waiter.node.unlink();
+			/* Safety: we linked this node earlier */
+			unsafe { waiter.node.unlink_unchecked() };
 
-				Request::complete(waiter.request, Err(Core::Interrupted.as_err()));
-			}
+			/* Safety: inform the cancellation. waiter is unlinked, so there won't be
+			 * another completion */
+			unsafe { Request::complete(waiter.request, Err(Core::Interrupted.as_err())) };
 
 			Ok(())
 		}
 
 		waiter.request = request;
 
-		/* Safety: our linked list is always in a consistent state */
+		/* Safety: guaranteed by caller. we don't mutably borrow waiter anymore */
 		unsafe { self.waiters.append(&waiter.node) };
 
 		Progress::Pending(cancel(waiter, request))
 	}
 
 	pub async fn notified(&self) -> Result<()> {
+		if is_interrupted().await {
+			return Err(Core::Interrupted.as_err());
+		}
+
 		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
 
-		block_on(self.wait_notified(&mut waiter)).await
+		/* Safety: waiter is new, pinned, and lives until it completes */
+		#[allow(clippy::multiple_unsafe_ops_per_block)]
+		unsafe {
+			block_on(self.wait_notified(&mut waiter)).await
+		}
 	}
 
 	pub fn notify(&self) {
-		/* Safety: our linked list is always in a consistent state */
-		unsafe {
-			let mut list = LinkedList::new();
-			let mut list = list.pin_local();
+		let mut list = LinkedList::new();
+		let list = list.pin_local();
 
-			self.waiters.move_elements(&mut list);
+		/* Safety: our new list is pinned, and we clear out all nodes before
+		 * returning */
+		unsafe { self.waiters.move_elements(&list) };
 
-			while !list.empty() {
-				let head = list.head();
-				let waiter = container_of!(head, Waiter:node).as_ref();
+		while let Some(node) = list.pop_front() {
+			let waiter = container_of!(node, Waiter:node);
 
-				head.as_ref().unlink();
+			/* Safety: all nodes are wrapped in Waiter */
+			let request = unsafe { waiter.as_ref() }.request;
 
-				Request::complete(waiter.request, Ok(()));
-			}
+			/*
+			 * Safety: complete the future
+			 * Note: this cannot panic
+			 */
+			unsafe { Request::complete(request, Ok(())) };
 		}
 	}
 }
 
-unsafe impl Pin for Notify {
+impl Pin for Notify {
 	unsafe fn pin(&mut self) {
-		self.waiters.pin();
+		/* Safety: we are being pinned */
+		unsafe { self.waiters.pin() };
 	}
 }

@@ -23,8 +23,8 @@ define_enum! {
 
 #[allow(non_upper_case_globals)]
 impl StatxMask {
-	pub const All: u32 = 0xfff;
-	pub const BasicStats: u32 = 0x7ff;
+	pub const All: u32 = 0x0fff;
+	pub const BasicStats: u32 = 0x07ff;
 }
 
 define_struct! {
@@ -69,7 +69,8 @@ define_struct! {
 }
 
 impl Statx {
+	#[must_use]
 	pub fn mask(&self) -> BitFlags<StatxMask> {
-		unsafe { BitFlags::from_bits_unchecked(self.mask) }
+		BitFlags::from_bits_truncate(self.mask)
 	}
 }

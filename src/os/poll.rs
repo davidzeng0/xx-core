@@ -1,7 +1,10 @@
+#![allow(clippy::module_name_repetitions)]
+
+use std::time::Duration;
+
 use xx_core_macros::wrapper_functions;
 
-use self::time::TimeSpec;
-use super::*;
+use super::{signal::SignalMask, time::TimeSpec, *};
 
 define_enum! {
 	#[bitflags]
@@ -53,12 +56,14 @@ define_struct! {
 }
 
 impl PollFd {
+	#[must_use]
 	pub fn events(&self) -> BitFlags<PollFlag> {
-		unsafe { BitFlags::from_bits_unchecked(self.events as u32) }
+		BitFlags::from_bits_truncate(self.events as u32)
 	}
 
+	#[must_use]
 	pub fn returned_events(&self) -> BitFlags<PollFlag> {
-		unsafe { BitFlags::from_bits_unchecked(self.returned_events as u32) }
+		BitFlags::from_bits_truncate(self.returned_events as u32)
 	}
 }
 
@@ -76,10 +81,12 @@ impl<'a> BorrowedPollFd<'a> {
 		pub fn returned_events(&self) -> BitFlags<PollFlag>;
 	}
 
+	#[must_use]
 	pub fn new(fd: BorrowedFd<'a>, events: BitFlags<PollFlag>) -> Self {
 		Self {
 			poll_fd: PollFd {
 				fd: fd.as_raw_fd(),
+				#[allow(clippy::cast_possible_truncation)]
 				events: events.bits() as u16,
 				returned_events: 0
 			},
@@ -88,16 +95,26 @@ impl<'a> BorrowedPollFd<'a> {
 	}
 }
 
-pub unsafe fn poll_raw(fds: &mut [PollFd], timeout: i32) -> Result<u32> {
-	assert!(timeout >= 0);
+/// # Safety
+/// `PollFd`s must be valid for this function call
+#[syscall_define(Ppoll)]
+pub unsafe fn ppoll(
+	#[array(len = u32)] fds: &mut [PollFd], timeout: &TimeSpec, #[array] sigmask: SignalMask<'_>
+) -> Result<u32>;
 
-	let ts = TimeSpec::from_ms(timeout as u64);
-	let events =
-		unsafe { syscall_int!(Ppoll, fds.as_mut_ptr(), fds.len(), &ts, Ptr::<()>::null())? };
+/// # Safety
+/// `PollFd`s must be valid for this function call
+pub unsafe fn poll_timeout(fds: &mut [PollFd], timeout: Duration) -> Result<u32> {
+	let ts = TimeSpec::from_duration(timeout);
 
-	Ok(events as u32)
+	/* Safety: guaranteed by caller */
+	unsafe { ppoll(fds, &ts, None) }
 }
 
-pub fn poll(fds: &mut [BorrowedPollFd<'_>], timeout: i32) -> Result<u32> {
-	unsafe { poll_raw(transmute(fds), timeout) }
+pub fn poll(fds: &mut [BorrowedPollFd<'_>], timeout: Duration) -> Result<u32> {
+	/* Safety: fds are borrowed for this function call */
+	#[allow(clippy::multiple_unsafe_ops_per_block, clippy::transmute_ptr_to_ptr)]
+	unsafe {
+		poll_timeout(transmute(fds), timeout)
+	}
 }

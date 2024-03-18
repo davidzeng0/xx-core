@@ -8,9 +8,7 @@ fn format_trait_ident(ident: &Ident) -> Ident {
 	format_ident!("{}Ext", ident)
 }
 
-fn get_generics_without_bounds(generics: &Generics) -> Generics {
-	let mut generics = generics.clone();
-
+fn get_generics_without_bounds(mut generics: Generics) -> Generics {
 	for generic in &mut generics.params {
 		match generic {
 			GenericParam::Lifetime(ltg) => ltg.bounds.clear(),
@@ -31,7 +29,7 @@ fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
 
 	ext.ident = format_trait_ident(&name);
 
-	let generics = get_generics_without_bounds(&ext.generics);
+	let generics = get_generics_without_bounds(ext.generics.clone());
 	let super_trait: TypeParamBound = parse_quote_spanned! { name.span() => #name #generics };
 
 	ext.supertraits.push(super_trait.clone());
@@ -44,22 +42,22 @@ fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
 		let mut call = Vec::new();
 		let ident = format_fn_ident(&func.sig.ident);
 
-		call.push(quote! { <Self as #super_trait>::#ident });
+		call.push(quote_spanned! { func.sig.span() => <Self as #super_trait>::#ident });
 
-		if func.sig.generics.params.len() > 0 {
+		if !func.sig.generics.params.is_empty() {
 			call.push(quote! { :: });
-			call.push(get_generics_without_bounds(&func.sig.generics).to_token_stream());
+			call.push(get_generics_without_bounds(func.sig.generics.clone()).to_token_stream());
 		}
 
-		let mut args: Punctuated<Expr, Token![,]> = get_args(&func.sig, true);
+		let mut args = get_args(&func.sig.inputs, true);
 
 		if func.sig.asyncness.is_some() {
-			args.push(parse_quote! {
+			args.push(parse_quote_spanned! { func.sig.inputs.span() =>
 				::xx_core::coroutines::get_context().await
 			});
 		}
 
-		call.push(quote! { (#args) });
+		call.push(quote_spanned! { args.span() => (#args) });
 		func.default = Some(parse_quote! {{ #(#call)* }});
 
 		RemoveRefMut {}.visit_signature_mut(&mut func.sig);
@@ -77,6 +75,8 @@ fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
 			)?;
 		}
 
+		func.attrs
+			.push(parse_quote! { #[allow(unsafe_op_in_unsafe_fn)] });
 		ext.items.push(TraitItem::Fn(func));
 	}
 
@@ -131,9 +131,6 @@ pub fn async_impl(item: Functions) -> Result<TokenStream> {
 
 			transform_async(func, ClosureType::None)
 		},
-		|item| match &item {
-			Functions::Fn(_) | Functions::Impl(_) => true,
-			_ => false
-		}
+		|item| matches!(item, Functions::Fn(_) | Functions::Impl(_))
 	)
 }

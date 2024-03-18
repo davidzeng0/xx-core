@@ -1,17 +1,39 @@
+#![allow(unreachable_pub, clippy::multiple_unsafe_ops_per_block)]
+
 use std::{
 	arch::{asm, global_asm},
-	mem::{zeroed, ManuallyDrop}
+	mem::{zeroed, ManuallyDrop},
+	panic::catch_unwind
 };
-
-use enumflags2::make_bitflags;
 
 use super::{
 	macros::import_sysdeps,
 	os::{mman::*, resource::*},
 	pointer::*
 };
+use crate::macros::abort;
 
 import_sysdeps!();
+
+macro_rules! define_context {
+	(
+		pub(super) struct $name: ident
+		$($rest: tt)*
+	) => {
+		#[repr(C)]
+		pub(super) struct $name $($rest)*
+
+		#[allow(deprecated)]
+		impl Default for $name {
+			fn default() -> Self {
+				/* Safety: repr(C) */
+				unsafe { zeroed() }
+			}
+		}
+	}
+}
+
+use define_context;
 
 mod pool;
 pub use pool::*;
@@ -26,11 +48,19 @@ pub struct Start {
 }
 
 impl Start {
-	pub fn new(start: unsafe fn(Ptr<()>), arg: Ptr<()>) -> Self {
+	/// # Safety
+	/// See `set_start`
+	pub unsafe fn new(start: unsafe fn(Ptr<()>), arg: Ptr<()>) -> Self {
 		Self { start, arg }
 	}
 
-	pub fn set_start(&mut self, start: unsafe fn(Ptr<()>)) {
+	/// # Safety
+	/// `start` must never panic. must exit the worker before returning.
+	/// care must be taken to drop any values before a call to exit
+	///
+	/// `start`'s safety contract is
+	/// - called once when worker is started
+	pub unsafe fn set_start(&mut self, start: unsafe fn(Ptr<()>)) {
 		self.start = start;
 	}
 
@@ -55,7 +85,8 @@ struct Intercept {
 }
 
 unsafe fn exit_fiber(arg: Ptr<()>) {
-	let fiber = arg.cast::<ManuallyDrop<Fiber>>().cast_mut().as_mut();
+	/* Safety: guaranteed by caller */
+	let fiber = unsafe { arg.cast::<ManuallyDrop<Fiber>>().cast_mut().as_mut() };
 
 	/* Safety: move worker off of its own stack then drop,
 	 * in case the fiber accesses its own fields after dropping
@@ -64,49 +95,75 @@ unsafe fn exit_fiber(arg: Ptr<()>) {
 	 */
 	let fiber = unsafe { ManuallyDrop::take(fiber) };
 
-	drop(fiber);
+	if catch_unwind(|| drop(fiber)).is_err() {
+		abort!("Fatal error: failed to exit fiber");
+	}
 }
 
 unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
-	let arg = arg
-		.cast::<(ManuallyDrop<Fiber>, MutPtr<Pool>)>()
-		.cast_mut()
-		.as_mut();
+	/* Safety: guaranteed by caller */
+	let arg = unsafe {
+		arg.cast::<(ManuallyDrop<Fiber>, MutPtr<Pool>)>()
+			.cast_mut()
+			.as_mut()
+	};
+
 	/* Safety: ownership of the fiber is passed to us */
 	let mut fiber = unsafe { ManuallyDrop::take(&mut arg.0) };
 
-	fiber.clear_stack();
-	arg.1.as_ref().exit_fiber(fiber);
+	let result = catch_unwind(|| {
+		/* Safety: guaranteed by caller */
+		unsafe {
+			fiber.clear_stack();
+			arg.1.as_ref().exit_fiber(fiber);
+		}
+	});
+
+	if result.is_err() {
+		abort!("Fatal error: failed to exit fiber");
+	}
 }
 
 pub struct Fiber {
 	context: Context,
-	stack: MemoryMap<'static>
+	stack: Map<'static>
 }
 
 impl Fiber {
+	#[must_use]
 	pub fn main() -> Self {
-		Fiber { context: Context::new(), stack: MemoryMap::new() }
+		Self { context: Context::default(), stack: Map::new() }
 	}
 
+	#[allow(clippy::new_without_default, clippy::expect_used, clippy::unwrap_used)]
+	#[must_use]
+	/// # Panics
+	/// If the stack allocation fails
 	pub fn new() -> Self {
+		let stack_size = get_limit(Resource::Stack)
+			.expect("Failed to get stack size")
+			.try_into()
+			.unwrap();
+
+		assert!(stack_size > 0);
+
+		let stack = Builder::new(Type::Private, stack_size)
+			.protect(Protection::Read | Protection::Write)
+			.flag(Flag::Anonymous | Flag::Stack)
+			.map()
+			.expect("Failed to allocate stack for fiber");
+
+		#[allow(clippy::cast_possible_truncation)]
 		Self {
 			/* fiber context. stores to-be-preserved registers,
 			 * including any that cannot be corrupted by inline asm
 			 */
-			context: Context::new(),
-			stack: MemoryMap::map(
-				None,
-				get_limit(Resource::Stack).expect("Failed to get stack size") as usize,
-				make_bitflags!(MemoryProtection::{Read | Write}).bits(),
-				MemoryType::Private as u32 | make_bitflags!(MemoryFlag::{Anonymous | Stack}).bits(),
-				None,
-				0
-			)
-			.unwrap()
+			context: Context::default(),
+			stack
 		}
 	}
 
+	#[must_use]
 	pub fn new_with_start(start: Start) -> Self {
 		let mut this = Self::new();
 
@@ -118,7 +175,8 @@ impl Fiber {
 
 	/// Set the entry point of the fiber
 	///
-	/// Safety: fiber is exited, or wasn't started
+	/// # Safety
+	/// fiber must not be running
 	pub unsafe fn set_start(&mut self, start: Start) {
 		/* Safety: contract upheld by caller. the fiber isn't in running, so we can
 		 * reset its state */
@@ -133,8 +191,9 @@ impl Fiber {
 
 	/// Switch from the fiber `self` to the new fiber `to`
 	///
-	/// Safety: `self` must be currently running
-	pub unsafe fn switch(&mut self, to: &mut Fiber) {
+	/// # Safety
+	/// `self` must be currently running
+	pub unsafe fn switch(&mut self, to: &mut Self) {
 		/* note for arch specific implementation:
 		 * all registers must be declared clobbered
 		 *
@@ -143,19 +202,25 @@ impl Fiber {
 		 * having the functions written in assembly
 		 * store them for us
 		 */
-		switch(&mut self.context, &mut to.context);
+
+		/* Safety: guaranteed by caller */
+		unsafe { switch(&mut self.context, &mut to.context) };
 	}
 
+	/// # Safety
+	/// fiber must not be running
 	pub unsafe fn clear_stack(&mut self) {
-		let _ = self.stack.advise(MemoryAdvice::Free as u32);
+		/* Safety: fiber isn't running */
+		let _ = unsafe { self.stack.advise(Advice::Free) };
 	}
 
 	/// Same as switch, except drops the `self` fiber
 	///
 	/// Worker is unpinned and consumed
 	///
-	/// Safety: same as switch
-	pub unsafe fn exit(self, to: &mut Fiber) {
+	/// # Safety
+	/// same as switch
+	pub unsafe fn exit(self, to: &mut Self) {
 		let mut fiber = ManuallyDrop::new(self);
 
 		/* Safety: contract upheld by caller */
@@ -173,8 +238,9 @@ impl Fiber {
 	/// Exits the fiber, storing the stack into a pool
 	/// to be reused when a new fiber is spawned
 	///
-	/// Safety: same as above
-	pub unsafe fn exit_to_pool(self, to: &mut Fiber, pool: Ptr<Pool>) {
+	/// # Safety
+	/// same as above
+	pub unsafe fn exit_to_pool(self, to: &mut Self, pool: Ptr<Pool>) {
 		let mut arg = (ManuallyDrop::new(self), pool);
 
 		/* Safety: contract upheld by caller */

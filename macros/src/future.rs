@@ -1,15 +1,13 @@
 use super::*;
 
-fn transform_func(func: &mut Function) -> Result<()> {
-	if !func.is_root {
-		if !remove_attr_path(func.attrs, "future") {
-			return Ok(());
-		}
+fn transform_func(func: &mut Function<'_>) -> Result<()> {
+	if !func.is_root && remove_attr_path(func.attrs, "future").is_none() {
+		return Ok(());
 	}
 
 	func.attrs.push(parse_quote!( #[must_use] ));
 
-	let return_type = get_return_type_or_unit(&func.sig.output);
+	let return_type = get_return_type(&func.sig.output);
 
 	let mut cancel_closure_type = {
 		let mut types = vec![quote! { ::xx_core::future::ReqPtr<#return_type> }];
@@ -20,13 +18,16 @@ fn transform_func(func: &mut Function) -> Result<()> {
 			types.insert(0, quote! { #ty });
 		}
 
-		let default_cancel_capture = make_tuple_type(types);
+		let default_cancel_capture = make_tuple_of_types(types);
 
 		quote! { ::xx_core::future::closure::CancelClosure<#default_cancel_capture> }
 	};
 
 	if let Some(block) = &mut func.block {
-		fn not_allowed<T: ToTokens>(what: &Option<T>, message: &'static str) -> Result<()> {
+		fn not_allowed<T>(what: &Option<T>, message: &'static str) -> Result<()>
+		where
+			T: ToTokens
+		{
 			if let Some(tokens) = what {
 				Err(Error::new_spanned(tokens, message))
 			} else {
@@ -34,12 +35,12 @@ fn transform_func(func: &mut Function) -> Result<()> {
 			}
 		}
 
-		for stmt in block.stmts.iter_mut() {
+		for stmt in &mut block.stmts {
 			let Stmt::Item(Item::Fn(cancel)) = stmt else {
 				continue;
 			};
 
-			if !remove_attr_path(&mut cancel.attrs, "cancel") {
+			if remove_attr_path(&mut cancel.attrs, "cancel").is_none() {
 				continue;
 			}
 
@@ -60,56 +61,59 @@ fn transform_func(func: &mut Function) -> Result<()> {
 				request: ::xx_core::future::ReqPtr<#return_type>
 			});
 
-			let attrs = cancel.attrs.clone();
-
 			cancel_closure_type = make_explicit_closure(
 				&mut Function {
 					is_root: true,
-					attrs: &mut cancel.attrs,
+					attrs: &mut vec![],
 					env_generics: func.env_generics,
 					sig: &mut cancel.sig,
 					block: Some(&mut cancel.block)
 				},
-				vec![(quote! { () }, quote! { () })],
+				&vec![(quote! { () }, quote! { () })],
 				quote! { ::xx_core::future::closure::CancelClosure },
-				|capture, _| quote! { ::xx_core::future::closure::CancelClosure<#capture> },
+				|capture, ret| quote_spanned! { ret.span() => ::xx_core::future::closure::CancelClosure<#capture> },
 				LifetimeAnnotations::Closure
 			)?;
 
-			let (unsafety, inputs, output, block) = (
+			ReplaceSelf {}.visit_item_fn_mut(cancel);
+
+			let (ident, attrs, unsafety, inputs, output, block) = (
+				&cancel.sig.ident,
+				&cancel.attrs,
 				&cancel.sig.unsafety,
 				&cancel.sig.inputs,
 				&cancel.sig.output,
 				&cancel.block
 			);
 
-			*stmt = parse_quote! {
+			*stmt = parse_quote_spanned! {
+				cancel.span() =>
+
+				#[allow(unused_variables)]
 				#(#attrs)*
-				let cancel = | #inputs | #output {
+				let #ident = | #inputs | #output {
 					#unsafety #block
 				};
 			};
-
-			ReplaceSelf {}.visit_stmt_mut(stmt);
 
 			break;
 		}
 	}
 
-	func.sig.output = parse_quote! {
-		-> ::xx_core::future::Progress<#return_type, #cancel_closure_type>
+	func.sig.output = parse_quote_spanned! {
+		return_type.span() => -> ::xx_core::future::Progress<#return_type, #cancel_closure_type>
 	};
 
 	make_opaque_closure(
 		func,
-		vec![(
+		&vec![(
 			quote! { request },
 			quote! { ::xx_core::future::ReqPtr<#return_type> }
 		)],
-		|_| quote! { ::xx_core::future::Progress<#return_type, #cancel_closure_type> },
-		OpaqueClosureType::Custom(|_| {
+		|_| quote_spanned! { return_type.span() => ::xx_core::future::Progress<#return_type, #cancel_closure_type> },
+		OpaqueClosureType::Custom(|ret: TokenStream| {
 			(
-				quote! { ::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type> },
+				quote_spanned! { ret.span() => ::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type> },
 				quote! { ::xx_core::future::closure::FutureClosure }
 			)
 		}),
@@ -121,8 +125,7 @@ fn transform_func(func: &mut Function) -> Result<()> {
 }
 
 pub fn future(_: TokenStream, item: TokenStream) -> TokenStream {
-	transform_fn(item, transform_func, |item| match item {
-		Functions::Trait(_) | Functions::TraitFn(_) => false,
-		_ => true
+	transform_fn(item, transform_func, |item| {
+		!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
 	})
 }

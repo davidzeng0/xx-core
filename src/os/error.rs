@@ -3,7 +3,6 @@ use std::io;
 use num_traits::FromPrimitive;
 
 use super::*;
-use crate::error::{Error, ErrorKind, Result};
 
 define_enum! {
 	#[repr(i32)]
@@ -12,7 +11,7 @@ define_enum! {
 		Unknown = -1,
 
 		/// Success
-		Ok      = 0,
+		Ok = 0,
 
 		/// Operation not permitted
 		Perm,
@@ -135,7 +134,7 @@ define_enum! {
 		Loop,
 
 		/// No message of desired type
-		Nomsg   = 42,
+		Nomsg = 42,
 
 		/// Identifier removed
 		Idrm,
@@ -183,7 +182,7 @@ define_enum! {
 		Badslt,
 
 		/// Bad font file format
-		BFont   = 59,
+		BFont = 59,
 
 		/// Device not a stream
 		NoStr,
@@ -411,21 +410,26 @@ define_enum! {
 
 #[allow(non_upper_case_globals)]
 impl OsError {
-	pub const DeadLk: OsError = OsError::Deadlock;
-	pub const WouldBlock: OsError = OsError::Again;
+	pub const DeadLk: Self = Self::Deadlock;
+	pub const WouldBlock: Self = Self::Again;
+}
 
+impl OsError {
+	#[must_use]
 	pub fn from_raw(value: i32) -> Self {
 		Self::from_i32(value).unwrap_or(Self::Unknown)
 	}
 
-	pub fn kind(&self) -> ErrorKind {
+	#[must_use]
+	pub fn kind(self) -> ErrorKind {
 		match self {
-			OsError::Canceled => ErrorKind::Interrupted,
-			_ => io::Error::from_raw_os_error(*self as i32).kind()
+			Self::Canceled => ErrorKind::Interrupted,
+			_ => io::Error::from_raw_os_error(self as i32).kind()
 		}
 	}
 
-	pub fn as_str(&self) -> &'static str {
+	#[must_use]
+	pub const fn as_str(self) -> &'static str {
 		match self {
 			Self::Unknown => "Unknown error",
 			Self::Ok => "OK",
@@ -577,9 +581,11 @@ pub fn result_from_int(result: isize) -> Result<isize> {
 		return Ok(result);
 	}
 
+	#[allow(clippy::cast_possible_truncation, clippy::arithmetic_side_effects)]
 	Err(Error::from_raw_os_error(-result as i32))
 }
 
+#[allow(clippy::cast_sign_loss)]
 pub fn result_from_ptr(result: isize) -> Result<usize> {
 	let err = -4096isize as usize;
 
@@ -587,5 +593,6 @@ pub fn result_from_ptr(result: isize) -> Result<usize> {
 		return Ok(result as usize);
 	}
 
+	#[allow(clippy::cast_possible_truncation, clippy::arithmetic_side_effects)]
 	Err(Error::from_raw_os_error(-result as i32))
 }

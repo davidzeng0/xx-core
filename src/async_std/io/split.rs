@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 use super::*;
 use crate::pointer::*;
 
@@ -9,6 +11,8 @@ pub trait Split: Read + Write {
 	fn split(&mut self) -> (ReadRef<'_, Self::Read>, WriteRef<'_, Self::Write>);
 }
 
+/// # Safety
+/// Implementer must ensure shared mutable access does not occur
 pub unsafe trait SimpleSplit: Read + Write {}
 
 impl<T: SimpleSplit> Split for T {
@@ -18,6 +22,10 @@ impl<T: SimpleSplit> Split for T {
 	fn split(&mut self) -> (ReadRef<'_, Self::Read>, WriteRef<'_, Self::Write>) {
 		let this = MutPtr::from(self);
 
-		unsafe { (ReadRef::new(this.as_mut()), WriteRef::new(this.as_mut())) }
+		/* Safety: guaranteed by implementer */
+		#[allow(clippy::multiple_unsafe_ops_per_block)]
+		unsafe {
+			(ReadRef::new(this.as_mut()), WriteRef::new(this.as_mut()))
+		}
 	}
 }

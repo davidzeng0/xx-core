@@ -2,7 +2,7 @@ use std::{
 	cell,
 	cmp::Ordering,
 	fmt::{self, Debug, Formatter, Result},
-	ops::{Deref, DerefMut},
+	ops::{Add, Deref, DerefMut, Sub},
 	ptr::null_mut,
 	rc::Rc
 };
@@ -24,50 +24,43 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 		pub fn is_null(self) -> bool;
 	}
 
-	pub fn as_ptr(self) -> *const T {
+	#[must_use]
+	pub const fn as_ptr(self) -> *const T {
 		self.ptr
 	}
 
-	pub fn cast<T2>(self) -> Pointer<T2, MUTABLE> {
-		Pointer { ptr: self.ptr as *mut () as *mut _ }
+	#[must_use]
+	pub const fn cast<T2>(self) -> Pointer<T2, MUTABLE> {
+		Pointer { ptr: self.ptr.cast::<()>().cast() }
 	}
 
-	pub fn as_unit(self) -> Pointer<(), MUTABLE> {
+	#[must_use]
+	pub const fn as_unit(self) -> Pointer<(), MUTABLE> {
 		self.cast()
 	}
 
+	#[must_use]
 	pub fn int_addr(self) -> usize {
 		self.ptr as *const () as usize
 	}
 
-	pub fn from_int_addr(value: usize) -> Self
+	#[must_use]
+	pub const fn from_int_addr(value: usize) -> Self
 	where
 		T: Sized
 	{
 		Self { ptr: value as *mut _ }
 	}
 
-	pub fn offset(self, offset: isize) -> Self
+	#[must_use]
+	pub const fn offset(self, offset: isize) -> Self
 	where
 		T: Sized
 	{
 		Self { ptr: self.ptr.wrapping_offset(offset) }
 	}
 
-	pub fn add(self, count: usize) -> Self
-	where
-		T: Sized
-	{
-		Self { ptr: self.ptr.wrapping_add(count) }
-	}
-
-	pub fn sub(self, count: usize) -> Self
-	where
-		T: Sized
-	{
-		Self { ptr: self.ptr.wrapping_sub(count) }
-	}
-
+	#[must_use]
 	pub const fn null() -> Self
 	where
 		T: Sized
@@ -75,9 +68,35 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 		Self { ptr: null_mut() }
 	}
 
+	/// # Safety
 	/// Caller must enforce aliasing rules. See std::ptr::as_ref
+	#[must_use]
+	#[allow(clippy::missing_const_for_fn)]
 	pub unsafe fn as_ref<'a>(self) -> &'a T {
-		&*self.ptr
+		/* Safety: guaranteed by caller */
+		unsafe { &*self.ptr }
+	}
+}
+
+impl<T: Sized, const MUTABLE: bool> Add<usize> for Pointer<T, MUTABLE> {
+	type Output = Self;
+
+	fn add(self, count: usize) -> Self {
+		Self { ptr: self.ptr.wrapping_add(count) }
+	}
+}
+
+impl<T: Sized, const MUTABLE: bool> Sub<usize> for Pointer<T, MUTABLE> {
+	type Output = Self;
+
+	fn sub(self, count: usize) -> Self {
+		Self { ptr: self.ptr.wrapping_sub(count) }
+	}
+}
+
+impl<T: Sized, const MUTABLE: bool> Default for Pointer<T, MUTABLE> {
+	fn default() -> Self {
+		Self::null()
 	}
 }
 
@@ -90,7 +109,8 @@ impl<T, const MUTABLE: bool> Pointer<T, MUTABLE> {
 }
 
 impl<T: ?Sized> Ptr<T> {
-	pub fn cast_mut(self) -> MutPtr<T> {
+	#[must_use]
+	pub const fn cast_mut(self) -> MutPtr<T> {
 		MutPtr { ptr: self.ptr }
 	}
 }
@@ -102,17 +122,22 @@ impl<T: ?Sized> MutPtr<T> {
 		pub unsafe fn drop_in_place(self);
 	}
 
-	pub fn cast_const(self) -> Ptr<T> {
+	#[must_use]
+	pub const fn cast_const(self) -> Ptr<T> {
 		Ptr { ptr: self.ptr }
 	}
 
-	pub fn as_mut_ptr(self) -> *mut T {
+	#[must_use]
+	pub const fn as_mut_ptr(self) -> *mut T {
 		self.ptr
 	}
 
+	/// # Safety
 	/// Caller must enforce aliasing rules. See std::ptr::as_ref
+	#[must_use]
 	pub unsafe fn as_mut<'a>(self) -> &'a mut T {
-		&mut *self.ptr
+		/* Safety: guaranteed by caller */
+		unsafe { &mut *self.ptr }
 	}
 }
 
@@ -128,7 +153,7 @@ impl<T> MutPtr<T> {
 /* derive Clone requires that T: Clone */
 impl<T: ?Sized, const MUTABLE: bool> Clone for Pointer<T, MUTABLE> {
 	fn clone(&self) -> Self {
-		Self { ptr: self.ptr }
+		*self
 	}
 }
 
@@ -154,19 +179,14 @@ impl<T: ?Sized> From<&mut T> for MutPtr<T> {
 
 impl<T: ?Sized> From<*const T> for Ptr<T> {
 	fn from(ptr: *const T) -> Self {
-		Self { ptr: ptr as *const T as *mut T }
+		Self { ptr: ptr.cast_mut() }
 	}
 }
 
 impl<T: ?Sized> From<&T> for Ptr<T> {
 	fn from(ptr: &T) -> Self {
-		Self { ptr: ptr as *const T as *mut T }
-	}
-}
-
-impl<T: ?Sized> From<&mut T> for Ptr<T> {
-	fn from(ptr: &mut T) -> Self {
-		Self { ptr }
+		#[allow(trivial_casts)]
+		Self { ptr: (ptr as *const T).cast_mut() }
 	}
 }
 
@@ -202,7 +222,9 @@ impl<T: ?Sized, const MUTABLE: bool> fmt::Pointer for Pointer<T, MUTABLE> {
 	}
 }
 
-pub unsafe trait Pin {
+pub trait Pin {
+	/// # Safety
+	/// cannot call when already pinned
 	unsafe fn pin(&mut self) {}
 }
 
@@ -211,11 +233,13 @@ pub struct Pinned<P> {
 }
 
 impl<P> Pinned<P> {
-	pub fn new(pointer: P) -> Self {
+	#[must_use]
+	pub const fn new(pointer: P) -> Self {
 		Self { pointer }
 	}
 
-	/// Safety: the contract for unpinning P must be satisfied
+	/// # Safety
+	/// the implementation specific contract for unpinning P must be satisfied
 	pub unsafe fn into_inner(self) -> P {
 		self.pointer
 	}
@@ -225,13 +249,13 @@ impl<P: Deref> Deref for Pinned<P> {
 	type Target = P::Target;
 
 	fn deref(&self) -> &Self::Target {
-		self.pointer.deref()
+		&self.pointer
 	}
 }
 
 impl<P: DerefMut> DerefMut for Pinned<P> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		self.pointer.deref_mut()
+		&mut self.pointer
 	}
 }
 
@@ -269,16 +293,18 @@ pub trait PinExt: Pin {
 		this
 	}
 
+	#[allow(clippy::unwrap_used)]
 	fn pin_rc(self) -> Pinned<Rc<Self>>
 	where
 		Self: Sized
 	{
-		let mut this = Rc::new(self);
+		let mut rc = Rc::new(self);
+		let this = Rc::get_mut(&mut rc).unwrap();
 
 		/* Safety: we are being pinned */
-		unsafe { Rc::get_mut(&mut this).unwrap().pin() };
+		unsafe { this.pin() };
 
-		Pinned::new(this)
+		Pinned::new(rc)
 	}
 }
 
@@ -290,7 +316,7 @@ pub struct UnsafeCell<T> {
 }
 
 impl<T> UnsafeCell<T> {
-	pub fn new(data: T) -> Self {
+	pub const fn new(data: T) -> Self {
 		Self { data: cell::UnsafeCell::new(data) }
 	}
 
@@ -298,14 +324,22 @@ impl<T> UnsafeCell<T> {
 		self.data.get().into()
 	}
 
-	/// Caller must enforce aliasing rules. See std::ptr::as_ref
-	pub unsafe fn as_ref<'a>(&self) -> &'a T {
-		self.get().as_ref()
+	pub fn get_mut(&mut self) -> &mut T {
+		self.data.get_mut()
 	}
 
+	/// # Safety
+	/// Caller must enforce aliasing rules. See std::ptr::as_ref
+	pub unsafe fn as_ref<'a>(&self) -> &'a T {
+		/* Safety: guaranteed by caller */
+		unsafe { self.get().as_ref() }
+	}
+
+	/// # Safety
 	/// Caller must enforce aliasing rules. See std::ptr::as_ref
 	pub unsafe fn as_mut<'a>(&self) -> &'a mut T {
-		self.get().as_mut()
+		/* Safety: guaranteed by caller */
+		unsafe { self.get().as_mut() }
 	}
 
 	pub fn into_inner(self) -> T {
@@ -313,8 +347,9 @@ impl<T> UnsafeCell<T> {
 	}
 }
 
-unsafe impl<T: Pin> Pin for UnsafeCell<T> {
+impl<T: Pin> Pin for UnsafeCell<T> {
 	unsafe fn pin(&mut self) {
-		self.as_mut().pin()
+		/* Safety: we are being pinned */
+		unsafe { self.get_mut().pin() };
 	}
 }

@@ -122,6 +122,7 @@ define_struct! {
 	}
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Address {
 	V4(AddressV4),
 	V6(AddressV6)
@@ -130,14 +131,14 @@ pub enum Address {
 impl From<SocketAddr> for Address {
 	fn from(value: SocketAddr) -> Self {
 		match value {
-			SocketAddr::V4(addr) => Address::V4(AddressV4 {
+			SocketAddr::V4(addr) => Self::V4(AddressV4 {
 				common: AddressCommon { family: AddressFamily::INet as u16 },
 				port: addr.port().to_be(),
 				addr: addr.ip().octets(),
 				pad: [0u8; 8]
 			}),
 
-			SocketAddr::V6(addr) => Address::V6(AddressV6 {
+			SocketAddr::V6(addr) => Self::V6(AddressV6 {
 				common: AddressCommon { family: AddressFamily::INet6 as u16 },
 				port: addr.port().to_be(),
 				flow_info: addr.flowinfo().to_be(),
@@ -154,11 +155,13 @@ impl TryFrom<AddressStorage> for Address {
 	fn try_from(value: AddressStorage) -> Result<Self> {
 		match AddressFamily::from_u16(value.common.family) {
 			Some(AddressFamily::INet) => {
-				Ok(Address::V4(unsafe { *Ptr::from(&value).cast().as_ref() }))
+				/* Safety: reinterpret is safe */
+				Ok(Self::V4(*unsafe { Ptr::from(&value).cast().as_ref() }))
 			}
 
 			Some(AddressFamily::INet6) => {
-				Ok(Address::V6(unsafe { *Ptr::from(&value).cast().as_ref() }))
+				/* Safety: reinterpret is safe */
+				Ok(Self::V6(*unsafe { Ptr::from(&value).cast().as_ref() }))
 			}
 
 			_ => Err(Error::simple(
@@ -176,8 +179,8 @@ impl TryFrom<AddressStorage> for SocketAddr {
 		let addr: Address = value.try_into()?;
 
 		Ok(match addr {
-			Address::V4(addr) => SocketAddr::new(IpAddr::V4(addr.addr.into()), addr.port.to_be()),
-			Address::V6(addr) => SocketAddr::V6(SocketAddrV6::new(
+			Address::V4(addr) => Self::new(IpAddr::V4(addr.addr.into()), addr.port.to_be()),
+			Address::V6(addr) => Self::V6(SocketAddrV6::new(
 				addr.addr.into(),
 				addr.port.to_be(),
 				addr.flow_info.to_be(),

@@ -1,11 +1,12 @@
 use super::*;
 
-#[repr(C)]
-pub(super) struct Context {
-	x19: u64,
-	x29: u64,
-	stack: u64,
-	link: u64
+define_context! {
+	pub(super) struct Context {
+		x19: usize,
+		x29: usize,
+		stack: usize,
+		link: usize
+	}
 }
 
 global_asm!(include_str!("arm64.s"));
@@ -17,36 +18,42 @@ extern "C" {
 }
 
 impl Context {
-	pub fn new() -> Self {
-		unsafe { zeroed() }
-	}
-
-	pub fn program_counter(&self) -> Ptr<()> {
-		Ptr::from_int_addr(self.link as usize)
+	pub const fn program_counter(&self) -> Ptr<()> {
+		Ptr::from_int_addr(self.link)
 	}
 
 	pub unsafe fn set_stack(&mut self, stack: Ptr<()>, len: usize) {
-		self.stack = (stack.int_addr() + len) as u64;
+		#[allow(clippy::arithmetic_side_effects)]
+		(self.stack = stack.int_addr() + len);
 	}
 
 	pub unsafe fn set_start(&mut self, start: Start) {
-		let stack = MutPtr::<Start>::from_int_addr(self.stack as usize);
+		let stack = MutPtr::<Start>::from_int_addr(self.stack);
 
-		stack.sub(1).write(start);
+		/* Safety: guaranteed by caller */
+		#[allow(clippy::arithmetic_side_effects)]
+		unsafe {
+			(stack - 1).write(start);
+		}
 
-		self.link = xx_core_fiber_arm64_start as u64;
+		self.link = xx_core_fiber_arm64_start as usize;
 	}
 
 	pub unsafe fn set_intercept(&mut self, intercept: Intercept) {
-		let stack = MutPtr::<Intercept>::from_int_addr(self.stack as usize);
+		let stack = MutPtr::<Intercept>::from_int_addr(self.stack);
 
-		stack.sub(1).write(intercept);
+		/* Safety: guaranteed by caller */
+		#[allow(clippy::arithmetic_side_effects)]
+		unsafe {
+			(stack - 1).write(intercept);
+		}
 
-		self.link = xx_core_fiber_arm64_intercept as u64;
+		self.link = xx_core_fiber_arm64_intercept as usize;
 	}
 }
 
 pub(super) unsafe fn switch(from: &mut Context, to: &mut Context) {
+	/* Safety: guaranteed by caller */
 	unsafe {
 		asm!(
 			"bl {}",
@@ -88,6 +95,6 @@ pub(super) unsafe fn switch(from: &mut Context, to: &mut Context) {
 			lateout("d30") _,
 			lateout("d31") _,
 			clobber_abi("C")
-		)
+		);
 	}
 }

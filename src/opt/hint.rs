@@ -1,9 +1,12 @@
-#[inline(always)]
-#[cold]
-fn cold() {}
+use std::hint;
 
 #[inline(always)]
-pub fn likely(cond: bool) -> bool {
+#[cold]
+const fn cold() {}
+
+#[inline(always)]
+#[must_use]
+pub const fn likely(cond: bool) -> bool {
 	if !cond {
 		cold();
 	}
@@ -12,7 +15,8 @@ pub fn likely(cond: bool) -> bool {
 }
 
 #[inline(always)]
-pub fn unlikely(cond: bool) -> bool {
+#[must_use]
+pub const fn unlikely(cond: bool) -> bool {
 	if cond {
 		cold();
 	}
@@ -20,10 +24,20 @@ pub fn unlikely(cond: bool) -> bool {
 	cond
 }
 
+/// # Safety
+/// See `std::hint::unreachable_unchecked`
 #[inline(always)]
-pub unsafe fn unreachable_unchecked() {
-	#[cfg(debug_assertions)]
-	assert!(false);
-	#[cfg(not(debug_assertions))]
-	std::hint::unreachable_unchecked();
+pub const unsafe fn unreachable_unchecked() -> ! {
+	/* Safety: guaranteed by caller */
+	unsafe { hint::unreachable_unchecked() };
+}
+
+/// # Safety
+/// See `std::intrinsics::assume`
+#[inline(always)]
+pub const unsafe fn assume(condition: bool) {
+	if !condition {
+		/* Safety: contract upheld by caller */
+		unsafe { unreachable_unchecked() };
+	}
 }

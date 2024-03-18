@@ -7,7 +7,7 @@ use crate::async_tests::util::read::*;
 
 #[main]
 #[test]
-pub async fn test_buf_reader() {
+pub async fn test_buf_reader() -> Result<()> {
 	let context = get_context().await;
 	let mut reader = BufReader::new(Sequential::new());
 	let mut buf = [0u8; 20];
@@ -16,22 +16,22 @@ pub async fn test_buf_reader() {
 	let mut position = 0;
 	let mut filled = 0;
 	let cap = reader.capacity() as u64;
-	let len = reader.stream_len().await.unwrap();
+	let len = reader.stream_len().await?;
 
 	macro_rules! wait {
-		($expr: expr) => {
+		($expr:expr) => {
 			unsafe { with_context(context, $expr) }
 		};
 	}
 
 	macro_rules! advance {
-		($amount: expr) => {
+		($amount:expr) => {
 			stream_pos += $amount as u64;
 		};
 	}
 
 	macro_rules! consume {
-		($amount: expr) => {
+		($amount:expr) => {
 			let amount = $amount;
 
 			advance!(amount);
@@ -58,7 +58,7 @@ pub async fn test_buf_reader() {
 	}
 
 	macro_rules! read_check {
-		($buf: expr) => {
+		($buf:expr) => {
 			let mut i = stream_pos as u8;
 
 			for b in $buf.iter() {
@@ -70,7 +70,7 @@ pub async fn test_buf_reader() {
 	}
 
 	macro_rules! read_amount {
-		($buf: expr, $amount: expr) => {
+		($buf:expr, $amount:expr) => {
 			if reader.buffer().len() == 0 {
 				let fill = reader.capacity().min((len - stream_pos) as usize);
 
@@ -84,7 +84,7 @@ pub async fn test_buf_reader() {
 
 			let amount = $amount;
 
-			assert_eq!(wait!(reader.read($buf)).unwrap(), amount);
+			assert_eq!(wait!(reader.read($buf))?, amount);
 			read_check!(&$buf[..amount]);
 
 			stream_pos += amount as u64;
@@ -95,22 +95,22 @@ pub async fn test_buf_reader() {
 	}
 
 	macro_rules! read_exact {
-		($buf: expr) => {
+		($buf:expr) => {
 			read_amount!($buf, $buf.len());
 		};
 	}
 
 	macro_rules! read_remaining {
-		($buf: expr) => {
+		($buf:expr) => {
 			assert_eq!(reader.buffer().len(), filled - position);
 			read_amount!($buf, filled - position);
 		};
 	}
 
 	macro_rules! read_large {
-		($buf: expr) => {
+		($buf:expr) => {
 			assert_eq!(reader.buffer().len(), 0);
-			assert_eq!(wait!(reader.read($buf)).unwrap(), $buf.len());
+			assert_eq!(wait!(reader.read($buf))?, $buf.len());
 			read_check!($buf);
 
 			stream_pos += $buf.len() as u64;
@@ -129,8 +129,8 @@ pub async fn test_buf_reader() {
 				reader.spare_capacity() + reader.position() + reader.buffer().len(),
 				reader.capacity()
 			);
-			assert_eq!(wait!(reader.stream_position()).unwrap(), stream_pos);
-			assert_eq!(wait!(reader.inner().stream_position()).unwrap(), inner_pos);
+			assert_eq!(wait!(reader.stream_position())?, stream_pos);
+			assert_eq!(wait!(reader.inner().stream_position())?, inner_pos);
 			assert_eq!(reader.spare_capacity(), reader.capacity() - filled);
 			assert_eq!(reader.stream_len_fast(), reader.inner().stream_len_fast());
 			assert_eq!(
@@ -153,14 +153,15 @@ pub async fn test_buf_reader() {
 	}
 
 	macro_rules! seek {
-		($seek: expr) => {
-			wait!(reader.seek($seek)).unwrap();
+		($seek:expr) => {
+			wait!(reader.seek($seek))?;
 
 			let pos = match $seek {
-				SeekFrom::Start(n) => n,
-				SeekFrom::Current(n) => stream_pos.checked_add_signed(n).unwrap(),
-				SeekFrom::End(n) => len.checked_add_signed(n).unwrap()
-			};
+				SeekFrom::Start(n) => Some(n),
+				SeekFrom::Current(n) => stream_pos.checked_add_signed(n),
+				SeekFrom::End(n) => len.checked_add_signed(n)
+			}
+			.ok_or_else(|| Core::Overflow.as_err())?;
 
 			stream_pos = pos;
 			inner_pos = pos;
@@ -172,7 +173,7 @@ pub async fn test_buf_reader() {
 	}
 
 	macro_rules! fill_amount {
-		($amount: expr, $requested: expr) => {
+		($amount:expr, $requested:expr) => {
 			let amount = $amount;
 			let requested = $requested;
 
@@ -186,7 +187,7 @@ pub async fn test_buf_reader() {
 				inner_pos += amount as u64;
 			}
 
-			assert_eq!(wait!(reader.fill_amount(requested)).unwrap(), amount);
+			assert_eq!(wait!(reader.fill_amount(requested))?, amount);
 			read_check!(reader.buffer());
 			check!();
 		};
@@ -207,6 +208,7 @@ pub async fn test_buf_reader() {
 	read_exact!(buf);
 
 	consume!(reader.buffer().len());
+	move_data_to_beginning!();
 	move_data_to_beginning!();
 
 	let mut buf = vec![0; reader.capacity() * 2 + 559];
@@ -265,9 +267,10 @@ pub async fn test_buf_reader() {
 	fill_amount!(cap as usize, cap as usize);
 	consume!(400);
 	seek!(SeekFrom::Current(cap as i64));
+
+	Ok(())
 }
 
-/*
 #[main]
 #[test]
 #[should_panic = "assertion failed: len <= buf.len()"]
@@ -280,7 +283,7 @@ pub async fn test_malformed_read() {
 
 #[main]
 #[test]
-#[should_panic = "assertion failed: amount <= self.buf.capacity()"]
+#[should_panic = "assertion failed: amount <= self.capacity()"]
 pub async fn test_over_fill() {
 	let mut reader = BufReader::new(Sequential::new());
 
@@ -300,7 +303,7 @@ pub async fn test_over_consume() {
 
 #[main]
 #[test]
-#[should_panic = "assertion failed: count <= self.pos"]
+#[should_panic = "`count` > `self.pos`"]
 pub async fn test_over_unconsume() {
 	let mut reader = BufReader::new(Sequential::new());
 
@@ -308,7 +311,6 @@ pub async fn test_over_unconsume() {
 	reader.consume(100);
 	reader.unconsume(101);
 }
-*/
 
 #[main]
 #[test]
@@ -351,14 +353,14 @@ pub async fn test_buf_reader_from_parts() {
 
 #[main]
 #[test]
-#[should_panic = "assertion failed: pos <= buf.len()"]
+#[should_panic = "assertion failed: pos <= len"]
 pub async fn test_buf_reader_from_parts_fail1() {
 	BufReader::from_parts(Sequential::new(), Vec::with_capacity(20), 1);
 }
 
 #[main]
 #[test]
-#[should_panic = "assertion failed: pos <= buf.len()"]
+#[should_panic = "assertion failed: pos <= len"]
 pub async fn test_buf_reader_from_parts_fail2() {
 	BufReader::from_parts(Sequential::new(), vec![0; 20], 21);
 }

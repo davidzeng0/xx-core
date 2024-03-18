@@ -1,9 +1,12 @@
+#![allow(clippy::module_name_repetitions)]
+
 use super::*;
 use crate::closure::*;
 
 pub type FutureClosure<Inner, Output, Cancel> =
 	OpaqueClosure<Inner, ReqPtr<Output>, Progress<Output, Cancel>>;
 
+/* Safety: contract upheld by user of #[future] */
 unsafe impl<Inner: FnOnce(ReqPtr<Output>) -> Progress<Output, C>, Output, C: Cancel> Future
 	for FutureClosure<Inner, Output, C>
 {
@@ -17,6 +20,7 @@ unsafe impl<Inner: FnOnce(ReqPtr<Output>) -> Progress<Output, C>, Output, C: Can
 
 pub type CancelClosure<Capture> = Closure<Capture, (), Result<()>>;
 
+/* Safety: contract upheld by user of #[future] */
 unsafe impl<Capture> Cancel for CancelClosure<Capture> {
 	unsafe fn run(self) -> Result<()> {
 		self.call(())

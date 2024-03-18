@@ -1,141 +1,145 @@
-use nom::number::complete::double;
+use nom::{
+	branch::alt,
+	bytes::complete::{tag, tag_no_case},
+	character::complete::multispace0,
+	error::{ErrorKind, ParseError},
+	multi::{many1, separated_list1},
+	number::complete::double,
+	sequence::tuple,
+	IResult, Parser
+};
 
 use super::*;
 
-type Result = std::result::Result<TokenStream, &'static str>;
+type Result<T> = std::result::Result<T, &'static str>;
 
-#[derive(PartialEq, Eq)]
-enum Format {
-	Unit,
-	Colon
-}
-
-fn test_prefix(input: &mut &str, prefixes: &[&str]) -> Option<usize> {
-	let mut result = None;
-
-	for (index, prefix) in prefixes.iter().enumerate() {
-		if !input.starts_with(prefix) {
-			continue;
-		}
-
-		if result.is_some_and(|(_, len)| len >= prefix.len()) {
-			continue;
-		}
-
-		result = Some((index, prefix.len()));
+fn alt_vec<I: Clone, O, E, P>(mut choices: Vec<P>) -> impl FnMut(I) -> IResult<I, O, E>
+where
+	P: Parser<I, O, E>
+{
+	if choices.is_empty() {
+		panic!();
 	}
 
-	result.map(|(index, len)| {
-		*input = &input[len..];
-		index
-	})
+	move |input| {
+		let mut error = None;
+
+		for choice in &mut choices {
+			match choice.parse(input.clone()) {
+				Err(err @ nom::Err::Error(_)) => error = Some(err),
+				res => return res
+			}
+		}
+
+		Err(error.unwrap())
+	}
 }
 
-fn parse_time_string(mut amount: &str) -> Result {
-	let mut format = None;
-	let mut tokens = Vec::new();
+fn parse_named_units<'a, E>(input: &'a str) -> IResult<&'a str, f64, E>
+where
+	E: ParseError<&'a str>
+{
+	let scales = [
+		("d", 24.0),
+		("h", 60.0),
+		("m", 60.0),
+		("s", 1000.0),
+		("ms", 1000.0),
+		("us", 1000.0),
+		("ns", 1.0)
+	];
 
-	while !amount.is_empty() {
-		let lit = match double::<_, ()>(&amount as &str) {
-			Ok((rest, lit)) => {
-				amount = rest;
-				lit
-			}
+	let mut tags = scales;
 
-			Err(_) => return Err("Expected a number literal")
-		};
+	tags.sort_by(|a, b| b.0.cmp(a.0));
 
-		if lit < 0.0 {
-			return Err("Cannot be negative");
+	let tags = tags
+		.iter()
+		.map(|scale| {
+			tuple((
+				multispace0,
+				double,
+				multispace0,
+				tag_no_case(scale.0),
+				multispace0
+			))
+		})
+		.collect();
+
+	let mut parser = many1(alt_vec(tags));
+	let (leftover, parsed) = parser(input)?;
+
+	let mut duration = 0.0;
+
+	for (_, amount, _, unit, _) in parsed {
+		let index = scales.iter().position(|scale| scale.0 == unit).unwrap();
+		let scale = scales[index].1;
+
+		if amount < 0.0 || (amount >= scale && scale != 1.0) {
+			return Err(nom::Err::Failure(E::from_error_kind(
+				input,
+				ErrorKind::Float
+			)));
 		}
 
-		if format == Some(Format::Colon) && amount.is_empty() {
-			tokens.push((lit, None));
-
-			break;
-		}
-
-		let mut scale = None;
-		let current_format;
-
-		if let Some(_) = test_prefix(&mut amount, &[":", "::"]) {
-			current_format = Some(Format::Colon);
-		} else if let Some(index) =
-			test_prefix(&mut amount, &["d", "h", "m", "s", "ms", "us", "ns"])
-		{
-			let scales = [24.0, 60.0, 60.0, 1_000.0, 1_000.0, 1_000.0];
-
-			if index > 0 && lit >= scales[index - 1] as f64 {
-				return Err("Amount exceeds maximum");
-			}
-
-			current_format = Some(Format::Unit);
-			scale = Some(
-				scales
-					.iter()
-					.skip(index)
-					.fold(1.0, |acc, value| acc * value)
-			);
-		} else {
-			return Err("Unknown format");
-		}
-
-		if format == None {
-			format = current_format;
-		} else if format != current_format {
-			return Err("Cannot use mismatched formats");
-		}
-
-		tokens.push((lit, scale));
+		duration += amount * scales[index..].iter().fold(1.0, |acc, value| acc * value.1);
 	}
 
-	let nanos = match format {
-		None => return Err("Unknown format"),
-		Some(Format::Unit) => {
-			let mut duration = 0.0;
+	Ok((leftover, duration))
+}
 
-			for (lit, scale) in &tokens {
-				duration += lit * scale.unwrap() as f64;
-			}
+fn parse_unnamed_units<'a, E>(input: &'a str) -> IResult<&'a str, f64, E>
+where
+	E: ParseError<&'a str>
+{
+	let scales = [24.0, 60.0, 60.0, 1_000_000_000.0];
 
-			duration as u128
+	let mut parser = separated_list1(
+		tuple((multispace0, alt((tag("::"), tag(":"))), multispace0)),
+		double
+	);
+
+	let (leftover, parsed) = parser(input)?;
+
+	let mut duration = 0.0;
+
+	if parsed.len() > scales.len() {
+		return Err(nom::Err::Failure(E::from_error_kind(
+			input,
+			ErrorKind::SeparatedNonEmptyList
+		)));
+	}
+
+	for (index, &amount) in parsed.iter().rev().enumerate() {
+		let index = scales.len() - index - 1;
+		let scale = scales[index];
+
+		if amount < 0.0 || amount >= scale {
+			return Err(nom::Err::Failure(E::from_error_kind(
+				input,
+				ErrorKind::Float
+			)));
 		}
 
-		Some(Format::Colon) => {
-			let mut duration = 0.0;
-			let scales = [60.0, 60.0, 24.0];
+		duration += amount * scales[index..].iter().fold(1.0, |acc, value| acc * value);
+	}
 
-			tokens.reverse();
+	Ok((leftover, duration))
+}
 
-			if tokens.len() > scales.len() + 1 {
-				return Err("Too many tokens");
-			}
+fn parse_time_string(amount: &str) -> Result<TokenStream> {
+	let mut parser = alt::<_, _, (), _>((parse_named_units, parse_unnamed_units));
+	let (leftover, nanos) = parser(amount).map_err(|_| "Unknown format")?;
 
-			for (scale, (lit, _)) in scales.iter().zip(tokens.iter()) {
-				if lit >= scale {
-					return Err("Amount exceeds maximum");
-				}
-			}
-
-			for i in 0..tokens.len() {
-				let mut amount = tokens[i].0;
-
-				for scale in &scales[0..i] {
-					amount *= scale;
-				}
-
-				duration += amount;
-			}
-
-			(duration * 1_000_000_000.0) as u128
-		}
-	};
+	if !leftover.is_empty() {
+		return Err("Unknown format (found trailing data)");
+	}
 
 	Ok(quote! { #nanos })
 }
 
-fn parse_inverse(expr: TokenStream) -> Result {
-	let Ok(Expr::Binary(binary)) = parse2(expr.clone()) else {
+fn parse_inverse(expr: Expr) -> Result<TokenStream> {
+	let Expr::Binary(binary) = expr else {
 		return Err("Expected a binary op");
 	};
 
@@ -145,19 +149,20 @@ fn parse_inverse(expr: TokenStream) -> Result {
 
 	let (left, right) = (&binary.left, &binary.right);
 
-	Ok(quote! {
-		(#left) as u128 * 1_000_000_000 / (#right) as u128
-	})
+	Ok(quote! {{
+		let (left, right) = (#left, #right);
+
+		left as u128 * 1_000_000_000 / right as u128
+	}})
 }
 
 pub fn duration(item: TokenStream) -> TokenStream {
-	let amount = item.to_string().replace(" ", "");
-	let amount = &amount as &str;
+	let amount = item.to_string();
 
-	let duration = if amount.contains("/") {
-		parse_inverse(item.clone())
+	let duration = if let Ok(expr) = parse2(item.clone()) {
+		parse_inverse(expr)
 	} else {
-		parse_time_string(amount)
+		parse_time_string(amount.as_ref())
 	};
 
 	match duration {

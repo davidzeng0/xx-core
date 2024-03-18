@@ -1,3 +1,5 @@
+#![allow(clippy::multiple_unsafe_ops_per_block)]
+
 use std::result;
 
 use super::*;
@@ -19,115 +21,56 @@ impl<O1, O2> Join<Option<O1>, Option<O2>> {
 	}
 }
 
-struct JoinData<T1: SyncTask, T2: SyncTask> {
-	handle_1: TaskHandle<T1>,
-	handle_2: TaskHandle<T2>,
-	request: ReqPtr<Join<T1::Output, T2::Output>>
-}
-
-impl<T1: SyncTask, T2: SyncTask> JoinData<T1, T2> {
-	unsafe fn complete_1(_: ReqPtr<T1::Output>, arg: Ptr<()>, value: T1::Output) {
-		let this = arg.cast::<Self>().cast_mut().as_mut();
-
-		this.handle_1.complete(value);
-		this.check_complete();
-	}
-
-	unsafe fn complete_2(_: ReqPtr<T2::Output>, arg: Ptr<()>, value: T2::Output) {
-		let this = arg.cast::<Self>().cast_mut().as_mut();
-
-		this.handle_2.complete(value);
-		this.check_complete();
-	}
-
-	fn new(task_1: T1, task_2: T2) -> Self {
-		/* request arg ptrs are assigned once pinned */
-		Self {
-			handle_1: TaskHandle::new(task_1, Self::complete_1),
-			handle_2: TaskHandle::new(task_2, Self::complete_2),
-			request: Ptr::null()
-		}
-	}
-
-	unsafe fn check_complete(&mut self) {
-		if !self.handle_1.done() || !self.handle_2.done() {
-			return;
-		}
-
-		/*
-		 * Safety: cannot access `self` once a cancel or a complete is called,
-		 * as it may be freed by the callee
-		 */
-		Request::complete(
-			self.request,
-			Join(self.handle_1.take_result(), self.handle_2.take_result())
-		);
-	}
-
-	#[future]
-	unsafe fn join(&mut self) -> Join<T1::Output, T2::Output> {
-		#[cancel]
-		fn cancel(self: &mut Self) -> Result<()> {
-			let (cancel_1, cancel_2) =
-				unsafe { (self.handle_1.try_cancel(), self.handle_2.try_cancel()) };
-
-			if let Some(Err(result)) = cancel_1 {
-				return Err(result);
-			}
-
-			if let Some(Err(result)) = cancel_2 {
-				return Err(result);
-			}
-
-			Ok(())
-		}
-
-		unsafe {
-			self.handle_1.run();
-			self.handle_2.run();
-		}
-
-		if self.handle_1.done() && self.handle_2.done() {
-			Progress::Done(Join(
-				self.handle_1.take_result(),
-				self.handle_2.take_result()
-			))
-		} else {
-			self.request = request;
-
-			Progress::Pending(cancel(self, request))
-		}
-	}
-}
-
-unsafe impl<T1: SyncTask, T2: SyncTask> Pin for JoinData<T1, T2> {
-	unsafe fn pin(&mut self) {
-		let arg = self.into();
-
-		self.handle_1.set_arg(arg);
-		self.handle_2.set_arg(arg);
-	}
-}
-
 #[asynchronous]
-pub async unsafe fn join_sync_task<T1: SyncTask, T2: SyncTask>(
-	task_1: T1, task_2: T2
-) -> Join<T1::Output, T2::Output> {
-	let mut data = JoinData::new(task_1, task_2);
+pub async fn join_future<F1, F2>(future_1: F1, future_2: F2) -> Join<F1::Output, F2::Output>
+where
+	F1: Future,
+	F2: Future
+{
+	let BranchOutput(_, a, b) = branch(future_1, future_2, (|_| false, |_| false)).await;
 
-	block_on(data.pin_local().join()).await
+	match (a, b) {
+		(Some(a), Some(b)) => Join(a, b),
+
+		/* Safety: both tasks must run to completion */
+		_ => unsafe { unreachable_unchecked!("Branch failed") }
+	}
 }
 
 /// Joins two tasks A and B and waits
 /// for both of them to finish, returning
 /// both of their results
+///
+/// # Safety
+/// The executor, `task`s, and the created runtime outlive the worker
 #[asynchronous]
-pub async unsafe fn join<R: Environment, T1: Task, T2: Task>(
-	runtime: Ptr<R>, task_1: T1, task_2: T2
-) -> Join<T1::Output, T2::Output> {
-	join_sync_task(
-		spawn_future_with_env(runtime, task_1),
-		spawn_future_with_env(runtime, task_2)
-	)
-	.await
+pub async fn join<E, T1, T2>(
+	runtime: Ptr<E>, task_1: T1, task_2: T2
+) -> Join<T1::Output, T2::Output>
+where
+	E: Environment,
+	T1: Task,
+	T2: Task
+{
+	/* Safety: guaranteed by caller */
+	let BranchOutput(_, a, b) = unsafe {
+		branch(
+			spawn_task_with_env(runtime, task_1),
+			spawn_task_with_env(runtime, task_2),
+			(
+				|result| !matches!(result, Ok(Ok(_))),
+				|result| !matches!(result, Ok(Ok(_)))
+			)
+		)
+	}
+	.await;
+
+	let result = Join(a.transpose(), b.transpose()).flatten();
+
+	match unwrap_panic!(result).flatten() {
+		Some(result) => result,
+
+		/* Safety: both tasks must run to completion */
+		_ => unsafe { unreachable_unchecked!("Branch failed") }
+	}
 }

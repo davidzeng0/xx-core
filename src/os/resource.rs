@@ -54,19 +54,21 @@ define_enum! {
 		RtPrio,
 
 		/// Maximum CPU time in microseconds that a process scheduled under a
-		/// real-time scheduling policy may consume without making a blocking system
-		/// call before being forcibly descheduled.
+		/// real-time scheduling policy may consume without making a blocking
+		/// system call before being forcibly descheduled.
 		RtTime
 	}
 }
-
-pub const UNLIMITED: u64 = u64::MAX;
 
 define_struct! {
 	pub struct Limit {
 		pub current: u64,
 		pub maximum: u64
 	}
+}
+
+impl Limit {
+	pub const UNLIMITED: u64 = u64::MAX;
 }
 
 define_enum! {
@@ -118,32 +120,42 @@ define_struct! {
 	}
 }
 
+pub mod raw {
+	use super::*;
+
+	#[syscall_define(Getrlimit)]
+	pub fn getrlimit(resource: Resource, limit: &mut Limit) -> Result<()>;
+
+	#[syscall_define(Prlimit64)]
+	pub fn prlimit64(
+		pid: i32, resource: Resource, new_limit: Option<&Limit>, old_limit: Option<&mut Limit>
+	) -> Result<()>;
+
+	#[syscall_define(Getrusage)]
+	pub fn getrusage(who: UsageWho, usage: &mut Usage) -> Result<()>;
+
+	#[syscall_define(Getpriority)]
+	pub fn getpriority(which: PriorityWhich, who: u32) -> Result<i32>;
+
+	#[syscall_define(Setpriority)]
+	pub fn setpriority(which: PriorityWhich, who: u32, prio: i32) -> Result<()>;
+}
+
 pub fn get_rlimit(resource: Resource) -> Result<Limit> {
 	let mut limit = Limit::default();
 
-	unsafe { syscall_int!(Getrlimit, resource as u32, &mut limit)? };
+	raw::getrlimit(resource, &mut limit)?;
 
 	Ok(limit)
 }
 
-pub fn set_rlimit(resource: Resource, limit: &Limit) -> Result<()> {
-	unsafe { syscall_int!(Setrlimit, resource as u32, limit)? };
-
-	Ok(())
-}
+#[syscall_define(Setrlimit)]
+pub fn set_rlimit(resource: Resource, limit: &Limit) -> Result<()>;
 
 pub fn p_rlimit(pid: Option<i32>, resource: Resource, new_limit: Option<&Limit>) -> Result<Limit> {
 	let mut limit = Limit::default();
 
-	unsafe {
-		syscall_int!(
-			Prlimit64,
-			pid.unwrap_or(0),
-			resource as u32,
-			new_limit.map_or(Ptr::null(), |rlimit| { Ptr::from(rlimit) }),
-			&mut limit
-		)?
-	};
+	raw::prlimit64(pid.unwrap_or(0), resource, new_limit, Some(&mut limit))?;
 
 	Ok(limit)
 }
@@ -155,20 +167,19 @@ pub fn get_limit(resource: Resource) -> Result<u64> {
 pub fn get_rusage(who: UsageWho) -> Result<Usage> {
 	let mut usage = Usage::default();
 
-	unsafe { syscall_int!(Getrusage, who as i32, &mut usage)? };
+	raw::getrusage(who, &mut usage)?;
 
 	Ok(usage)
 }
 
 pub fn get_priority(which: PriorityWhich, who: Option<u32>) -> Result<i32> {
 	const PRIORITY_ZERO: i32 = 20;
-	let prio = unsafe { syscall_int!(Getpriority, which as u32, who.unwrap_or(0))? };
+	let prio = raw::getpriority(which, who.unwrap_or(0))?;
 
+	#[allow(clippy::arithmetic_side_effects)]
 	Ok(PRIORITY_ZERO - prio as i32)
 }
 
 pub fn set_priority(which: PriorityWhich, who: Option<u32>, prio: i32) -> Result<()> {
-	unsafe { syscall_int!(Setpriority, which as u32, who.unwrap_or(0), prio)? };
-
-	Ok(())
+	raw::setpriority(which, who.unwrap_or(0), prio)
 }

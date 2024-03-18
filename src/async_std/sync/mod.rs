@@ -1,4 +1,4 @@
 use super::*;
 
-mod notify;
+pub mod notify;
 pub use notify::*;

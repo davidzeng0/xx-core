@@ -1,6 +1,11 @@
-use io_uring::error::OsError;
+#![allow(clippy::module_name_repetitions)]
 
-use super::{time::TimeSpec, *};
+use super::{
+	error::OsError,
+	signal::{SignalMask, SIGRTMAX},
+	time::TimeSpec,
+	*
+};
 
 define_enum! {
 	#[bitflags]
@@ -62,16 +67,18 @@ define_struct! {
 }
 
 impl Parameters {
+	#[must_use]
 	pub fn flags(&self) -> BitFlags<SetupFlag> {
-		unsafe { BitFlags::from_bits_unchecked(self.flags) }
+		BitFlags::from_bits_truncate(self.flags)
 	}
 
 	pub fn set_flags(&mut self, flags: BitFlags<SetupFlag>) {
 		self.flags = flags.bits();
 	}
 
+	#[must_use]
 	pub fn features(&self) -> BitFlags<Feature> {
-		unsafe { BitFlags::from_bits_unchecked(self.features) }
+		BitFlags::from_bits_truncate(self.features)
 	}
 }
 
@@ -316,9 +323,9 @@ define_enum! {
 	#[repr(usize)]
 	pub enum MmapOffsets {
 		SubmissionRing     = 0x0,
-		CompletionRing     = 0x8000000,
-		SubmissionEntries  = 0x10000000,
-		ProvideBuffersRing = 0x80000000
+		CompletionRing     = 0x0800_0000,
+		SubmissionEntries  = 0x1000_0000,
+		ProvideBuffersRing = 0x8000_0000
 	}
 }
 
@@ -495,8 +502,9 @@ define_struct! {
 }
 
 impl ProbeOp {
+	#[must_use]
 	pub fn flags(&self) -> BitFlags<ProbeOpFlags> {
-		unsafe { BitFlags::from_bits_unchecked(self.flags) }
+		BitFlags::from_bits_truncate(self.flags)
 	}
 }
 
@@ -515,6 +523,7 @@ pub struct Probe {
 	pub ops: [ProbeOp]
 }
 
+#[must_use]
 pub fn io_uring_opcode_supported(ops: &[ProbeOp], op: OpCode) -> bool {
 	if op as usize >= ops.len() {
 		false
@@ -618,69 +627,65 @@ define_enum! {
 	}
 }
 
-pub const SIGSET_SIZE: usize = 8; /* _NSIG / 8 */
+pub const SIGSET_SIZE: usize = SIGRTMAX as usize / 8;
 
+/// # Safety
+/// `submit` must be correct. inputting a higher number than sqes queued will
+/// result in bogus operations
 pub unsafe fn io_uring_enter(
-	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: MutPtr<()>
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: BitFlags<EnterFlag>,
+	sigset: SignalMask<'_>
 ) -> Result<i32> {
-	io_uring_enter2(fd, submit, min_complete, flags, sigset, SIGSET_SIZE)
+	/* Safety: guaranteed by caller */
+	unsafe { io_uring_enter2(fd, submit, min_complete, flags, sigset.into()) }
 }
 
+/// # Safety
+/// `submit` must be correct. inputting a higher number than sqes queued will
+/// result in bogus operations
+#[syscall_define(IoUringEnter)]
 pub unsafe fn io_uring_enter2(
-	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: u32, sigset: MutPtr<()>,
-	sigset_size: usize
-) -> Result<i32> {
-	let submitted = syscall_int!(
-		IoUringEnter,
-		fd,
-		submit,
-		min_complete,
-		flags,
-		sigset,
-		sigset_size
-	)?;
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: BitFlags<EnterFlag>,
+	#[array] arg: RawBuf<'_>
+) -> Result<i32>;
 
-	Ok(submitted as i32)
-}
-
+/// # Safety
+/// `submit` must be correct. inputting a higher number than sqes queued will
+/// result in bogus operations
+///
+/// # Panics
+/// if `timeout` does not fit in a i64
 pub unsafe fn io_uring_enter_timeout(
-	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: u32, timeout: u64
+	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: BitFlags<EnterFlag>,
+	timeout: u64
 ) -> Result<i32> {
 	let mut args = GetEventsArg::default();
 
+	#[allow(clippy::unwrap_used)]
 	let ts = TimeSpec {
 		/* io_uring does not enforce nanos < 1e9 */
-		nanos: timeout as i64,
+		nanos: timeout.try_into().unwrap(),
 		sec: 0
 	};
 
-	args.sig_mask_size = SIGSET_SIZE as u32;
+	#[allow(clippy::cast_possible_truncation)]
+	(args.sig_mask_size = SIGSET_SIZE as u32);
 	args.ts = Ptr::from(&ts).int_addr() as u64;
-	flags |= EnterFlag::ExtArg as u32;
+	flags |= EnterFlag::ExtArg;
 
-	io_uring_enter2(
-		fd,
-		submit,
-		min_complete,
-		flags,
-		MutPtr::from(&mut args).as_unit(),
-		size_of::<GetEventsArg>()
-	)
+	/* Safety: guaranteed by caller */
+	unsafe { io_uring_enter2(fd, submit, min_complete, flags, RawBuf::from(&[args])) }
 }
 
-pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd> {
-	unsafe {
-		let fd = syscall_int!(IoUringSetup, entries, params)?;
+#[syscall_define(IoUringSetup)]
+pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd>;
 
-		Ok(OwnedFd::from_raw_fd(fd as i32))
-	}
-}
-
+/// # Safety
+/// `arg` and `arg_count` must be valid for the respective RegisterOp
+#[syscall_define(IoUringRegister)]
 pub unsafe fn io_uring_register(
-	fd: BorrowedFd<'_>, opcode: u32, arg: Ptr<()>, arg_count: u32
-) -> Result<i32> {
-	syscall_int!(IoUringRegister, fd, opcode, arg, arg_count).map(|result| result as i32)
-}
+	fd: BorrowedFd<'_>, opcode: RegisterOp, arg: MutPtr<()>, arg_count: u32
+) -> Result<i32>;
 
 define_struct! {
 	pub struct IoRingFeatures {
@@ -692,23 +697,28 @@ define_struct! {
 }
 
 impl IoRingFeatures {
+	#[must_use]
 	pub fn version(&self) -> String {
 		format!("{}.{}", self.min_ver / 100, self.min_ver % 100)
 	}
 
+	#[must_use]
 	pub fn feature_supported(&self, feature: Feature) -> bool {
 		self.features.intersects(feature)
 	}
 
-	pub fn opcode_supported(&self, op: OpCode) -> bool {
+	#[must_use]
+	pub const fn opcode_supported(&self, op: OpCode) -> bool {
 		self.ops[op as usize]
 	}
 
+	#[must_use]
 	pub fn setup_flag_supported(&self, flag: SetupFlag) -> bool {
 		self.setup_flags.intersects(flag)
 	}
 }
 
+#[allow(clippy::missing_panics_doc, clippy::unwrap_used)]
 pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 	const OPS_COUNT: usize = 256;
 
@@ -718,9 +728,7 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 		ops: [ProbeOp; OPS_COUNT]
 	}
 
-	let mut params = Parameters::default();
-
-	params.sq_entries = 8;
+	let mut params = Parameters { sq_entries: 1, ..Default::default() };
 
 	let fd = match io_uring_setup(params.sq_entries, &mut params) {
 		Ok(fd) => fd,
@@ -735,12 +743,14 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 		ops: [ProbeOp::default(); OPS_COUNT]
 	};
 
+	/* Safety: valid probe object */
 	let probe_result = unsafe {
 		io_uring_register(
 			fd.as_fd(),
-			RegisterOp::RegisterProbe as u32,
-			MutPtr::from(&mut probe).cast_const().as_unit(),
-			OPS_COUNT as u32
+			RegisterOp::RegisterProbe,
+			MutPtr::from(&mut probe).as_unit(),
+			#[allow(clippy::cast_possible_truncation)]
+			(OPS_COUNT as u32)
 		)
 	};
 
@@ -865,6 +875,7 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 	} else {
 		features.min_ver = features.min_ver.max(506);
 
+		#[allow(clippy::arithmetic_side_effects)]
 		let ops = &probe.ops[..probe.probe.last_op as usize + 1];
 
 		for (op, version) in &op_map {
@@ -882,12 +893,13 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 		if features.min_ver >= *version {
 			features.setup_flags |= *flag;
 		} else {
-			let mut params = Parameters::default();
+			let mut params = Parameters {
+				sq_entries: 1,
+				flags: *flag as u32,
+				..Default::default()
+			};
 
-			params.sq_entries = 8;
-			params.flags = *flag as u32;
-
-			if let Ok(_) = io_uring_setup(params.sq_entries, &mut params) {
+			if io_uring_setup(params.sq_entries, &mut params).is_ok() {
 				features.min_ver = *version;
 			}
 		}

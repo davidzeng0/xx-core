@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 use super::*;
 
 #[asynchronous]
@@ -25,6 +27,7 @@ pub trait Write {
 		while wrote < buf.len() {
 			let available = &buf[wrote..];
 
+			#[allow(clippy::arithmetic_side_effects)]
 			match self.write(available).await {
 				Ok(0) => break,
 				Ok(n) => wrote += length_check(available, n),
@@ -38,6 +41,8 @@ pub trait Write {
 
 	/// Same as above, except partial writes are treated as an error
 	async fn write_exact(&mut self, buf: &[u8]) -> Result<usize> {
+		write_from!(buf);
+
 		let wrote = self.write_all(buf).await?;
 
 		length_check(buf, wrote);
@@ -63,7 +68,7 @@ pub trait Write {
 	async fn write_all_vectored(&mut self, mut bufs: &mut [IoSlice<'_>]) -> Result<usize> {
 		let mut total = 0;
 
-		while bufs.len() > 0 {
+		while !bufs.is_empty() {
 			let wrote = match self.write_vectored(bufs).await {
 				Ok(0) => break,
 				Ok(n) => n,
@@ -71,9 +76,11 @@ pub trait Write {
 				Err(err) => return Err(err)
 			};
 
-			total += wrote;
-
 			advance_slices(&mut bufs, wrote);
+
+			/* checked by `advance_slices` */
+			#[allow(clippy::arithmetic_side_effects)]
+			(total += wrote);
 		}
 
 		Ok(total)
@@ -99,22 +106,22 @@ macro_rules! write_wrapper {
 			mut inner = self.$inner_mut;
 
 			#[asynchronous(traitfn)]
-			async fn write(&mut self, buf: &[u8]) -> Result<usize>;
+			async fn write(&mut self, buf: &[u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn flush(&mut self) -> Result<()>;
+			async fn flush(&mut self) -> $crate::error::Result<()>;
 
 			#[asynchronous(traitfn)]
-			async fn write_all(&mut self, buf: &[u8]) -> Result<usize>;
+			async fn write_all(&mut self, buf: &[u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn write_exact(&mut self, buf: &[u8]) -> Result<usize>;
+			async fn write_exact(&mut self, buf: &[u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
 			fn is_write_vectored(&self) -> bool;
 
 			#[asynchronous(traitfn)]
-			async fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> Result<usize>;
+			async fn write_vectored(&mut self, bufs: &[::std::io::IoSlice<'_>]) -> $crate::error::Result<usize>;
 		}
 	}
 }
@@ -131,7 +138,7 @@ impl<'a, W: Write + ?Sized> WriteRef<'a, W> {
 	}
 }
 
-impl<'a, W: Write + ?Sized> Write for WriteRef<'a, W> {
+impl<W: Write + ?Sized> Write for WriteRef<'_, W> {
 	write_wrapper! {
 		inner = writer;
 		mut inner = writer;

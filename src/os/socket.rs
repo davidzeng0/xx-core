@@ -1,5 +1,12 @@
-use self::iovec::{BorrowedIoVec, BorrowedIoVecMut};
-use super::{inet::Address, iovec::IoVec, tcp::TcpOption, *};
+#![allow(clippy::module_name_repetitions)]
+
+use super::{
+	fcntl::OpenFlag,
+	inet::Address,
+	iovec::{self, IoVec, IoVecMut},
+	tcp::TcpOption,
+	*
+};
 
 define_enum! {
 	#[repr(u32)]
@@ -146,11 +153,11 @@ define_enum! {
 #[allow(non_upper_case_globals)]
 impl ProtocolFamily {
 	/// Another non-standard name for PF_LOCAL.
-	pub const File: ProtocolFamily = ProtocolFamily::Local;
+	pub const File: Self = Self::Local;
 	/// Alias to emulate 4.4BSD.
-	pub const Route: ProtocolFamily = ProtocolFamily::NetLink;
+	pub const Route: Self = Self::NetLink;
 	/// POSIX name for PF_LOCAL.
-	pub const Unix: ProtocolFamily = ProtocolFamily::Local;
+	pub const Unix: Self = Self::Local;
 }
 
 pub type AddressFamily = ProtocolFamily;
@@ -167,11 +174,13 @@ define_enum! {
 		Packet = 10
 	}
 }
-
-#[allow(non_upper_case_globals)]
-impl SocketType {
-	pub const CloExec: u32 = 80000;
-	pub const NonBlock: u32 = 800;
+define_enum! {
+	#[bitflags]
+	#[repr(u32)]
+	pub enum SocketFlag {
+		CloseOnExec = OpenFlag::CloseOnExec as u32,
+		NonBlock    = OpenFlag::NonBlock as u32
+	}
 }
 
 define_enum! {
@@ -324,57 +333,68 @@ define_enum! {
 	}
 }
 
-define_struct! {
-	pub struct MsgHdr {
-		pub address: MutPtr<()>,
-		pub address_len: u32,
+pub mod raw {
+	use iovec::raw::IoVec;
 
-		pub iov: MutPtr<IoVec>,
-		pub iov_len: usize,
-
-		pub control: Ptr<()>,
-		pub control_len: usize,
-
-		pub flags: u32
-	}
-}
-
-impl MsgHdr {
-	pub fn flags(&self) -> BitFlags<MessageFlag> {
-		unsafe { BitFlags::from_bits_unchecked(self.flags) }
-	}
-}
-
-mod internal {
 	use super::*;
 
+	define_struct! {
+		pub struct MsgHdr {
+			pub address: MutPtr<()>,
+			pub address_len: u32,
+
+			pub iov: MutPtr<IoVec>,
+			pub iov_len: usize,
+
+			pub control: Ptr<()>,
+			pub control_len: usize,
+
+			pub flags: u32
+		}
+	}
+
+	impl MsgHdr {
+		#[must_use]
+		pub fn flags(&self) -> BitFlags<MessageFlag> {
+			BitFlags::from_bits_truncate(self.flags)
+		}
+	}
+
 	#[repr(transparent)]
-	pub struct MessageHeader<'a, const MUTABLE: bool> {
-		pub(super) msg_hdr: MsgHdr,
-		pub(super) phantom: PhantomData<&'a ()>
+	#[derive(Default, Debug)]
+	pub struct BorrowedMsgHdr<'a, const MUTABLE: bool> {
+		pub msg_hdr: MsgHdr,
+		pub phantom: PhantomData<&'a ()>
+	}
+
+	#[derive(Default, Debug)]
+	pub struct ExtraBuf<'a, const MUTABLE: bool> {
+		pub ptr: MutPtr<()>,
+		pub len: i32,
+		pub phantom: PhantomData<&'a ()>
 	}
 }
 
-pub type MessageHeader<'a> = internal::MessageHeader<'a, false>;
-pub type MessageHeaderMut<'a> = internal::MessageHeader<'a, true>;
+pub type MsgHdr<'a> = raw::BorrowedMsgHdr<'a, false>;
+pub type MsgHdrMut<'a> = raw::BorrowedMsgHdr<'a, true>;
 
-impl<'a, const MUTABLE: bool> internal::MessageHeader<'a, MUTABLE> {
-	pub fn new() -> Self {
-		Self { msg_hdr: MsgHdr::default(), phantom: PhantomData }
-	}
-
+impl<const MUTABLE: bool> raw::BorrowedMsgHdr<'_, MUTABLE> {
+	#[must_use]
 	pub fn flags(&self) -> BitFlags<MessageFlag> {
 		self.msg_hdr.flags()
 	}
 }
 
-impl<'a> MessageHeader<'a> {
+impl<'a> MsgHdr<'a> {
+	/// # Panics
+	/// if size of A cannot fit in an i32
+	#[allow(clippy::unwrap_used)]
 	pub fn set_addr<A>(&mut self, addr: &'a A) {
 		self.msg_hdr.address = Ptr::from(addr).cast_mut().as_unit();
-		self.msg_hdr.address_len = size_of::<A>() as u32;
+		self.msg_hdr.address_len = size_of::<A>().try_into().unwrap();
 	}
 
-	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b [BorrowedIoVec<'c>])
+	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b [IoVec<'c>])
 	where
 		'b: 'a,
 		'c: 'a
@@ -384,13 +404,16 @@ impl<'a> MessageHeader<'a> {
 	}
 }
 
-impl<'a> MessageHeaderMut<'a> {
+impl<'a> MsgHdrMut<'a> {
+	/// # Panics
+	/// if size of A cannot fit in an i32
+	#[allow(clippy::unwrap_used)]
 	pub fn set_addr<A>(&mut self, addr: &'a mut A) {
 		self.msg_hdr.address = MutPtr::from(addr).as_unit();
-		self.msg_hdr.address_len = size_of::<A>() as u32;
+		self.msg_hdr.address_len = size_of::<A>().try_into().unwrap();
 	}
 
-	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b mut [BorrowedIoVecMut<'c>])
+	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b mut [IoVecMut<'c>])
 	where
 		'b: 'a,
 		'c: 'a
@@ -400,155 +423,234 @@ impl<'a> MessageHeaderMut<'a> {
 	}
 }
 
-pub fn socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd> {
-	unsafe {
-		let fd = syscall_int!(Socket, domain, socket_type, protocol)?;
+pub type ExtraBuf<'a> = raw::ExtraBuf<'a, false>;
+pub type ExtraBufMut<'a> = raw::ExtraBuf<'a, true>;
 
-		Ok(OwnedFd::from_raw_fd(fd as i32))
+impl ExtraBuf<'_> {
+	#[must_use]
+	pub const fn from_parts(ptr: Ptr<()>, len: i32) -> Self {
+		Self { ptr: ptr.cast_mut(), len, phantom: PhantomData }
 	}
 }
 
-pub unsafe fn bind_raw(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()> {
-	syscall_int!(Bind, socket, addr, addrlen)?;
-
-	Ok(())
+impl ExtraBufMut<'_> {
+	#[must_use]
+	pub const fn from_parts(ptr: MutPtr<()>, len: i32) -> Self {
+		Self { ptr, len, phantom: PhantomData }
+	}
 }
 
-pub fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	unsafe { bind_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32) }
+impl<'a, T> From<&'a T> for ExtraBuf<'a> {
+	/// # Panics
+	/// if size of A cannot fit in an i32
+	#[allow(clippy::unwrap_used)]
+	fn from(value: &'a T) -> Self {
+		Self {
+			ptr: Ptr::from(value).cast_mut().cast(),
+			len: size_of::<T>().try_into().unwrap(),
+			phantom: PhantomData
+		}
+	}
 }
+
+impl<'a, T> From<&'a mut T> for ExtraBufMut<'a> {
+	/// # Panics
+	/// if size of A cannot fit in an i32
+	#[allow(clippy::unwrap_used)]
+	fn from(value: &'a mut T) -> Self {
+		Self {
+			ptr: MutPtr::from(value).cast(),
+			len: size_of::<T>().try_into().unwrap(),
+			phantom: PhantomData
+		}
+	}
+}
+
+impl IntoRawArray for ExtraBuf<'_> {
+	type Length = i32;
+	type Pointer = Ptr<()>;
+
+	fn into_raw_array(self) -> (Self::Pointer, Self::Length) {
+		(self.ptr.cast_const(), self.len)
+	}
+}
+
+impl<'a> IntoRawArray for &'a mut ExtraBufMut<'_> {
+	type Length = &'a mut i32;
+	type Pointer = MutPtr<()>;
+
+	fn into_raw_array(self) -> (Self::Pointer, Self::Length) {
+		(self.ptr, &mut self.len)
+	}
+}
+
+impl IntoRawArray for Option<&mut ExtraBufMut<'_>> {
+	type Length = MutPtr<i32>;
+	type Pointer = MutPtr<()>;
+
+	fn into_raw_array(self) -> (Self::Pointer, Self::Length) {
+		self.map_or_else(Default::default, |buf| {
+			let raw = buf.into_raw_array();
+
+			(raw.0, MutPtr::from(raw.1))
+		})
+	}
+}
+
+/// Note: changed i32 to u32 as negative values aren't allowed anyway
+#[syscall_define(Socket)]
+pub fn socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd>;
+
+/// # Safety
+/// `addr` must be a valid buffer
+#[syscall_define(Bind)]
+pub unsafe fn bind(socket: BorrowedFd<'_>, #[array] addr: ExtraBuf<'_>) -> Result<()>;
 
 pub fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
-	match &addr {
-		Address::V4(addr) => bind(socket, addr),
-		Address::V6(addr) => bind(socket, addr)
+	/* Safety: addr is a valid reference */
+	#[allow(clippy::multiple_unsafe_ops_per_block)]
+	unsafe {
+		match &addr {
+			Address::V4(addr) => bind(socket, addr.into()),
+			Address::V6(addr) => bind(socket, addr.into())
+		}
 	}
 }
 
-pub unsafe fn connect_raw(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()> {
-	syscall_int!(Connect, socket, addr, addrlen)?;
-
-	Ok(())
-}
-
-pub fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	unsafe { connect_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32) }
-}
+/// # Safety
+/// `addr` must be a valid buffer
+#[syscall_define(Connect)]
+pub unsafe fn connect(socket: BorrowedFd<'_>, #[array] addr: ExtraBuf<'_>) -> Result<()>;
 
 pub fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
-	match &addr {
-		Address::V4(addr) => connect(socket, addr),
-		Address::V6(addr) => connect(socket, addr)
+	/* Safety: addr is a valid reference */
+	#[allow(clippy::multiple_unsafe_ops_per_block)]
+	unsafe {
+		match &addr {
+			Address::V4(addr) => connect(socket, addr.into()),
+			Address::V6(addr) => connect(socket, addr.into())
+		}
 	}
 }
 
-pub unsafe fn accept_raw(
-	socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32
-) -> Result<OwnedFd> {
-	let fd = syscall_int!(Accept, socket, addr, addrlen)?;
+/// # Safety
+/// `addr` must be a valid buffer
+#[syscall_define(Accept)]
+pub unsafe fn accept(
+	socket: BorrowedFd<'_>, #[array] addr: Option<&mut ExtraBufMut<'_>>
+) -> Result<OwnedFd>;
 
-	Ok(OwnedFd::from_raw_fd(fd as i32))
+#[syscall_define(Accept4)]
+pub unsafe fn accept4(
+	socket: BorrowedFd<'_>, #[array] addr: Option<&mut ExtraBufMut<'_>>,
+	flags: BitFlags<SocketFlag>
+) -> Result<OwnedFd>;
+
+pub fn accept_storage<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd, i32)> {
+	let mut buf = ExtraBufMut::from(addr);
+
+	/* Safety: buf is from a valid reference */
+	let fd = unsafe { accept(socket, Some(&mut buf))? };
+
+	Ok((fd, buf.len))
 }
 
-pub fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd, u32)> {
-	let mut addrlen = size_of::<A>() as u32;
-	let fd = unsafe { accept_raw(socket, MutPtr::from(addr).as_unit(), &mut addrlen)? };
+/// # Safety
+/// `addr` must be a valid buffer
+#[syscall_define(Sendto)]
+pub unsafe fn sendto(
+	socket: BorrowedFd<'_>, #[array] buf: RawBuf<'_>, flags: BitFlags<MessageFlag>,
+	#[array] destination: ExtraBuf<'_>
+) -> Result<usize>;
 
-	Ok((fd, addrlen))
-}
-
-pub unsafe fn sendto_raw(
-	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, dest_addr: Ptr<()>, addrlen: u32
+/// # Safety
+/// `buf` and `addr` must be a valid buffer
+pub unsafe fn sendto_arbitrary<A>(
+	socket: BorrowedFd<'_>, buf: RawBuf<'_>, flags: BitFlags<MessageFlag>, destination: &A
 ) -> Result<usize> {
-	let sent = syscall_int!(Sendto, socket, buf, len, flags, dest_addr, addrlen)?;
-
-	Ok(sent as usize)
+	/* Safety: guaranteed by caller */
+	unsafe { sendto(socket, buf, flags, ExtraBuf::from(destination)) }
 }
 
-pub unsafe fn sendto<A>(
-	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, destination: &A
+/// # Safety
+/// `buf` and `addr` must be a valid buffer
+pub unsafe fn send(
+	socket: BorrowedFd<'_>, buf: RawBuf<'_>, flags: BitFlags<MessageFlag>
 ) -> Result<usize> {
-	sendto_raw(
-		socket,
-		buf,
-		len,
-		flags,
-		Ptr::from(destination).as_unit(),
-		size_of::<A>() as u32
-	)
+	/* Safety: guaranteed by caller */
+	unsafe { sendto(socket, buf, flags, ExtraBuf::default()) }
 }
 
-pub unsafe fn send(socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize> {
-	sendto_raw(socket, buf, len, flags, Ptr::null(), 0)
+/// # Safety
+/// `buf` and `addr` must be a valid buffer
+#[syscall_define(Recvfrom)]
+pub unsafe fn recvfrom(
+	socket: BorrowedFd<'_>, #[array] buf: RawBuf<'_>, flags: BitFlags<MessageFlag>,
+	#[array] addr: Option<&mut ExtraBufMut<'_>>
+) -> Result<usize>;
+
+/// # Safety
+/// `buf`, and `len` must be valid
+pub unsafe fn recvfrom_arbitrary<A>(
+	socket: BorrowedFd<'_>, buf: RawBuf<'_>, flags: BitFlags<MessageFlag>, addr: &mut A
+) -> Result<(usize, i32)> {
+	let mut addr_buf = ExtraBufMut::from(addr);
+
+	/* Safety: guaranteed by caller */
+	let recvd = unsafe { recvfrom(socket, buf, flags, Some(&mut addr_buf))? };
+
+	Ok((recvd, addr_buf.len))
 }
 
-pub unsafe fn recvfrom_raw(
-	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, addr: MutPtr<()>,
-	addrlen: &mut u32
+/// # Safety
+/// `buf` must be a valid buffer
+pub unsafe fn recv(
+	socket: BorrowedFd<'_>, buf: RawBuf<'_>, flags: BitFlags<MessageFlag>
 ) -> Result<usize> {
-	let received = syscall_int!(Recvfrom, socket, buf, len, flags, addr, addrlen)?;
-
-	Ok(received as usize)
-}
-
-pub unsafe fn recvfrom<A>(
-	socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32, addr: &mut A
-) -> Result<(usize, u32)> {
-	let mut addrlen = size_of::<A>() as u32;
-	let recvd = recvfrom_raw(
-		socket,
-		buf,
-		len,
-		flags,
-		MutPtr::from(addr).as_unit(),
-		&mut addrlen
-	)?;
-
-	Ok((recvd, addrlen))
-}
-
-pub unsafe fn recv(socket: BorrowedFd<'_>, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize> {
-	let received = syscall_int!(Recvfrom, socket, buf, len, flags, 0, 0)?;
-
-	Ok(received as usize)
+	/* Safety: guaranteed by caller */
+	unsafe { recvfrom(socket, buf, flags, None) }
 }
 
 pub const MAX_BACKLOG: i32 = 4096;
 
-pub fn listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()> {
-	unsafe { syscall_int!(Listen, socket, backlog)? };
+#[syscall_define(Listen)]
+pub fn listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()>;
 
-	Ok(())
-}
+#[syscall_define(Shutdown)]
+pub fn shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>;
 
-pub fn shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()> {
-	unsafe { syscall_int!(Shutdown, socket, how as u32)? };
+#[syscall_define(Getsockopt)]
+pub unsafe fn getsockopt(
+	socket: BorrowedFd<'_>, level: i32, option: i32, #[array] val: &mut ExtraBufMut<'_>
+) -> Result<u32>;
 
-	Ok(())
-}
-
-pub fn getsockopt<Opt>(
+pub fn getsockopt_arbitrary<Opt>(
 	socket: BorrowedFd<'_>, level: i32, option: i32, opt_val: &mut Opt
-) -> Result<u32> {
-	let res =
-		unsafe { syscall_int!(Setsockopt, socket, level, option, opt_val, size_of::<Opt>())? };
+) -> Result<(u32, i32)> {
+	let mut opt_buf = ExtraBufMut::from(opt_val);
 
-	Ok(res as u32)
+	/* Safety: opt_buf was constructed from a valid reference */
+	let ret = unsafe { getsockopt(socket, level, option, &mut opt_buf) }?;
+
+	Ok((ret, opt_buf.len))
 }
 
-pub fn setsockopt<Opt>(
+#[syscall_define(Setsockopt)]
+pub unsafe fn setsockopt(
+	socket: BorrowedFd<'_>, level: i32, option: i32, #[array] val: ExtraBuf<'_>
+) -> Result<u32>;
+
+pub fn setsockopt_arbitrary<Opt>(
 	socket: BorrowedFd<'_>, level: i32, option: i32, opt_val: &Opt
 ) -> Result<u32> {
-	let res =
-		unsafe { syscall_int!(Setsockopt, socket, level, option, opt_val, size_of::<Opt>())? };
-
-	Ok(res as u32)
+	/* Safety: opt_val is constructed from a valid reference */
+	unsafe { setsockopt(socket, level, option, ExtraBuf::from(opt_val)) }
 }
 
 pub fn set_reuse_addr(socket: BorrowedFd<'_>, enable: bool) -> Result<()> {
 	let enable = enable as i32;
 
-	setsockopt(
+	setsockopt_arbitrary(
 		socket,
 		SocketLevel::Socket as i32,
 		SocketOption::ReuseAddr as i32,
@@ -559,7 +661,7 @@ pub fn set_reuse_addr(socket: BorrowedFd<'_>, enable: bool) -> Result<()> {
 }
 
 pub fn set_recvbuf_size(socket: BorrowedFd<'_>, size: i32) -> Result<()> {
-	setsockopt(
+	setsockopt_arbitrary(
 		socket,
 		SocketLevel::Socket as i32,
 		SocketOption::RecvBufSize as i32,
@@ -570,7 +672,7 @@ pub fn set_recvbuf_size(socket: BorrowedFd<'_>, size: i32) -> Result<()> {
 }
 
 pub fn set_sendbuf_size(socket: BorrowedFd<'_>, size: i32) -> Result<()> {
-	setsockopt(
+	setsockopt_arbitrary(
 		socket,
 		SocketLevel::Socket as i32,
 		SocketOption::SendBufSize as i32,
@@ -583,7 +685,7 @@ pub fn set_sendbuf_size(socket: BorrowedFd<'_>, size: i32) -> Result<()> {
 pub fn set_tcp_nodelay(socket: BorrowedFd<'_>, enable: bool) -> Result<()> {
 	let enable = enable as i32;
 
-	setsockopt(
+	setsockopt_arbitrary(
 		socket,
 		SocketLevel::Tcp as i32,
 		TcpOption::NoDelay as i32,
@@ -596,7 +698,7 @@ pub fn set_tcp_nodelay(socket: BorrowedFd<'_>, enable: bool) -> Result<()> {
 pub fn set_tcp_keepalive(socket: BorrowedFd<'_>, enable: bool, idle: i32) -> Result<()> {
 	let val = enable as i32;
 
-	setsockopt(
+	setsockopt_arbitrary(
 		socket,
 		SocketLevel::Socket as i32,
 		SocketOption::KeepAlive as i32,
@@ -604,7 +706,7 @@ pub fn set_tcp_keepalive(socket: BorrowedFd<'_>, enable: bool, idle: i32) -> Res
 	)?;
 
 	if enable {
-		setsockopt(
+		setsockopt_arbitrary(
 			socket,
 			SocketLevel::Tcp as i32,
 			TcpOption::KeepIdle as i32,
@@ -615,26 +717,40 @@ pub fn set_tcp_keepalive(socket: BorrowedFd<'_>, enable: bool, idle: i32) -> Res
 	Ok(())
 }
 
-pub unsafe fn get_addr_raw(
-	number: SyscallNumber, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32
-) -> Result<()> {
-	syscall_int!(number, socket, addr, addrlen)?;
+/// # Safety
+/// `addr` must be a valid buffer
+#[syscall_define(Getsockname)]
+pub unsafe fn getsockname(
+	socket: BorrowedFd<'_>, #[array] addr: &mut ExtraBufMut<'_>
+) -> Result<()>;
 
-	Ok(())
+/// # Safety
+/// `addr` must be a valid buffer
+#[syscall_define(Getpeername)]
+pub unsafe fn getpeername(
+	socket: BorrowedFd<'_>, #[array] addr: &mut ExtraBufMut<'_>
+) -> Result<()>;
+
+/// # Safety
+/// `func` must be a valid getaddr function
+unsafe fn get_addr<A>(
+	func: unsafe fn(BorrowedFd<'_>, &mut ExtraBufMut<'_>) -> Result<()>, socket: BorrowedFd<'_>,
+	addr: &mut A
+) -> Result<i32> {
+	let mut buf = ExtraBufMut::from(addr);
+
+	/* Safety: guaranteed by caller */
+	unsafe { func(socket, &mut buf)? };
+
+	Ok(buf.len)
 }
 
-pub fn get_addr<A>(number: SyscallNumber, socket: BorrowedFd<'_>, addr: &mut A) -> Result<u32> {
-	let mut addrlen = size_of::<A>() as u32;
-
-	unsafe { get_addr_raw(number, socket, MutPtr::from(addr).as_unit(), &mut addrlen)? };
-
-	Ok(addrlen)
+pub fn get_sock_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<i32> {
+	/* Safety: getsockname is valid */
+	unsafe { get_addr(getsockname, socket, addr) }
 }
 
-pub fn get_sock_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<u32> {
-	get_addr(Getsockname, socket, addr)
-}
-
-pub fn get_peer_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<u32> {
-	get_addr(Getpeername, socket, addr)
+pub fn get_peer_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<i32> {
+	/* Safety: getsockname is valid */
+	unsafe { get_addr(getpeername, socket, addr) }
 }

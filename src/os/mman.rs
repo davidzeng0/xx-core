@@ -1,20 +1,21 @@
 use super::*;
+use crate::macros::abort;
 
 define_enum! {
 	#[bitflags]
 	#[repr(u32)]
-	pub enum MemoryProtection {
+	pub enum Protection {
 		Read      = 1 << 0,
 		Write     = 1 << 1,
 		Exec      = 1 << 2,
-		GrowsDown = 0x01000000,
-		GrowsUp   = 0x02000000
+		GrowsDown = 1 << 24,
+		GrowsUp   = 1 << 25
 	}
 }
 
 define_enum! {
 	#[repr(u32)]
-	pub enum MemoryType {
+	pub enum Type {
 		Shared         = 1,
 		Private        = 2,
 		SharedValidate = 3
@@ -24,7 +25,7 @@ define_enum! {
 define_enum! {
 	#[bitflags]
 	#[repr(u32)]
-	pub enum MemoryFlag {
+	pub enum Flag {
 		Fixed          = 1 << 4,
 		Anonymous      = 1 << 5,
 		GrowsDown      = 1 << 8,
@@ -44,7 +45,7 @@ define_enum! {
 define_enum! {
 	#[bitflags]
 	#[repr(u32)]
-	pub enum MemorySyncFlag {
+	pub enum SyncFlag {
 		Async      = 1 << 0,
 		Invalidate = 1 << 1,
 		Sync       = 1 << 2
@@ -53,7 +54,7 @@ define_enum! {
 
 define_enum! {
 	#[repr(u32)]
-	pub enum MemoryAdvice {
+	pub enum Advice {
 		Normal,
 		Random,
 		Sequential,
@@ -82,7 +83,7 @@ define_enum! {
 define_enum! {
 	#[bitflags]
 	#[repr(u32)]
-	pub enum MemoryLockFlag {
+	pub enum LockFlag {
 		Current = 1 << 0,
 		Future  = 1 << 1,
 		OnFault = 1 << 2
@@ -92,85 +93,178 @@ define_enum! {
 define_enum! {
 	#[bitflags]
 	#[repr(u32)]
-	pub enum MemoryRemapFlag {
+	pub enum RemapFlag {
 		MayMove   = 1 << 0,
 		Fixed     = 1 << 1,
 		DontUnmap = 1 << 2
 	}
 }
 
-pub struct MemoryMap<'a> {
+pub struct Map<'a> {
 	addr: MutPtr<()>,
 	length: usize,
 	phantom: PhantomData<&'a ()>
 }
 
-pub unsafe fn mmap(
-	addr: Ptr<()>, length: usize, prot: u32, flags: u32, fd: i32, off: isize
-) -> Result<MutPtr<()>> {
-	let addr = syscall_pointer!(Mmap, addr, length, prot, flags, fd, off)?;
-
-	Ok(MutPtr::from_int_addr(addr))
+#[derive(Clone, Copy)]
+pub struct Flags {
+	ty: Type,
+	flags: BitFlags<Flag>
 }
 
-pub unsafe fn munmap(addr: Ptr<()>, length: usize) -> Result<()> {
-	syscall_int!(Munmap, addr, length)?;
+impl Flags {
+	#[must_use]
+	pub fn new(ty: Type) -> Self {
+		Self { ty, flags: BitFlags::default() }
+	}
 
-	Ok(())
+	#[must_use]
+	pub fn flag<F>(mut self, flags: F) -> Self
+	where
+		F: Into<BitFlags<Flag>>
+	{
+		self.flags |= flags.into();
+		self
+	}
 }
 
-pub unsafe fn mprotect(addr: Ptr<()>, length: usize, prot: u32) -> Result<()> {
-	syscall_int!(Mprotect, addr, length, prot)?;
+impl IntoRaw for Flags {
+	type Raw = u32;
 
-	Ok(())
+	fn into_raw(self) -> Self::Raw {
+		(self.ty as u32) | self.flags.bits()
+	}
 }
 
-pub unsafe fn msync(addr: Ptr<()>, length: usize, flags: u32) -> Result<()> {
-	syscall_int!(Msync, addr, length, flags)?;
-
-	Ok(())
+pub struct Builder<'a> {
+	addr: Ptr<()>,
+	len: usize,
+	prot: BitFlags<Protection>,
+	flags: Flags,
+	fd: Option<BorrowedFd<'a>>,
+	off: isize
 }
 
-pub unsafe fn madvise(addr: Ptr<()>, length: usize, advice: u32) -> Result<()> {
-	syscall_int!(Madvise, addr, length, advice)?;
+impl<'a> Builder<'a> {
+	#[must_use]
+	pub fn new(ty: Type, len: usize) -> Self {
+		Self {
+			addr: Ptr::null(),
+			len,
+			prot: BitFlags::default(),
+			flags: Flags::new(ty),
+			fd: None,
+			off: 0
+		}
+	}
 
-	Ok(())
+	#[must_use]
+	pub fn protect<F>(mut self, protection: F) -> Self
+	where
+		F: Into<BitFlags<Protection>>
+	{
+		self.prot |= protection.into();
+		self
+	}
+
+	#[must_use]
+	pub fn flag<F>(mut self, flag: F) -> Self
+	where
+		F: Into<BitFlags<Flag>>
+	{
+		self.flags = self.flags.flag(flag);
+		self
+	}
+
+	#[must_use]
+	pub const fn fd(mut self, fd: BorrowedFd<'a>) -> Self {
+		self.fd = Some(fd);
+		self
+	}
+
+	#[must_use]
+	pub const fn offset(mut self, off: isize) -> Self {
+		self.off = off;
+		self
+	}
+
+	pub fn map(self) -> Result<Map<'static>> {
+		Map::map(
+			self.addr, self.len, self.prot, self.flags, self.fd, self.off
+		)
+	}
+
+	pub fn map_raw(self) -> Result<MutPtr<()>> {
+		mmap(
+			self.addr, self.len, self.prot, self.flags, self.fd, self.off
+		)
+	}
 }
 
-pub unsafe fn mlock(addr: Ptr<()>, length: usize) -> Result<()> {
-	syscall_int!(Mlock, addr, length)?;
+#[syscall_define(Mmap)]
+pub fn mmap(
+	addr: Ptr<()>, length: usize, prot: BitFlags<Protection>, flags: Flags,
+	fd: Option<BorrowedFd<'_>>, off: isize
+) -> Result<MutPtr<()>>;
 
-	Ok(())
-}
+/// # Safety
+/// must have ownership of the range
+#[syscall_define(Munmap)]
+pub unsafe fn munmap(#[array] section: RawBuf<'_>) -> Result<()>;
 
-pub unsafe fn munlock(addr: Ptr<()>, length: usize) -> Result<()> {
-	syscall_int!(Munlock, addr, length)?;
+/// # Safety
+/// if there are references to the range, the flags must not affect their
+/// permissions
+#[syscall_define(Mprotect)]
+pub unsafe fn mprotect(#[array] section: RawBuf<'_>, prot: BitFlags<Protection>) -> Result<()>;
 
-	Ok(())
-}
+/// # Safety
+/// section must be a valid section, returned from mmap
+#[syscall_define(Msync)]
+pub unsafe fn msync(#[array] section: RawBuf<'_>, flags: BitFlags<SyncFlag>) -> Result<()>;
 
-pub unsafe fn mlock_all(flags: u32) -> Result<()> {
-	syscall_int!(Mlockall, flags)?;
+/// # Safety
+/// if there are references to the range, the flags must not affect their
+/// permissions
+#[syscall_define(Madvise)]
+pub unsafe fn madvise(#[array] section: RawBuf<'_>, advice: Advice) -> Result<()>;
 
-	Ok(())
-}
+/// # Safety
+/// section must be a valid section, returned from mmap
+#[syscall_define(Mlock)]
+pub unsafe fn mlock(#[array] section: RawBuf<'_>) -> Result<()>;
 
-pub unsafe fn munlock_all() -> Result<()> {
-	syscall_int!(Munlockall)?;
+/// # Safety
+/// section must be a valid section, returned from mmap
+#[syscall_define(Mlock)]
+pub unsafe fn mlock2(#[array] section: RawBuf<'_>, flags: BitFlags<LockFlag>) -> Result<()>;
 
-	Ok(())
-}
+/// # Safety
+/// section must be a valid section, returned from mmap
+#[syscall_define(Munlock)]
+pub unsafe fn munlock(#[array] section: RawBuf<'_>) -> Result<()>;
 
+#[syscall_define(Mlockall)]
+pub fn mlock_all(flags: BitFlags<LockFlag>) -> Result<()>;
+
+/// # Safety
+/// if there are no mappings that require locking
+#[syscall_define(Munlockall)]
+pub unsafe fn munlock_all() -> Result<()>;
+
+/// # Safety
+/// section must be a valid section, returned from mmap
+/// the section must be owned
+#[syscall_define(Mremap)]
 pub unsafe fn mremap(
-	addr: Ptr<()>, old_length: usize, new_length: usize, flags: u32, new_address: Ptr<()>
-) -> Result<MutPtr<()>> {
-	let addr = syscall_pointer!(Mremap, addr, old_length, new_length, flags, new_address)?;
+	#[array] section: RawBuf<'_>, new_length: usize, flags: BitFlags<RemapFlag>,
+	new_address: Ptr<()>
+) -> Result<MutPtr<()>>;
 
-	Ok(MutPtr::from_int_addr(addr))
-}
-
-impl MemoryMap<'_> {
-	pub fn new() -> Self {
+impl<'a> Map<'a> {
+	#[allow(clippy::new_without_default)]
+	#[must_use]
+	pub const fn new() -> Self {
 		Self {
 			addr: MutPtr::null(),
 			length: 0,
@@ -178,59 +272,76 @@ impl MemoryMap<'_> {
 		}
 	}
 
-	pub fn map<'a>(
-		addr: Option<Ptr<()>>, length: usize, prot: u32, flags: u32, fd: Option<BorrowedFd<'_>>,
-		off: isize
-	) -> Result<MemoryMap<'a>> {
-		unsafe {
-			let addr = mmap(
-				addr.unwrap_or(Ptr::null()),
-				length,
-				prot,
-				flags,
-				fd.map(|fd| fd.as_raw_fd()).unwrap_or(-1),
-				off
-			)?;
+	#[allow(clippy::self_named_constructors)]
+	pub fn map(
+		addr: Ptr<()>, length: usize, prot: BitFlags<Protection>, flags: Flags,
+		fd: Option<BorrowedFd<'_>>, off: isize
+	) -> Result<Map<'static>> {
+		let addr = mmap(addr, length, prot, flags, fd, off)?;
 
-			Ok(MemoryMap { addr, length, phantom: PhantomData })
-		}
+		Ok(Map { addr, length, phantom: PhantomData })
 	}
 
-	pub fn addr(&self) -> MutPtr<()> {
+	#[must_use]
+	pub const fn addr(&self) -> MutPtr<()> {
 		self.addr
 	}
 
-	pub fn length(&self) -> usize {
+	#[must_use]
+	pub const fn length(&self) -> usize {
 		self.length
 	}
 
-	pub fn protect(&self, prot: u32) -> Result<()> {
-		unsafe { mprotect(self.addr.into(), self.length, prot) }
+	#[must_use]
+	pub const fn section(&self) -> RawBuf<'a> {
+		RawBuf::from_parts(self.addr.cast_const(), self.length)
 	}
 
-	pub fn sync(&self, flags: u32) -> Result<()> {
-		unsafe { msync(self.addr.into(), self.length, flags) }
+	/// # Safety
+	/// see `mprotect`
+	pub unsafe fn protect(&self, prot: BitFlags<Protection>) -> Result<()> {
+		/* Safety: guaranteed by caller */
+		unsafe { mprotect(self.section(), prot) }
 	}
 
-	pub fn advise(&self, advice: u32) -> Result<()> {
-		unsafe { madvise(self.addr.into(), self.length, advice) }
+	/// # Safety
+	/// see `msync`
+	pub unsafe fn sync(&self, flags: BitFlags<SyncFlag>) -> Result<()> {
+		/* Safety: guaranteed by caller */
+		unsafe { msync(self.section(), flags) }
 	}
 
-	pub fn lock(&self) -> Result<()> {
-		unsafe { mlock(self.addr.into(), self.length) }
+	/// # Safety
+	/// see `madvise`
+	pub unsafe fn advise(&self, advice: Advice) -> Result<()> {
+		/* Safety: guaranteed by caller */
+		unsafe { madvise(self.section(), advice) }
 	}
 
-	pub fn unlock(&self) -> Result<()> {
-		unsafe { munlock(self.addr.into(), self.length) }
+	/// # Safety
+	/// see `mlock`
+	pub unsafe fn lock(&self) -> Result<()> {
+		/* Safety: guaranteed by caller */
+		unsafe { mlock(self.section()) }
+	}
+
+	/// # Safety
+	/// see `munlock`
+	pub unsafe fn unlock(&self) -> Result<()> {
+		/* Safety: guaranteed by caller */
+		unsafe { munlock(self.section()) }
 	}
 }
 
-impl Drop for MemoryMap<'_> {
+impl Drop for Map<'_> {
 	fn drop(&mut self) {
-		if !self.addr.is_null() {
-			unsafe {
-				munmap(self.addr.into(), self.length).unwrap();
-			}
+		if self.addr.is_null() {
+			return;
+		}
+
+		/* Safety: owner dropped us, so we own the range */
+		if let Err(err) = unsafe { munmap(self.section()) } {
+			abort!("Failed to unmap memory: {:?}", err);
 		}
 	}
 }

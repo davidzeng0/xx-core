@@ -1,39 +1,41 @@
-use super::{poll::PollFlag, *};
+use std::time::Duration;
+
+use super::{fcntl::OpenFlag, poll::PollFlag::*, signal::*, time::TimeSpec, *};
 
 define_enum! {
 	#[bitflags]
 	#[repr(u32)]
-	pub enum EventPollFlag {
+	pub enum PollFlag {
 		/// There is data to read.
-		In            = PollFlag::In as u32,
+		In            = In as u32,
 
 		/// There is urgent data to read.
-		Priority      = PollFlag::Priority as u32,
+		Priority      = Priority as u32,
 
 		/// Writing now will not block.
-		Out           = PollFlag::Out as u32,
+		Out           = Out as u32,
 
 		/// Error condition.
-		Error         = PollFlag::Error as u32,
+		Error         = Error as u32,
 
 		/// Hung up.
-		HangUp        = PollFlag::HangUp as u32,
+		HangUp        = HangUp as u32,
 
 		/// Normal data may be read.
-		ReadNorm      = PollFlag::ReadNorm as u32,
+		ReadNorm      = ReadNorm as u32,
 
 		/// Priority data may be read.
-		ReadBand      = PollFlag::ReadBand as u32,
+		ReadBand      = ReadBand as u32,
 
 		/// Writing now will not block.
-		WriteNorm     = PollFlag::WriteNorm as u32,
+		WriteNorm     = WriteNorm as u32,
 
 		/// Priority data may be written.
-		WriteBand     = PollFlag::WriteBand as u32,
+		WriteBand     = WriteBand as u32,
 
-		Message       = PollFlag::Message as u32,
+		Message       = Message as u32,
 
-		RdHangUp      = PollFlag::RdHangUp as u32,
+		RdHangUp      = RdHangUp as u32,
 
 		Exclusive     = 1 << 28,
 		WakeUp        = 1 << 29,
@@ -44,56 +46,78 @@ define_enum! {
 
 define_enum! {
 	#[repr(u32)]
-	pub enum CtlOp {
-		/// Add a file descriptor to the interface.
+	pub enum ControlOp {
+		/// Add an entry to the interest list of the epoll file descriptor
 		Add = 1,
 
-		/// Remove a file descriptor from the interface.
+		/// Remove (deregister) the target file descriptor fd from the interest list.
 		Del,
 
-		/// Change file descriptor epoll_event structure.
+		/// Change the settings associated with fd in the interest list to the new settings
 		Mod
 	}
 }
 
+define_enum! {
+	#[repr(u32)]
+	#[bitflags]
+	pub enum CreateFlag {
+		CloseOnExec = OpenFlag::CloseOnExec as u32
+	}
+}
+
 define_struct! {
-	pub struct EpollEvent {
+	#[repr(packed)]
+	pub struct Event {
 		pub events: u32,
 		pub data: u64
 	}
 }
 
-pub struct EventPoll {
-	fd: OwnedFd
+pub struct EventPoll(OwnedFd);
+
+#[allow(clippy::module_name_repetitions)]
+pub fn epoll_create(_size: u32) -> Result<OwnedFd> {
+	epoll_create1(BitFlags::default())
 }
 
+#[syscall_define(EpollCreate1)]
+pub fn epoll_create1(flags: BitFlags<CreateFlag>) -> Result<OwnedFd>;
+
+#[syscall_define(EpollCtl)]
+pub fn epoll_ctl(
+	epfd: BorrowedFd<'_>, op: ControlOp, fd: BorrowedFd<'_>, event: &mut Event
+) -> Result<()>;
+
+#[allow(clippy::module_name_repetitions)]
+pub fn epoll_wait(fd: BorrowedFd<'_>, events: &mut [Event], timeout: i32) -> Result<u32> {
+	epoll_pwait(fd, events, timeout, None)
+}
+
+#[syscall_define(EpollPwait)]
+pub fn epoll_pwait(
+	fd: BorrowedFd<'_>, #[array(len = i32)] events: &mut [Event], timeout: i32,
+	#[array] sigmask: SignalMask<'_>
+) -> Result<u32>;
+
+#[syscall_define(EpollPwait2)]
+pub fn epoll_pwait2(
+	fd: BorrowedFd<'_>, #[array(len = i32)] events: &mut [Event], timeout: &TimeSpec,
+	#[array] sigmask: SignalMask<'_>
+) -> Result<u32>;
+
 impl EventPoll {
-	pub fn create(flags: u32) -> Result<Self> {
-		unsafe {
-			let fd = syscall_int!(EpollCreate1, flags)?;
-
-			Ok(Self { fd: OwnedFd::from_raw_fd(fd as i32) })
-		}
+	pub fn create(flags: BitFlags<CreateFlag>) -> Result<Self> {
+		epoll_create1(flags).map(Self)
 	}
 
-	pub fn ctl(&self, op: CtlOp, fd: BorrowedFd<'_>, event: &mut EpollEvent) -> Result<()> {
-		unsafe { syscall_int!(EpollCtl, self.fd.as_fd(), op as u32, fd, event)? };
-
-		Ok(())
+	pub fn ctl(&self, op: ControlOp, fd: BorrowedFd<'_>, event: &mut Event) -> Result<()> {
+		epoll_ctl(self.0.as_fd(), op, fd, event)
 	}
 
-	pub fn wait(&self, events: &mut [EpollEvent], timeout: i32) -> Result<u32> {
-		let events = unsafe {
-			syscall_int!(
-				EpollPwait,
-				self.fd.as_fd(),
-				events.as_mut_ptr(),
-				events.len(),
-				timeout,
-				Ptr::<()>::null()
-			)?
-		};
+	pub fn wait(&self, events: &mut [Event], timeout: Duration) -> Result<u32> {
+		let ts = TimeSpec::from_duration(timeout);
 
-		Ok(events as u32)
+		epoll_pwait2(self.0.as_fd(), events, &ts, None)
 	}
 }

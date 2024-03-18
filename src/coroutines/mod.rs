@@ -1,133 +1,97 @@
-pub mod closure;
-pub mod context;
-pub use context::*;
-pub mod executor;
-pub use executor::*;
-pub mod worker;
-pub use worker::*;
-pub mod spawn;
-pub use spawn::*;
-pub mod select;
-pub use select::*;
-pub mod join;
-pub use join::*;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 pub use crate::macros::asynchronous;
 use crate::{
 	debug,
 	error::*,
 	fiber::*,
-	future::{
-		block_on::block_on as sync_block_on, closure::*, future, Cancel, Complete,
-		Future as SyncTask, Progress, ReqPtr, Request
-	},
+	future::{self, closure::*, future, Cancel, Complete, Future, Progress, ReqPtr, Request},
+	macros::{abort, unreachable_unchecked, unwrap_panic},
 	opt::hint::*,
-	pointer::*
+	pointer::*,
+	warn
 };
 
-struct TaskHandle<T: SyncTask> {
-	task: Option<T>,
-	request: Request<T::Output>,
-	cancel: Option<T::Cancel>,
-	result: Option<T::Output>
-}
+mod branch;
+use branch::*;
 
-impl<T: SyncTask> TaskHandle<T> {
-	pub fn new(task: T, callback: Complete<T::Output>) -> Self {
-		Self {
-			task: Some(task),
-			request: Request::new(Ptr::null(), callback),
-			cancel: None,
-			result: None
-		}
-	}
+pub mod closure;
+pub mod context;
+pub mod executor;
+pub mod join;
+pub mod select;
+pub mod spawn;
+pub mod worker;
 
-	pub unsafe fn run(&mut self) {
-		match self.task.take().unwrap().run(Ptr::from(&self.request)) {
-			Progress::Pending(cancel) => self.cancel = Some(cancel),
-			Progress::Done(value) => self.complete(value)
-		}
-	}
-
-	pub fn done(&self) -> bool {
-		self.result.is_some()
-	}
-
-	pub fn complete(&mut self, result: T::Output) {
-		self.cancel = None;
-		self.result = Some(result);
-	}
-
-	pub fn take_result(&mut self) -> T::Output {
-		self.result.take().unwrap()
-	}
-
-	pub unsafe fn try_cancel(&mut self) -> Option<Result<()>> {
-		let result = self.cancel.take()?.run();
-
-		if let Err(err) = &result {
-			debug!("Cancel returned an error: {:?}", err);
-		}
-
-		Some(result)
-	}
-
-	pub unsafe fn cancel(&mut self) -> Result<()> {
-		self.try_cancel().unwrap()
-	}
-
-	pub fn set_arg<A>(&mut self, arg: Ptr<A>) {
-		self.request.set_arg(arg.as_unit())
-	}
-}
+pub use context::*;
+pub use executor::*;
+pub use join::*;
+pub use select::*;
+pub use spawn::*;
+pub use worker::*;
 
 /// An async task
 pub trait Task {
 	type Output;
 
+	/// This function is marked as safe because it will be converted to a
+	/// reference in the future. However, it is not safe right now. Do not call
+	/// this function without a valid context
 	fn run(self, context: Ptr<Context>) -> Self::Output;
 }
 
 /// Get a pointer to the current context
+///
+/// Always returns a valid, dereferenceable pointer if the calling function is
+/// an async function. Otherwise, the context must be valid until it has
+/// finished executing.
 #[asynchronous]
+#[lang = "get_context"]
 pub async fn get_context() -> Ptr<Context> {
-	__xx_internal_async_context.into()
+	/* compiler builtin */
 }
 
-/// Safety: `context` and `task` must live across suspends, and any lifetimes
-/// captured by `task` must remain valid
-pub unsafe fn with_context<T: Task>(context: Ptr<Context>, task: T) -> T::Output {
-	context.as_ref().run(task)
+/// # Safety
+/// `context` and `task` must live across suspends, and any lifetimes
+/// captured by `task` must remain valid until this function returns
+pub unsafe fn with_context<T>(context: Ptr<Context>, task: T) -> T::Output
+where
+	T: Task
+{
+	/* Safety: guaranteed by caller */
+	unsafe { context.as_ref() }.run(task)
 }
 
 #[asynchronous]
-pub async fn block_on<T: SyncTask>(task: T) -> T::Output {
-	/* Safety: context's validity must be upheld by the implementation when
-	 * running any async task */
-	unsafe { get_context().await.as_ref() }.block_on(task)
+pub async fn block_on<F>(future: F) -> F::Output
+where
+	F: Future
+{
+	/* Safety: we are in an async function */
+	let context = unsafe { get_context().await.as_ref() };
+
+	context.block_on(future)
 }
 
 #[asynchronous]
 pub async fn is_interrupted() -> bool {
-	/* Safety: context's validity must be upheld by the implementation when
-	 * running any async task */
+	/* Safety: we are in an async function */
 	unsafe { get_context().await.as_ref() }.interrupted()
 }
 
 #[asynchronous]
 pub async fn check_interrupt() -> Result<()> {
-	if unlikely(is_interrupted().await) {
-		Err(Core::Interrupted.as_err())
-	} else {
+	if !is_interrupted().await {
 		Ok(())
+	} else {
+		Err(Core::Interrupted.as_err())
 	}
 }
 
 #[asynchronous]
 pub async fn clear_interrupt() {
-	/* Safety: context's validity must be upheld by the implementation when
-	 * running any async task */
-	unsafe { get_context().await.as_ref() }.clear_interrupt()
+	/* Safety: we are in an async function */
+	unsafe { get_context().await.as_ref() }.clear_interrupt();
 }
 
 #[asynchronous]
@@ -143,10 +107,10 @@ pub async fn take_interrupt() -> bool {
 
 #[asynchronous]
 pub async fn check_interrupt_take() -> Result<()> {
-	if unlikely(take_interrupt().await) {
-		Err(Core::Interrupted.as_err())
-	} else {
+	if !take_interrupt().await {
 		Ok(())
+	} else {
+		Err(Core::Interrupted.as_err())
 	}
 }
 
@@ -155,9 +119,13 @@ pub async fn check_interrupt_take() -> Result<()> {
 /// While this guard is held, any attempt to interrupt
 /// the current context will be ignored
 ///
-/// Safety: the async context must outlive InterruptGuard, this is
-/// implementation defined
+/// Safety: the async context must outlive InterruptGuard. Since InterruptGuard
+/// does not have a lifetime generic, care should be taken to ensure that it
+/// doesn't get dropped after the async context gets dropped
+///
+/// This usually never happens unless InterruptGuard is moved into a struct
 #[asynchronous]
 pub async unsafe fn interrupt_guard() -> InterruptGuard {
-	InterruptGuard::new(get_context().await)
+	/* Safety: guaranteed by caller */
+	unsafe { InterruptGuard::new(get_context().await) }
 }
