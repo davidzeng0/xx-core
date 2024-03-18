@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-xx-core = { path = ".." }
+xx-core = { path = "https://github.com/davidzeng0/xx-core.git" }
 xx-pulse = { git = "https://github.com/davidzeng0/xx-pulse.git" }
