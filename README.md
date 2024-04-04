@@ -2,7 +2,10 @@
 
 ![](https://github.com/davidzeng0/xx-core/actions/workflows/build.yml/badge.svg?event=push)
 
+`msrv: 1.76.0 stable`
+
 Core modules.
+
 - Macros
 - Logging
 - Os
