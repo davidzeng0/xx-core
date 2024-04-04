@@ -1,4 +1,4 @@
-FROM rust:1.76.0
+FROM rust:1.77.1
 
 RUN apt update && \
 	apt install -y valgrind && \

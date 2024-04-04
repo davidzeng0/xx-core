@@ -6,7 +6,6 @@ pub mod closure;
 pub use block_on::*;
 
 pub type ReqPtr<T> = Ptr<Request<T>>;
-
 pub type Complete<T> = unsafe fn(ReqPtr<T>, Ptr<()>, T);
 
 /// A pointer of a [`Request`] will be passed to a [`Future`] when
@@ -27,6 +26,20 @@ pub struct Request<T> {
 	arg: Ptr<()>,
 	callback: Complete<T>
 }
+
+impl<T> Clone for Request<T> {
+	fn clone(&self) -> Self {
+		*self
+	}
+}
+
+impl<T> Copy for Request<T> {}
+
+/* Safety: request may only be completed once */
+unsafe impl<T> Send for Request<T> {}
+
+/* Safety: request may only be completed once */
+unsafe impl<T> Sync for Request<T> {}
 
 impl<T> Request<T> {
 	pub const fn no_op() -> Self {
@@ -52,7 +65,7 @@ impl<T> Request<T> {
 	/// `Future::run`
 	pub unsafe fn complete(request: Ptr<Self>, value: T) {
 		/* Safety: guaranteed by caller and Future's contract */
-		let Self { arg, callback } = *unsafe { request.as_ref() };
+		let Self { arg, callback } = unsafe { ptr!(*request) };
 
 		/* Safety: guaranteed by caller */
 		unsafe { (callback)(request, arg, value) };

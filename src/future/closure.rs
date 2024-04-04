@@ -3,16 +3,17 @@
 use super::*;
 use crate::closure::*;
 
-pub type FutureClosure<Inner, Output, Cancel> =
-	OpaqueClosure<Inner, ReqPtr<Output>, Progress<Output, Cancel>>;
+pub type FutureClosure<F, Output, Cancel, const INLINE: u32> =
+	OpaqueClosure<F, ReqPtr<Output>, Progress<Output, Cancel>, INLINE>;
 
 /* Safety: contract upheld by user of #[future] */
-unsafe impl<Inner: FnOnce(ReqPtr<Output>) -> Progress<Output, C>, Output, C: Cancel> Future
-	for FutureClosure<Inner, Output, C>
+unsafe impl<F: FnOnce(ReqPtr<Output>) -> Progress<Output, C>, Output, C: Cancel> Future
+	for FutureClosure<F, Output, C, INLINE_DEFAULT>
 {
 	type Cancel = C;
 	type Output = Output;
 
+	#[inline(always)]
 	unsafe fn run(self, request: ReqPtr<Output>) -> Progress<Output, C> {
 		self.call(request)
 	}

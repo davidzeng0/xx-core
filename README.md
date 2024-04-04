@@ -1,5 +1,7 @@
 # xx-core
 
+![](https://github.com/davidzeng0/xx-core/actions/workflows/build.yml/badge.svg?event=push)
+
 Core modules.
 - Macros
 - Logging

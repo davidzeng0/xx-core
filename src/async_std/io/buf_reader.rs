@@ -3,7 +3,7 @@ use std::ops::Range;
 use super::*;
 use crate::impls::UIntExtensions;
 
-pub struct BufReader<R: Read> {
+pub struct BufReader<R> {
 	inner: R,
 	buf: Box<[u8]>,
 	pos: usize,
@@ -32,7 +32,7 @@ impl<R: Read> BufReader<R> {
 		}
 
 		#[cfg(feature = "tracing")]
-		crate::trace!(target: self, "## fill_buf_range(range = {:?}) = Ok({})", range, read);
+		crate::trace!(target: &*self, "## fill_buf_range(range = {:?}) = Ok({})", range, read);
 
 		Ok(read)
 	}
@@ -116,7 +116,7 @@ impl<R: Read> Read for BufReader<R> {
 
 			#[cfg(feature = "tracing")]
 			crate::trace!(
-				target: self,
+				target: &*self,
 				"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
 				buf.len(),
 				read,
@@ -133,7 +133,7 @@ impl<R: Read> Read for BufReader<R> {
 			let read = self.inner.read(buf).await?;
 
 			#[cfg(feature = "tracing")]
-			crate::trace!(target: self, "## read(buf = &mut [u8; {}]) = Direct({})", buf.len(), read);
+			crate::trace!(target: &*self, "## read(buf = &mut [u8; {}]) = Direct({})", buf.len(), read);
 
 			return Ok(read);
 		}
@@ -146,7 +146,7 @@ impl<R: Read> Read for BufReader<R> {
 
 		#[cfg(feature = "tracing")]
 		crate::trace!(
-			target: self,
+			target: &*self,
 			"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
 			buf.len(),
 			read,
@@ -288,7 +288,7 @@ impl<R: Read + Seek> BufReader<R> {
 		let pos = self.inner.seek(seek).await;
 
 		#[cfg(feature = "tracing")]
-		crate::trace!(target: self, "## seek_inner(seek = {:?}) = {:?}", seek, pos);
+		crate::trace!(target: &*self, "## seek_inner(seek = {:?}) = {:?}", seek, pos);
 
 		pos
 	}

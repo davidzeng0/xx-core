@@ -3,6 +3,7 @@
 use memchr::memchr;
 
 use super::*;
+use crate::impls::AsyncFnOnce;
 
 pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	let len = dest.len().min(src.len());
@@ -17,9 +18,11 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	len
 }
 
-pub fn append_to_string<F>(buf: &mut String, read: F) -> Result<Option<usize>>
+#[asynchronous]
+#[allow(clippy::items_after_statements)]
+pub async fn append_to_string<F>(buf: &mut String, read: F) -> Result<Option<usize>>
 where
-	F: FnOnce(&mut Vec<u8>) -> Result<Option<usize>>
+	F: for<'a> AsyncFnOnce<&'a mut Vec<u8>, Output = Result<Option<usize>>>
 {
 	/* panic guard */
 	struct Guard<'a> {
@@ -39,7 +42,7 @@ where
 		buf: unsafe { buf.as_mut_vec() }
 	};
 
-	let read = read(guard.buf)?;
+	let read = read.call_once(guard.buf).await?;
 
 	if read.is_some() {
 		check_utf8(&guard.buf[guard.len..])?;
@@ -156,12 +159,10 @@ pub trait Read {
 	}
 
 	async fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
-		let context = get_context().await;
-
-		/* Safety: we are in an async function */
-		append_to_string(buf, |vec| unsafe {
-			with_context(context, self.read_to_end(vec)).map(Some)
+		append_to_string(buf, |vec: &mut Vec<u8>| async move {
+			self.read_to_end(vec).await.map(Some)
 		})
+		.await
 		.map(Option::unwrap)
 	}
 
@@ -198,13 +199,13 @@ pub trait Read {
 	}
 }
 
-pub trait AsReadRef: Read {
+pub trait AsReadRef: ReadSealed {
 	fn as_ref(&mut self) -> ReadRef<'_, Self> {
 		ReadRef::new(self)
 	}
 }
 
-impl<T: Read> AsReadRef for T {}
+impl<T: ReadSealed> AsReadRef for T {}
 
 #[macro_export]
 macro_rules! read_wrapper {
@@ -226,10 +227,10 @@ macro_rules! read_wrapper {
 			async fn read_exact(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_to_end(&mut self, buf: &mut ::std::vec::Vec<u8>) -> $crate::error::Result<usize>;
+			async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_to_string(&mut self, buf: &mut ::std::string::String) -> $crate::error::Result<usize>;
+			async fn read_to_string(&mut self, buf: &mut String) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
 			fn is_read_vectored(&self) -> bool;
@@ -317,12 +318,10 @@ pub trait BufRead: Read {
 	///
 	/// Returns the number of bytes read, if any
 	async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>> {
-		let context = get_context().await;
-
-		/* Safety: we are in an async function */
-		let result = append_to_string(buf, |vec| unsafe {
-			with_context(context, self.read_until(b'\n', vec))
-		});
+		let result = append_to_string(buf, |vec: &mut Vec<u8>| async move {
+			self.read_until(b'\n', vec).await
+		})
+		.await;
 
 		if buf.ends_with('\n') {
 			buf.pop();
@@ -357,7 +356,7 @@ pub trait BufRead: Read {
 	fn discard(&mut self);
 }
 
-pub trait IntoLines: BufRead {
+pub trait IntoLines: BufReadSealed {
 	fn lines(self) -> Lines<Self>
 	where
 		Self: Sized
@@ -366,7 +365,7 @@ pub trait IntoLines: BufRead {
 	}
 }
 
-impl<T: BufRead> IntoLines for T {}
+impl<T: BufReadSealed> IntoLines for T {}
 
 #[macro_export]
 macro_rules! bufread_wrapper {
@@ -385,10 +384,10 @@ macro_rules! bufread_wrapper {
 			async fn fill(&mut self) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_until(&mut self, byte: u8, buf: &mut ::std::vec::Vec<u8>) -> $crate::error::Result<::std::option::Option<usize>>;
+			async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> $crate::error::Result<Option<usize>>;
 
 			#[asynchronous(traitfn)]
-			async fn read_line(&mut self, buf: &mut ::std::string::String) -> $crate::error::Result<::std::option::Option<usize>>;
+			async fn read_line(&mut self, buf: &mut String) -> $crate::error::Result<Option<usize>>;
 
 			#[asynchronous(traitfn)]
 			fn capacity(&self) -> usize;
@@ -426,7 +425,7 @@ impl<R: BufRead + ?Sized> BufRead for ReadRef<'_, R> {
 	}
 }
 
-pub struct Lines<R: BufRead> {
+pub struct Lines<R> {
 	reader: R
 }
 

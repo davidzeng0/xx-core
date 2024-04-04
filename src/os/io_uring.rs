@@ -635,7 +635,7 @@ pub const SIGSET_SIZE: usize = SIGRTMAX as usize / 8;
 pub unsafe fn io_uring_enter(
 	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: BitFlags<EnterFlag>,
 	sigset: SignalMask<'_>
-) -> Result<i32> {
+) -> OsResult<i32> {
 	/* Safety: guaranteed by caller */
 	unsafe { io_uring_enter2(fd, submit, min_complete, flags, sigset.into()) }
 }
@@ -647,7 +647,7 @@ pub unsafe fn io_uring_enter(
 pub unsafe fn io_uring_enter2(
 	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: BitFlags<EnterFlag>,
 	#[array] arg: RawBuf<'_>
-) -> Result<i32>;
+) -> OsResult<i32>;
 
 /// # Safety
 /// `submit` must be correct. inputting a higher number than sqes queued will
@@ -658,7 +658,7 @@ pub unsafe fn io_uring_enter2(
 pub unsafe fn io_uring_enter_timeout(
 	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, mut flags: BitFlags<EnterFlag>,
 	timeout: u64
-) -> Result<i32> {
+) -> OsResult<i32> {
 	let mut args = GetEventsArg::default();
 
 	#[allow(clippy::unwrap_used)]
@@ -670,7 +670,7 @@ pub unsafe fn io_uring_enter_timeout(
 
 	#[allow(clippy::cast_possible_truncation)]
 	(args.sig_mask_size = SIGSET_SIZE as u32);
-	args.ts = Ptr::from(&ts).int_addr() as u64;
+	args.ts = ptr!(&ts).int_addr() as u64;
 	flags |= EnterFlag::ExtArg;
 
 	/* Safety: guaranteed by caller */
@@ -678,14 +678,14 @@ pub unsafe fn io_uring_enter_timeout(
 }
 
 #[syscall_define(IoUringSetup)]
-pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> Result<OwnedFd>;
+pub fn io_uring_setup(entries: u32, params: &mut Parameters) -> OsResult<OwnedFd>;
 
 /// # Safety
 /// `arg` and `arg_count` must be valid for the respective RegisterOp
 #[syscall_define(IoUringRegister)]
 pub unsafe fn io_uring_register(
 	fd: BorrowedFd<'_>, opcode: RegisterOp, arg: MutPtr<()>, arg_count: u32
-) -> Result<i32>;
+) -> OsResult<i32>;
 
 define_struct! {
 	pub struct IoRingFeatures {
@@ -718,8 +718,8 @@ impl IoRingFeatures {
 	}
 }
 
-#[allow(clippy::missing_panics_doc, clippy::unwrap_used)]
-pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
+#[allow(clippy::missing_panics_doc)]
+pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 	const OPS_COUNT: usize = 256;
 
 	#[repr(C)]
@@ -732,7 +732,7 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 
 	let fd = match io_uring_setup(params.sq_entries, &mut params) {
 		Ok(fd) => fd,
-		Err(err) => match err.os_error().unwrap() {
+		Err(err) => match err {
 			OsError::NoSys => return Ok(None),
 			_ => return Err(err)
 		}
@@ -748,7 +748,7 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 		io_uring_register(
 			fd.as_fd(),
 			RegisterOp::RegisterProbe,
-			MutPtr::from(&mut probe).as_unit(),
+			ptr!(&mut probe).cast(),
 			#[allow(clippy::cast_possible_truncation)]
 			(OPS_COUNT as u32)
 		)
@@ -860,7 +860,7 @@ pub fn io_uring_detect_features() -> Result<Option<IoRingFeatures>> {
 	}
 
 	if let Err(err) = probe_result {
-		match err.os_error().unwrap() {
+		match err {
 			OsError::Inval => (),
 			_ => return Err(err)
 		}

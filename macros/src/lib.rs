@@ -7,7 +7,7 @@ use syn::{
 	visit_mut::*,
 	*
 };
-use xx_macro_support::{attribute::*, function::*, macro_expr::*};
+use xx_macro_support::{attribute::*, function::*, visit_macro::*};
 
 mod asynchronous;
 mod duration;
@@ -52,14 +52,24 @@ pub fn syscall_define(
 	syscall::syscall_define(attr.into(), item.into()).into()
 }
 
-#[proc_macro_attribute]
-pub fn compact_error(
-	attr: proc_macro::TokenStream, item: proc_macro::TokenStream
-) -> proc_macro::TokenStream {
-	error::compact_error(attr.into(), item.into()).into()
-}
-
 #[proc_macro]
 pub fn duration(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 	duration::duration(item.into()).into()
+}
+
+#[proc_macro_attribute]
+pub fn errors(
+	attr: proc_macro::TokenStream, item: proc_macro::TokenStream
+) -> proc_macro::TokenStream {
+	error::error(attr.into(), item.into()).into()
+}
+
+#[proc_macro]
+pub fn select(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+	asynchronous::branch::select(item.into()).into()
+}
+
+#[proc_macro]
+pub fn join(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+	asynchronous::branch::join(item.into()).into()
 }

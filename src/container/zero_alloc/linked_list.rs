@@ -14,17 +14,17 @@ impl Node {
 	/// # Safety
 	/// self and next are pinned must live as long as they are linked
 	unsafe fn set_next(&self, next: &Self) {
-		self.next.set(next.into());
+		self.next.set(ptr!(next));
 
-		next.prev.set(self.into());
+		next.prev.set(ptr!(self));
 	}
 
 	/// # Safety
 	/// self and prev are pinned must live as long as they are linked
 	unsafe fn set_prev(&self, prev: &Self) {
-		self.prev.set(prev.into());
+		self.prev.set(ptr!(prev));
 
-		prev.next.set(self.into());
+		prev.next.set(ptr!(self));
 	}
 
 	/// # Safety
@@ -73,8 +73,8 @@ impl Node {
 
 		/* Safety: prev and next must live as long as they are linked */
 		unsafe {
-			prev.as_ref().next.set(next);
-			next.as_ref().prev.set(prev);
+			ptr!(prev=>next.set(next));
+			ptr!(next=>prev.set(prev));
 		}
 	}
 
@@ -97,7 +97,7 @@ pub struct LinkedList {
 
 impl LinkedList {
 	fn base(&self) -> Ptr<Node> {
-		Ptr::from(&self.base)
+		ptr!(&self.base)
 	}
 
 	#[allow(clippy::new_without_default)]
@@ -117,7 +117,7 @@ impl LinkedList {
 		 * Safety: the node is in our list
 		 * Calling head().unlink() should optimize away the linked check
 		 */
-		unsafe { assume(head.as_ref().linked()) };
+		unsafe { assume(ptr!(head=>linked())) };
 
 		head
 	}
@@ -129,7 +129,7 @@ impl LinkedList {
 		 * Safety: the node is in our list
 		 * Calling tail().unlink() should optimize away the linked check
 		 */
-		unsafe { assume(tail.as_ref().linked()) };
+		unsafe { assume(ptr!(tail=>linked())) };
 
 		tail
 	}

@@ -52,14 +52,14 @@ impl Context {
 	}
 }
 
-pub(super) unsafe fn switch(from: &mut Context, to: &mut Context) {
+pub(super) unsafe fn switch(from: MutPtr<Context>, to: MutPtr<Context>) {
 	/* Safety: guaranteed by caller */
 	unsafe {
 		asm!(
 			"call {}",
 			sym xx_core_fiber_x64_switch,
-			in("rdi") from,
-			in("rsi") to,
+			in("rdi") from.as_mut_ptr(),
+			in("rsi") to.as_mut_ptr(),
 			lateout("r12") _,
 			lateout("r13") _,
 			lateout("r14") _,

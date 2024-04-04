@@ -46,14 +46,14 @@ where
 	/* Safety: block_resume does not panic */
 	let request = unsafe {
 		Request::new(
-			MutPtr::from(&mut state).as_unit().into(),
+			ptr!(&mut state).cast_const().cast(),
 			block_resume::<Resume, F::Output>
 		)
 	};
 
 	/* Safety: contract upheld by caller */
 	unsafe {
-		match future.run(Ptr::from(&request)) {
+		match future.run(ptr!(&request)) {
 			Progress::Pending(cancel) => block(cancel),
 			Progress::Done(value) => return value
 		};

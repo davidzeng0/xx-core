@@ -1,13 +1,12 @@
 #![allow(clippy::multiple_unsafe_ops_per_block)]
 
-use std::{cell::Cell, marker::PhantomData, mem::replace, rc::Rc};
+use std::{cell::Cell, mem::replace, rc::Rc};
 
 use super::*;
-use crate::{macros::unwrap_panic, trace, warn};
+use crate::{runtime::PanickingResult, trace, warn};
 
 #[allow(clippy::module_name_repetitions)]
 pub type SpawnResult<T> = PanickingResult<T>;
-
 enum SpawnData<E, T: Task> {
 	Uninit,
 	Start(E, T, Worker, ReqPtr<SpawnResult<T::Output>>),
@@ -15,23 +14,22 @@ enum SpawnData<E, T: Task> {
 	Done(SpawnResult<T::Output>)
 }
 
-struct SpawnWorker<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> {
-	data: SpawnData<Entry, T>,
-	phantom: PhantomData<E>
+struct SpawnWorker<Entry, T: Task> {
+	data: SpawnData<Entry, T>
 }
 
 #[future]
-impl<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> SpawnWorker<E, Entry, T> {
+impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<Entry, T> {
 	/// # Safety
 	/// `arg` must be dereferenceable as a &mut Self.
 	/// Self::data must be a `SpawnData::Start`
 	/// this function must be the entry point of a worker
 	unsafe fn worker_start(arg: Ptr<()>) {
-		/* Safety: guaranteed by caller */
-		let this = unsafe { arg.cast::<Self>().cast_mut().as_mut() };
+		let this = arg.cast::<Self>().cast_mut();
 
 		let SpawnData::Start(entry, task, mut worker, request) =
-			replace(&mut this.data, SpawnData::Uninit)
+			/* Safety: guaranteed by caller */
+			replace(unsafe { &mut ptr!(this=>data) }, SpawnData::Uninit)
 		else {
 			/* Safety: guaranteed by caller */
 			unsafe { unreachable_unchecked() };
@@ -42,11 +40,11 @@ impl<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> SpawnWorker<E, En
 		{
 			let worker = worker.pin_local();
 
-			if let Some(sync_output) = this
-				.execute(Ptr::from(&*worker), entry, task, request)
-				.transpose()
+			if let Some(sync_output) =
+				Self::execute(this, ptr!(&*worker), entry, task, request).transpose()
 			{
-				this.data = SpawnData::Done(sync_output);
+				/* Safety: `this` is still a valid pointer */
+				unsafe { ptr!(this=>data = SpawnData::Done(sync_output)) };
 			}
 		}
 
@@ -58,21 +56,18 @@ impl<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> SpawnWorker<E, En
 
 	#[inline(always)]
 	fn execute(
-		&mut self, worker: Ptr<Worker>, entry: Entry, task: T,
+		this: MutPtr<Self>, worker: Ptr<Worker>, entry: Entry, task: T,
 		request: ReqPtr<SpawnResult<T::Output>>
 	) -> SpawnResult<Option<T::Output>> {
-		let environment = match catch_unwind(AssertUnwindSafe(|| entry(worker))) {
-			Ok(ok) => ok,
-			Err(err) => {
-				warn!(
-					/* Safety: logging */
-					target: unsafe { worker.as_ref() },
-					"== Failed to start worker: panicked when trying to create a new context"
-				);
+		let environment = catch_unwind(AssertUnwindSafe(|| entry(worker))).map_err(|err| {
+			warn!(
+				/* Safety: logging */
+				target: worker,
+				"== Failed to start worker: panicked when trying to create a new context"
+			);
 
-				return Err(err);
-			}
-		};
+			err
+		})?;
 
 		let context = environment.context();
 		let is_async = Cell::new(false);
@@ -83,8 +78,12 @@ impl<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> SpawnWorker<E, En
 		 * cannot call Request::complete when synchronous,
 		 * as that double resumes the calling worker, and violates the contract of
 		 * Future
+		 *
+		 * Safety: we have mutable access here
 		 */
-		self.data = SpawnData::Pending(Ptr::from(context), Ptr::from(&is_async));
+		unsafe {
+			ptr!(this=>data = SpawnData::Pending(ptr!(context), ptr!(&is_async)));
+		}
 
 		let result = catch_unwind(AssertUnwindSafe(|| context.run(task)));
 
@@ -108,21 +107,16 @@ impl<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> SpawnWorker<E, En
 		#[cancel]
 		fn cancel(context: Ptr<Context>) -> Result<()> {
 			/* Safety: guaranteed by Future's contract */
-			unsafe { context.as_ref().interrupt() }
+			unsafe { Context::interrupt(context) }
 		}
 
-		let mut spawn = Self { data: SpawnData::Uninit, phantom: PhantomData };
+		let mut spawn = Self { data: SpawnData::Uninit };
 
 		/* Safety: worker_start never panics */
-		let start = unsafe {
-			Start::new(
-				Self::worker_start,
-				MutPtr::from(&mut spawn).as_unit().into()
-			)
-		};
+		let start = unsafe { Start::new(Self::worker_start, ptr!(&mut spawn).cast_const().cast()) };
 
 		/* Safety: guaranteed by caller */
-		let worker = unsafe { executor.as_ref().new_worker(start) };
+		let worker = unsafe { ptr!(executor=>new_worker(start)) };
 
 		spawn.data = SpawnData::Start(entry, task, worker, request);
 
@@ -133,7 +127,7 @@ impl<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> SpawnWorker<E, En
 
 		/* Safety: the worker has not been started yet. the worker isn't exited until
 		 * it completes */
-		unsafe { executor.as_ref().start(worker.into()) };
+		unsafe { ptr!(executor=>start(ptr!(worker))) };
 
 		match replace(&mut spawn.data, SpawnData::Uninit) {
 			SpawnData::Done(result) => Progress::Done(result),
@@ -141,7 +135,7 @@ impl<E: Environment, Entry: FnOnce(Ptr<Worker>) -> E, T: Task> SpawnWorker<E, En
 				/* worker suspended without completing */
 
 				/* Safety: pending task returns a valid pointer to a Cell */
-				unsafe { is_async.as_ref() }.set(true);
+				unsafe { ptr!(is_async=>set(true)) };
 
 				Progress::Pending(cancel(context, request))
 			}
@@ -197,10 +191,10 @@ where
 	}
 
 	/* Safety: runtime is valid and executor is valid */
-	let executor = unsafe { runtime.as_ref().executor() };
+	let executor = unsafe { ptr!(runtime=>executor()) };
 
 	/* Safety: worker is exited when complete */
-	let entry = |worker| unsafe { runtime.as_ref().clone(worker) };
+	let entry = |worker| unsafe { ptr!(runtime=>clone(worker)) };
 
 	/* Safety: guaranteed by caller */
 	unsafe { spawn_task(executor, entry, task).run(request) }
@@ -278,7 +272,7 @@ impl<Output> Spawn<Output> {
 		let handle = unsafe { this.handle.as_mut() };
 
 		/* Safety: guaranteed by caller */
-		match unsafe { spawn_task_with_env(runtime, task).run(Ptr::from(&this.request)) } {
+		match unsafe { spawn_task_with_env(runtime, task).run(ptr!(&this.request)) } {
 			Progress::Done(result) => handle.output = Some(result),
 			Progress::Pending(cancel) => {
 				handle.cancel = Some(cancel);
@@ -293,7 +287,7 @@ impl<Output> Spawn<Output> {
 
 impl<Output> Pin for Spawn<Output> {
 	unsafe fn pin(&mut self) {
-		let arg = Ptr::from(&*self).as_unit();
+		let arg = ptr!(&*self).cast();
 
 		self.request.set_arg(arg);
 	}
@@ -347,6 +341,16 @@ impl<Output> JoinHandle<Output> {
 		}
 	}
 
+	pub async fn try_join(self) -> SpawnResult<Output> {
+		/* Safety: exclusive unsafe cell access */
+		if let Some(output) = unsafe { self.handle().output.take() } {
+			/* task finished in-between spawn and await */
+			output
+		} else {
+			block_on(self.join()).await
+		}
+	}
+
 	/// Signals the task to cancel, waits for, and returns the result
 	pub async fn cancel(self) -> Output {
 		let result = self.request_cancel();
@@ -362,17 +366,11 @@ impl<Output> JoinHandle<Output> {
 impl<Output> Task for JoinHandle<Output> {
 	type Output = Output;
 
-	fn run(self, context: Ptr<Context>) -> Output {
-		/* Safety: exclusive unsafe cell access */
-		let result = if let Some(output) = unsafe { self.handle().output.take() } {
-			/* task finished in-between spawn and await */
-			output
-		} else {
-			/* Safety: we are in an async function */
-			unsafe { with_context(context, block_on(self.join())) }
-		};
+	#[asynchronous(task)]
+	async fn run(self) -> Output {
+		let result = self.try_join().await;
 
-		unwrap_panic!(result)
+		runtime::join(result)
 	}
 }
 

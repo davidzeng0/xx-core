@@ -1,5 +1,5 @@
 use super::*;
-use crate::macros::abort;
+use crate::macros::panic_nounwind;
 
 define_enum! {
 	#[bitflags]
@@ -188,13 +188,13 @@ impl<'a> Builder<'a> {
 		self
 	}
 
-	pub fn map(self) -> Result<Map<'static>> {
+	pub fn map(self) -> OsResult<Map<'static>> {
 		Map::map(
 			self.addr, self.len, self.prot, self.flags, self.fd, self.off
 		)
 	}
 
-	pub fn map_raw(self) -> Result<MutPtr<()>> {
+	pub fn map_raw(self) -> OsResult<MutPtr<()>> {
 		mmap(
 			self.addr, self.len, self.prot, self.flags, self.fd, self.off
 		)
@@ -205,52 +205,52 @@ impl<'a> Builder<'a> {
 pub fn mmap(
 	addr: Ptr<()>, length: usize, prot: BitFlags<Protection>, flags: Flags,
 	fd: Option<BorrowedFd<'_>>, off: isize
-) -> Result<MutPtr<()>>;
+) -> OsResult<MutPtr<()>>;
 
 /// # Safety
 /// must have ownership of the range
 #[syscall_define(Munmap)]
-pub unsafe fn munmap(#[array] section: RawBuf<'_>) -> Result<()>;
+pub unsafe fn munmap(#[array] section: RawBuf<'_>) -> OsResult<()>;
 
 /// # Safety
 /// if there are references to the range, the flags must not affect their
 /// permissions
 #[syscall_define(Mprotect)]
-pub unsafe fn mprotect(#[array] section: RawBuf<'_>, prot: BitFlags<Protection>) -> Result<()>;
+pub unsafe fn mprotect(#[array] section: RawBuf<'_>, prot: BitFlags<Protection>) -> OsResult<()>;
 
 /// # Safety
 /// section must be a valid section, returned from mmap
 #[syscall_define(Msync)]
-pub unsafe fn msync(#[array] section: RawBuf<'_>, flags: BitFlags<SyncFlag>) -> Result<()>;
+pub unsafe fn msync(#[array] section: RawBuf<'_>, flags: BitFlags<SyncFlag>) -> OsResult<()>;
 
 /// # Safety
 /// if there are references to the range, the flags must not affect their
 /// permissions
 #[syscall_define(Madvise)]
-pub unsafe fn madvise(#[array] section: RawBuf<'_>, advice: Advice) -> Result<()>;
+pub unsafe fn madvise(#[array] section: RawBuf<'_>, advice: Advice) -> OsResult<()>;
 
 /// # Safety
 /// section must be a valid section, returned from mmap
 #[syscall_define(Mlock)]
-pub unsafe fn mlock(#[array] section: RawBuf<'_>) -> Result<()>;
+pub unsafe fn mlock(#[array] section: RawBuf<'_>) -> OsResult<()>;
 
 /// # Safety
 /// section must be a valid section, returned from mmap
 #[syscall_define(Mlock)]
-pub unsafe fn mlock2(#[array] section: RawBuf<'_>, flags: BitFlags<LockFlag>) -> Result<()>;
+pub unsafe fn mlock2(#[array] section: RawBuf<'_>, flags: BitFlags<LockFlag>) -> OsResult<()>;
 
 /// # Safety
 /// section must be a valid section, returned from mmap
 #[syscall_define(Munlock)]
-pub unsafe fn munlock(#[array] section: RawBuf<'_>) -> Result<()>;
+pub unsafe fn munlock(#[array] section: RawBuf<'_>) -> OsResult<()>;
 
 #[syscall_define(Mlockall)]
-pub fn mlock_all(flags: BitFlags<LockFlag>) -> Result<()>;
+pub fn mlock_all(flags: BitFlags<LockFlag>) -> OsResult<()>;
 
 /// # Safety
 /// if there are no mappings that require locking
 #[syscall_define(Munlockall)]
-pub unsafe fn munlock_all() -> Result<()>;
+pub unsafe fn munlock_all() -> OsResult<()>;
 
 /// # Safety
 /// section must be a valid section, returned from mmap
@@ -259,7 +259,7 @@ pub unsafe fn munlock_all() -> Result<()>;
 pub unsafe fn mremap(
 	#[array] section: RawBuf<'_>, new_length: usize, flags: BitFlags<RemapFlag>,
 	new_address: Ptr<()>
-) -> Result<MutPtr<()>>;
+) -> OsResult<MutPtr<()>>;
 
 impl<'a> Map<'a> {
 	#[allow(clippy::new_without_default)]
@@ -276,7 +276,7 @@ impl<'a> Map<'a> {
 	pub fn map(
 		addr: Ptr<()>, length: usize, prot: BitFlags<Protection>, flags: Flags,
 		fd: Option<BorrowedFd<'_>>, off: isize
-	) -> Result<Map<'static>> {
+	) -> OsResult<Map<'static>> {
 		let addr = mmap(addr, length, prot, flags, fd, off)?;
 
 		Ok(Map { addr, length, phantom: PhantomData })
@@ -299,35 +299,35 @@ impl<'a> Map<'a> {
 
 	/// # Safety
 	/// see `mprotect`
-	pub unsafe fn protect(&self, prot: BitFlags<Protection>) -> Result<()> {
+	pub unsafe fn protect(&self, prot: BitFlags<Protection>) -> OsResult<()> {
 		/* Safety: guaranteed by caller */
 		unsafe { mprotect(self.section(), prot) }
 	}
 
 	/// # Safety
 	/// see `msync`
-	pub unsafe fn sync(&self, flags: BitFlags<SyncFlag>) -> Result<()> {
+	pub unsafe fn sync(&self, flags: BitFlags<SyncFlag>) -> OsResult<()> {
 		/* Safety: guaranteed by caller */
 		unsafe { msync(self.section(), flags) }
 	}
 
 	/// # Safety
 	/// see `madvise`
-	pub unsafe fn advise(&self, advice: Advice) -> Result<()> {
+	pub unsafe fn advise(&self, advice: Advice) -> OsResult<()> {
 		/* Safety: guaranteed by caller */
 		unsafe { madvise(self.section(), advice) }
 	}
 
 	/// # Safety
 	/// see `mlock`
-	pub unsafe fn lock(&self) -> Result<()> {
+	pub unsafe fn lock(&self) -> OsResult<()> {
 		/* Safety: guaranteed by caller */
 		unsafe { mlock(self.section()) }
 	}
 
 	/// # Safety
 	/// see `munlock`
-	pub unsafe fn unlock(&self) -> Result<()> {
+	pub unsafe fn unlock(&self) -> OsResult<()> {
 		/* Safety: guaranteed by caller */
 		unsafe { munlock(self.section()) }
 	}
@@ -341,7 +341,7 @@ impl Drop for Map<'_> {
 
 		/* Safety: owner dropped us, so we own the range */
 		if let Err(err) = unsafe { munmap(self.section()) } {
-			abort!("Failed to unmap memory: {:?}", err);
+			panic_nounwind!("Failed to unmap memory: {:?}", err);
 		}
 	}
 }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::impls::UIntExtensions;
 
-pub struct BufWriter<W: Write> {
+pub struct BufWriter<W> {
 	inner: W,
 
 	buf: Vec<u8>,
@@ -33,18 +33,15 @@ impl<W: Write> BufWriter<W> {
 			let wrote = self.inner.write(buf).await?;
 
 			if unlikely(wrote == 0) {
-				return Err(Core::WriteZero.as_err());
+				return Err(Core::WriteZero.into());
 			}
 
 			#[allow(clippy::arithmetic_side_effects)]
 			(self.pos += length_check(buf, wrote));
 
 			#[cfg(feature = "tracing")]
-			crate::trace!(target: self, "## flush_buf: write(buf = &[u8; {}]) = Ok({})", buf.len(), wrote);
+			crate::trace!(target: &*self, "## flush_buf: write(buf = &[u8; {}]) = Ok({})", buf.len(), wrote);
 		}
-
-		#[cfg(feature = "tracing")]
-		crate::trace!(target: self, "## flush_buf: complete()");
 
 		self.discard();
 
@@ -84,7 +81,7 @@ impl<W: Write> Write for BufWriter<W> {
 			let wrote = self.write_buffered(buf);
 
 			#[cfg(feature = "tracing")]
-			crate::trace!(target: self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
+			crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
 
 			return Ok(wrote);
 		}
@@ -95,14 +92,14 @@ impl<W: Write> Write for BufWriter<W> {
 			let wrote = self.inner.write(buf).await?;
 
 			#[cfg(feature = "tracing")]
-			crate::trace!(target: self, "## write(buf = &[u8; {}]) = Direct({})", buf.len(), wrote);
+			crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Direct({})", buf.len(), wrote);
 
 			Ok(wrote)
 		} else {
 			let wrote = self.write_buffered(buf);
 
 			#[cfg(feature = "tracing")]
-			crate::trace!(target: self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
+			crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
 
 			Ok(wrote)
 		}
@@ -148,7 +145,7 @@ impl<W: Write + Seek> BufWriter<W> {
 		let pos = self.inner.seek(seek).await;
 
 		#[cfg(feature = "tracing")]
-		crate::trace!(target: self, "## seek_inner(seek = {:?}) = {:?}", seek, pos);
+		crate::trace!(target: &*self, "## seek_inner(seek = {:?}) = {:?}", seek, pos);
 
 		pos
 	}

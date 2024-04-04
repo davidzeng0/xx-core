@@ -18,7 +18,7 @@ pub mod raw {
 
 	#[repr(transparent)]
 	#[derive(Default, Debug)]
-	pub struct BorrowedIoVec<'a, const MUTABLE: bool> {
+	pub struct BorrowedIoVec<'a, const MUT: bool> {
 		pub vec: IoVec,
 		pub phantom: PhantomData<&'a ()>
 	}
@@ -27,7 +27,7 @@ pub mod raw {
 pub type IoVec<'a> = raw::BorrowedIoVec<'a, false>;
 pub type IoVecMut<'a> = raw::BorrowedIoVec<'a, true>;
 
-impl<const MUTABLE: bool> Deref for raw::BorrowedIoVec<'_, MUTABLE> {
+impl<const MUT: bool> Deref for raw::BorrowedIoVec<'_, MUT> {
 	type Target = [u8];
 
 	fn deref(&self) -> &Self::Target {
@@ -75,7 +75,7 @@ impl<'a> From<&'a [u8]> for IoVec<'a> {
 	fn from(value: &'a [u8]) -> Self {
 		Self {
 			vec: raw::IoVec {
-				base: Ptr::from(value.as_ptr()).cast_mut().as_unit(),
+				base: ptr!(value.as_ptr()).cast_mut().cast(),
 				len: value.len()
 			},
 			phantom: PhantomData
@@ -87,7 +87,7 @@ impl<'a> From<&'a mut [u8]> for IoVecMut<'a> {
 	fn from(value: &mut [u8]) -> Self {
 		Self {
 			vec: raw::IoVec {
-				base: MutPtr::from(value.as_mut_ptr()).as_unit(),
+				base: ptr!(value.as_mut_ptr()).cast(),
 				len: value.len()
 			},
 			phantom: PhantomData

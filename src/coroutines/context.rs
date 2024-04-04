@@ -6,7 +6,8 @@ use std::{
 };
 
 use super::*;
-use crate::{closure::Closure, macros::abort};
+
+const BUDGET: u16 = 128;
 
 /// The environment for an async worker
 ///
@@ -76,14 +77,16 @@ where
 	(hasher.finish() as u32)
 }
 
-fn run_cancel<C>(arg: MutPtr<()>, _: ()) -> Result<()>
+/// # Safety
+/// the future must be running
+/// `arg` must be a pointer to `Option<C>`
+unsafe fn run_cancel<C>(arg: MutPtr<()>) -> Result<()>
 where
 	C: Cancel
 {
-	/* Safety: guaranteed by caller. this function cannot be unsafe because it's
-	 * stored in the closure, but should be considered as so */
+	/* Safety: guaranteed by caller */
 	unsafe {
-		let cancel = arg.cast::<Option<C>>().as_mut().take();
+		let cancel = ptr!(arg.cast::<Option<C>>()=>take());
 
 		match cancel {
 			Some(cancel) => cancel.run(),
@@ -92,10 +95,13 @@ where
 	}
 }
 
+struct Canceller(MutPtr<()>, unsafe fn(MutPtr<()>) -> Result<()>);
+
 struct ContextInner {
+	budget: u16,
 	guards: u32,
 	interrupted: bool,
-	cancel: Option<Closure<MutPtr<()>, (), Result<()>>>
+	cancel: Option<Canceller>
 }
 
 pub struct Context {
@@ -116,7 +122,12 @@ impl Context {
 		Self {
 			worker,
 			environment: type_for::<E>(),
-			inner: UnsafeCell::new(ContextInner { guards: 0, interrupted: false, cancel: None })
+			inner: UnsafeCell::new(ContextInner {
+				budget: BUDGET,
+				guards: 0,
+				interrupted: false,
+				cancel: None
+			})
 		}
 	}
 
@@ -126,19 +137,19 @@ impl Context {
 	where
 		T: Task
 	{
-		task.run(self.into())
+		task.run(ptr!(self))
 	}
 
 	/// Safety: same as Worker::suspend
 	unsafe fn suspend(&self) {
 		/* Safety: guaranteed by caller */
-		unsafe { self.worker.as_ref().suspend() };
+		unsafe { ptr!(self.worker=>suspend()) };
 	}
 
 	/// Safety: same as Worker::resume
 	unsafe fn resume(&self) {
 		/* Safety: guaranteed by caller */
-		unsafe { self.worker.as_ref().resume() };
+		unsafe { ptr!(self.worker=>resume()) };
 	}
 
 	/// Runs and blocks on future `F`
@@ -149,13 +160,16 @@ impl Context {
 		let block = |cancel| {
 			/* avoid allocations by storing on the stack */
 			let mut cancel = Some(cancel);
-			let canceller =
-				Closure::new(MutPtr::from(&mut cancel).as_unit(), run_cancel::<F::Cancel>);
+			let canceller = Canceller(ptr!(&mut cancel).cast(), run_cancel::<F::Cancel>);
 
 			/* Safety: context is valid while executing. exclusive unsafe
 			 * cell access */
 			unsafe {
-				self.inner.as_mut().cancel = Some(canceller);
+				let inner = self.inner.as_mut();
+
+				inner.budget = BUDGET;
+				inner.cancel = Some(canceller);
+
 				self.suspend();
 			}
 		};
@@ -164,7 +178,8 @@ impl Context {
 			/* Safety: context is valid while executing. exclusive unsafe
 			 * cell access */
 			unsafe {
-				self.inner.as_mut().cancel = None;
+				ptr!(self.inner=>cancel = None);
+
 				self.resume();
 			}
 		};
@@ -173,13 +188,27 @@ impl Context {
 		unsafe { future::block_on(block, resume, future) }
 	}
 
+	pub fn current_budget(&self) -> u16 {
+		/* Safety: exclusive unsafe cell access */
+		unsafe { ptr!(self.inner=>budget) }
+	}
+
+	pub fn decrease_budget(&self, amount: u16) -> Option<u16> {
+		/* Safety: exclusive unsafe cell access */
+		let inner = unsafe { self.inner.as_mut() };
+		let result = inner.budget.checked_sub(amount);
+
+		inner.budget = result.unwrap_or(0);
+		result
+	}
+
 	/// Signals an interrupt to the current task
 	///
 	/// # Safety
 	/// See `Cancel::run`
-	pub unsafe fn interrupt(&self) -> Result<()> {
+	pub unsafe fn interrupt(this: Ptr<Self>) -> Result<()> {
 		/* Safety: exclusive unsafe cell access */
-		let inner = unsafe { self.inner.as_mut() };
+		let inner = unsafe { ptr!(this=>inner.as_mut()) };
 		let already_interrupted = inner.interrupted;
 
 		if !already_interrupted {
@@ -192,21 +221,27 @@ impl Context {
 				break;
 			}
 
-			let Some(cancel) = inner.cancel.take() else {
+			let Some(Canceller(arg, cancel)) = inner.cancel.take() else {
 				break;
 			};
 
-			/* note: this function may recursively call itself if a task awaits
+			/* this function may recursively call itself if a task awaits
 			 * itself
-			 * note: the context may no longer be valid after this call
+			 *
+			 * the context may no longer be valid after this call
+			 *
+			 * `inner` transitions to Disabled, which is okay
+			 * because it's not a protected tag
+			 *
+			 * Safety: guaranteed by caller
 			 */
-			return cancel.call(());
+			return unsafe { cancel(arg) };
 		}
 
 		if !already_interrupted {
 			Ok(())
 		} else {
-			Err(Core::Pending.as_err_with_msg("Interrupt pending"))
+			Err(Core::Pending("Interrupt pending").into())
 		}
 	}
 
@@ -252,14 +287,14 @@ impl InterruptGuard {
 	/// Safety: self.context must be valid
 	unsafe fn update_guard_count(&self, rel: i32) {
 		/* Safety: context must be valid. get exclusive mutable access to the inner */
-		let inner = unsafe { self.context.as_ref().inner.as_mut() };
+		let inner = unsafe { ptr!(self.context=>inner.as_mut()) };
 
 		inner.guards = match inner.guards.checked_add_signed(rel) {
 			Some(guards) => guards,
 			/* this can never happen unless memory corruption. useful to check anyway as it
 			 * doesn't have to be fast. since this is unsafe and relies on raw pointers, we abort
 			 * instead of panic */
-			None => abort!("Interrupt guards count overflowed")
+			None => panic_nounwind!("Interrupt guards count overflowed")
 		};
 	}
 

@@ -5,7 +5,14 @@ use std::{
 };
 
 use super::*;
-use crate::{coroutines::*, error::*, opt::hint::*};
+use crate::{
+	coroutines::*,
+	error::*,
+	macros::{macro_each, seal_trait},
+	opt::hint::*
+};
+
+macro_each!(seal_trait, Read, BufRead, Write);
 
 pub mod buf_reader;
 pub mod buf_writer;
@@ -27,7 +34,7 @@ pub const DEFAULT_BUFFER_SIZE: usize = 0x4000;
 pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	match from_utf8(buf) {
 		Ok(_) => Ok(()),
-		Err(_) => Err(Core::InvalidUtf8.as_err())
+		Err(_) => Err(Core::InvalidUtf8.into())
 	}
 }
 
@@ -110,14 +117,14 @@ pub async fn short_io_error_unless_interrupt() -> Error {
 	check_interrupt()
 		.await
 		.err()
-		.unwrap_or_else(|| Core::UnexpectedEof.as_err())
+		.unwrap_or_else(|| Core::UnexpectedEof.into())
 }
 
 #[macro_export]
 macro_rules! read_into {
 	($buf:ident) => {
 		if $crate::opt::hint::unlikely($buf.is_empty()) {
-			return ::std::result::Result::Ok(0);
+			return Ok(0);
 		}
 	};
 
@@ -139,7 +146,7 @@ pub use read_into;
 macro_rules! write_from {
 	($buf:ident) => {
 		if $crate::opt::hint::unlikely($buf.is_empty()) {
-			return ::std::result::Result::Ok(0);
+			return Ok(0);
 		}
 	};
 }

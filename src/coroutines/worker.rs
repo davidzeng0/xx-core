@@ -53,12 +53,8 @@ impl Worker {
 		self.caller.set(to);
 	}
 
-	/// # Safety
-	/// caller must ensure an aliased &mut never gets created
-	#[allow(clippy::mut_from_ref)]
-	pub(super) unsafe fn fiber(&self) -> &mut Fiber {
-		/* Safety: guaranteed by caller */
-		unsafe { self.fiber.as_mut() }
+	pub(super) fn fiber(&self) -> MutPtr<Fiber> {
+		self.fiber.get()
 	}
 
 	pub(super) fn into_inner(self) -> Fiber {
@@ -69,27 +65,27 @@ impl Worker {
 	/// see `Executor::resume`
 	pub(super) unsafe fn resume(&self) {
 		/* Safety: guaranteed by caller */
-		unsafe { self.executor.as_ref().resume(self.into()) };
+		unsafe { ptr!(self.executor=>resume(ptr!(self))) };
 	}
 
 	/// # Safety
 	/// see `Executor::suspend`
 	pub(super) unsafe fn suspend(&self) {
 		/* Safety: guaranteed by caller */
-		unsafe { self.executor.as_ref().suspend(self.into()) };
+		unsafe { ptr!(self.executor=>suspend(ptr!(self))) };
 	}
 
 	/// # Safety
 	/// see `Executor::exit`
 	pub(super) unsafe fn exit(self) {
 		/* Safety: guaranteed by caller */
-		unsafe { self.executor.as_ref().exit(self) };
+		unsafe { ptr!(self.executor=>exit(self)) };
 	}
 }
 
 impl Pin for Worker {
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
-		unsafe { self.executor.as_ref().worker_pinned(Ptr::from(&*self)) };
+		unsafe { ptr!(self.executor=>worker_pinned(ptr!(&*self))) };
 	}
 }

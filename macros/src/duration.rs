@@ -13,8 +13,9 @@ use super::*;
 
 type Result<T> = std::result::Result<T, &'static str>;
 
-fn alt_vec<I: Clone, O, E, P>(mut choices: Vec<P>) -> impl FnMut(I) -> IResult<I, O, E>
+fn alt_vec<I, O, E, P>(mut choices: Vec<P>) -> impl FnMut(I) -> IResult<I, O, E>
 where
+	I: Clone,
 	P: Parser<I, O, E>
 {
 	if choices.is_empty() {

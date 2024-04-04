@@ -1,52 +1,61 @@
-use super::*;
+#![allow(clippy::module_name_repetitions)]
 
-macro_rules! async_fns_type {
-	([$($type: ident)?][$($indexes: literal)*] $args: literal $($remaining: literal)*) => {
-		paste! {
-			pub trait [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>:
-				[<Fn $($type)?>]($([<Arg $indexes>]),*) ->
-				<Self as [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>>::Future
-			{
-				type Future: crate::coroutines::Task<Output = <Self as [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*>>::Output>;
-				type Output;
-			}
+use crate::{coroutines::*, pointer::*};
 
-			impl<'c, 'a, 'f, T, F, $([<Arg $indexes>]),*> [<AsyncFn $($type)? $args>]<$([<Arg $indexes>]),*> for T
-			where
-				'c: 'f,
-				'a: 'f,
-				T: [<Fn $($type)?>]($([<Arg $indexes>]),*) -> F + 'c,
-				$([<Arg $indexes>]: 'a,)*
-				F: crate::coroutines::Task + 'f,
-			{
-				type Future = F;
-				type Output = F::Output;
-			}
-		}
+pub trait AsyncFn<Args> {
+	type Output;
 
-		async_fns_type! {
-			[$($type)?][$($indexes)* $args] $($remaining)*
-		}
-	};
-
-	([$($type: ident)?][$($indexes: literal)*]) => {};
+	fn call(&self, args: Args) -> impl Task<Output = Self::Output>;
 }
 
-macro_rules! async_fns {
-	($($args: literal)*) => {
-		async_fns_type! {
-			[Once][] $($args)+
-		}
+pub trait AsyncFnMut<Args> {
+	type Output;
 
-		async_fns_type! {
-			[Mut][] $($args)+
-		}
-
-		async_fns_type! {
-			[][] $($args)+
-		}
-	};
+	fn call_mut(&mut self, args: Args) -> impl Task<Output = Self::Output>;
 }
 
-/* https://docs.rs/async_fn_traits */
-async_fns!(0 1 2 3 4 5 6 7 8 9 10 11 12);
+pub trait AsyncFnOnce<Args> {
+	type Output;
+
+	fn call_once(self, args: Args) -> impl Task<Output = Self::Output>;
+}
+
+pub mod internal {
+	use super::*;
+
+	pub struct OpaqueAsyncFn<F, const T: usize>(pub F);
+
+	impl<F: FnOnce(Args, Ptr<Context>) -> Output, Args, Output> AsyncFnOnce<Args>
+		for OpaqueAsyncFn<F, 0>
+	{
+		type Output = Output;
+
+		#[asynchronous(traitext)]
+		#[inline(always)]
+		async fn call_once(self, args: Args) -> Output {
+			self.0(args, get_context().await)
+		}
+	}
+
+	impl<F: FnMut(Args, Ptr<Context>) -> Output, Args, Output> AsyncFnMut<Args>
+		for OpaqueAsyncFn<F, 1>
+	{
+		type Output = Output;
+
+		#[asynchronous(traitext)]
+		#[inline(always)]
+		async fn call_mut(&mut self, args: Args) -> Output {
+			self.0(args, get_context().await)
+		}
+	}
+
+	impl<F: Fn(Args, Ptr<Context>) -> Output, Args, Output> AsyncFn<Args> for OpaqueAsyncFn<F, 2> {
+		type Output = Output;
+
+		#[asynchronous(traitext)]
+		#[inline(always)]
+		async fn call(&self, args: Args) -> Output {
+			self.0(args, get_context().await)
+		}
+	}
+}

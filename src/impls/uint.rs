@@ -1,3 +1,5 @@
+use crate::macros::macro_each;
+
 pub trait UIntExtensions {
 	type Signed;
 
@@ -6,7 +8,7 @@ pub trait UIntExtensions {
 }
 
 macro_rules! uint_impl {
-	($type:ty, $signed:ty) => {
+	(($type:ty, $signed:ty)) => {
 		impl UIntExtensions for $type {
 			type Signed = $signed;
 
@@ -32,9 +34,12 @@ macro_rules! uint_impl {
 	};
 }
 
-uint_impl!(u8, i8);
-uint_impl!(u16, i16);
-uint_impl!(u32, i32);
-uint_impl!(u64, i64);
-uint_impl!(u128, i128);
-uint_impl!(usize, isize);
+macro_each!(
+	uint_impl,
+	(u8, i8),
+	(u16, i16),
+	(u32, i32),
+	(u64, i64),
+	(u128, i128),
+	(usize, isize)
+);

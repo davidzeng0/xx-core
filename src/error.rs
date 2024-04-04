@@ -3,159 +3,85 @@
 use std::{
 	error,
 	fmt::{self, Debug, Display, Formatter},
-	io,
-	mem::transmute,
-	result
+	io, result
 };
 
 use crate::os::error::OsError;
 
-pub type Result<T> = result::Result<T, Error>;
+pub mod re_exports {
+	pub use anyhow;
+	pub use thiserror;
+}
+
+mod private {
+	pub trait Sealed {}
+}
 
 pub use io::ErrorKind;
 
-pub use crate::macros::compact_error;
+pub use crate::macros::errors;
 
-pub enum ErrorMessage {
-	Static(&'static str),
-	Owned(String)
+pub type Result<T> = result::Result<T, Error>;
+pub type OsResult<T> = result::Result<T, OsError>;
+
+impl<T> private::Sealed for Result<T> {}
+
+pub trait ErrorContext<T>: private::Sealed {
+	fn context<C>(self, context: C) -> Result<T>
+	where
+		C: Display + Send + Sync + 'static;
+
+	fn with_context<C, F>(self, context: F) -> Result<T>
+	where
+		C: Display + Send + Sync + 'static,
+		F: FnOnce() -> C;
 }
 
-impl AsRef<str> for ErrorMessage {
-	fn as_ref(&self) -> &str {
+impl<T> ErrorContext<T> for Result<T> {
+	fn context<C>(self, context: C) -> Self
+	where
+		C: Display + Send + Sync + 'static
+	{
+		self.with_context(|| context)
+	}
+
+	fn with_context<C, F>(self, context: F) -> Self
+	where
+		C: Display + Send + Sync + 'static,
+		F: FnOnce() -> C
+	{
 		match self {
-			Self::Static(val) => val,
-			Self::Owned(val) => val
+			Ok(ok) => Ok(ok),
+			Err(err) => Err(err.context(context()))
 		}
 	}
 }
 
-impl From<&'static str> for ErrorMessage {
-	fn from(value: &'static str) -> Self {
-		Self::Static(value)
+pub trait IntoError: error::Error + Send + Sync + Sized + 'static {
+	fn into_err(self) -> Error {
+		Error(self.into())
 	}
 }
 
-impl From<String> for ErrorMessage {
-	fn from(value: String) -> Self {
-		Self::Owned(value)
-	}
-}
-
-#[allow(clippy::arithmetic_side_effects)]
-const fn compact_strs(
-	strings: &'static [&'static str], ordinal: u16
-) -> (&'static str, &'static str, &'static str) {
-	let offset = ordinal as usize * 2;
-
-	(strings[0], strings[offset + 1], strings[offset + 2])
-}
-
-/// # Safety
-/// `CompactError::ordinal` must return valid ordinals
-pub unsafe trait CompactError: Copy {
-	const STRINGS: &'static [&'static str];
-
-	fn as_err(self) -> Error {
-		self.into()
-	}
-
-	fn as_err_with_msg<M>(self, message: M) -> Error
-	where
-		M: Into<ErrorMessage>
-	{
-		Error::compact(self, Some(message))
-	}
-
-	fn kind(self) -> ErrorKind;
-
-	fn message(self) -> &'static str {
-		compact_strs(Self::STRINGS, self.ordinal()).2
-	}
-
-	fn ordinal(self) -> u16;
-
-	fn from_ordinal(ordinal: u16) -> Option<Self>;
-
-	/// # Safety
-	/// `ordinal` must be a valid variant
-	unsafe fn from_ordinal_unchecked(ordinal: u16) -> Self;
-}
-
-#[derive(Copy, Clone)]
-pub struct Simple {
-	kind: ErrorKind
-}
-
-#[derive(Copy, Clone)]
-pub struct Compact {
-	strings: &'static [&'static str],
-	kind: ErrorKind,
-	ordinal: u16
-}
-
-impl Compact {
-	const fn variant(&self) -> &'static str {
-		compact_strs(self.strings, self.ordinal).1
-	}
-
-	const fn message(&self) -> &'static str {
-		compact_strs(self.strings, self.ordinal).2
-	}
-}
-
-pub struct Extern {
-	data: Box<dyn error::Error + Send + Sync>,
-	kind: ErrorKind
-}
-
-enum Repr {
-	Os(OsError),
-	Simple(Simple),
-	Compact(Compact),
-	Extern(Extern)
-}
-
-pub struct Error {
-	repr: Repr,
-	message: Option<ErrorMessage>
-}
+pub struct Error(anyhow::Error);
 
 impl Error {
-	pub fn simple<M>(kind: ErrorKind, message: Option<M>) -> Self
-	where
-		M: Into<ErrorMessage>
-	{
-		Self {
-			repr: Repr::Simple(Simple { kind }),
-			message: message.map(Into::into)
-		}
-	}
-
 	#[must_use]
-	pub fn from_raw_os_error(err: i32) -> Self {
-		Self {
-			repr: Repr::Os(OsError::from_raw(err)),
-			message: None
-		}
-	}
-
-	#[must_use]
-	pub const fn os_error(&self) -> Option<OsError> {
-		match &self.repr {
-			Repr::Os(code) => Some(*code),
-			_ => None
-		}
+	pub fn os_error(&self) -> Option<OsError> {
+		self.0.downcast_ref::<Os>().map(|os| os.0)
 	}
 
 	#[must_use]
 	pub fn kind(&self) -> ErrorKind {
-		match &self.repr {
-			Repr::Os(code) => code.kind(),
-			Repr::Simple(simple) => simple.kind,
-			Repr::Compact(compact) => compact.kind,
-			Repr::Extern(external) => external.kind
+		if let Some(os) = self.os_error() {
+			return os.kind();
 		}
+
+		if let Some(core) = self.0.downcast_ref::<Core>() {
+			return core.kind();
+		}
+
+		ErrorKind::Other
 	}
 
 	#[must_use]
@@ -163,67 +89,70 @@ impl Error {
 		self.kind() == ErrorKind::Interrupted
 	}
 
-	pub fn compact<T, M>(value: T, message: Option<M>) -> Self
-	where
-		T: CompactError,
-		M: Into<ErrorMessage>
-	{
-		Self {
-			repr: Repr::Compact(Compact {
-				strings: T::STRINGS,
-				kind: value.kind(),
-				ordinal: value.ordinal()
-			}),
-			message: message.map(Into::into)
-		}
-	}
-
 	#[must_use]
-	pub fn map_as(kind: ErrorKind, err: Box<dyn error::Error + Send + Sync>) -> Self {
-		match err.downcast() {
-			Ok(this) => *this,
-			Err(err) => Self {
-				repr: Repr::Extern(Extern { kind, data: err }),
-				message: None
-			}
-		}
-	}
-
-	pub fn map_as_other<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
-		Self::map_as(ErrorKind::Other, value.into())
-	}
-
-	pub fn map_as_invalid_input<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
-		Self::map_as(ErrorKind::InvalidInput, value.into())
-	}
-
-	pub fn map_as_invalid_data<E: Into<Box<dyn error::Error + Send + Sync>>>(value: E) -> Self {
-		Self::map_as(ErrorKind::InvalidData, value.into())
-	}
-
-	#[must_use]
-	pub fn downcast<T>(&self) -> Option<T>
+	pub fn map<E>(err: E) -> Self
 	where
-		T: CompactError
+		E: error::Error + Send + Sync + 'static
 	{
-		match &self.repr {
-			Repr::Compact(compact) if compact.strings.as_ptr() == T::STRINGS.as_ptr() => {
-				/* Safety: guaranteed by unsafe trait impl */
-				Some(unsafe { T::from_ordinal_unchecked(compact.ordinal) })
-			}
-			_ => None
-		}
+		Self(err.into())
+	}
+
+	pub fn context<C>(self, context: C) -> Self
+	where
+		C: Display + Send + Sync + 'static
+	{
+		Self(self.0.context(context))
 	}
 }
 
-impl<T: CompactError> PartialEq<T> for Error {
-	fn eq(&self, error: &T) -> bool {
-		let cur = self.downcast::<T>();
+impl<T: PartialEq + IntoError> PartialEq<T> for Error {
+	fn eq(&self, other: &T) -> bool {
+		self.0
+			.downcast_ref::<T>()
+			.is_some_and(|inner| inner.eq(other))
+	}
+}
 
-		match cur {
-			Some(err) if err.ordinal() == error.ordinal() => true,
-			_ => true
+impl Debug for Error {
+	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+		Debug::fmt(&self.0, fmt)
+	}
+}
+
+impl Display for Error {
+	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+		Display::fmt(&self.0, fmt)
+	}
+}
+
+impl From<anyhow::Error> for Error {
+	fn from(value: anyhow::Error) -> Self {
+		Self(value)
+	}
+}
+
+impl From<io::Error> for Error {
+	#[allow(clippy::unwrap_used)]
+	fn from(value: io::Error) -> Self {
+		if let Some(code) = value.raw_os_error() {
+			return Os(OsError::from_raw(code)).into();
 		}
+
+		if value
+			.get_ref()
+			.and_then(|err| err.downcast_ref::<Self>())
+			.is_some()
+		{
+			return *value.into_inner().unwrap().downcast().unwrap();
+		}
+
+		Self(value.into())
+	}
+}
+
+impl<T: IntoError> From<T> for Error {
+	fn from(value: T) -> Self {
+		value.into_err()
 	}
 }
 
@@ -233,151 +162,116 @@ impl From<Error> for io::Error {
 	}
 }
 
-impl From<io::Error> for Error {
-	fn from(value: io::Error) -> Self {
-		if let Some(code) = value.raw_os_error() {
-			Self::from_raw_os_error(code)
-		} else if value.get_ref().is_some() {
-			let kind = value.kind();
-
-			#[allow(clippy::unwrap_used)]
-			let err = value.into_inner().unwrap();
-
-			Self::map_as(kind, err)
-		} else {
-			/* Safety: internally uses &'static str */
-			#[allow(deprecated)]
-			let description: &'static str = unsafe { transmute(error::Error::description(&value)) };
-
-			Self::simple(value.kind(), Some(description))
-		}
-	}
-}
+impl error::Error for Error {}
 
 impl From<OsError> for Error {
 	fn from(value: OsError) -> Self {
-		Self { repr: Repr::Os(value), message: None }
+		Os(value).into()
 	}
 }
 
-impl<T: CompactError> From<T> for Error {
-	fn from(value: T) -> Self {
-		Self::compact(value, None::<&'static str>)
-	}
-}
+#[derive(Clone, Copy)]
+pub struct Os(pub OsError);
 
-impl Debug for Error {
+impl Display for Os {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-		match &self.repr {
-			Repr::Simple(simple) => {
-				let mut debug = fmt.debug_struct("Error");
-
-				debug.field("kind", &simple.kind);
-
-				if let Some(message) = &self.message {
-					debug.field("message", &message.as_ref());
-				}
-
-				debug.finish()
-			}
-			Repr::Compact(compact) => fmt
-				.debug_struct(compact.variant())
-				.field("kind", &compact.kind)
-				.field(
-					"message",
-					&self
-						.message
-						.as_ref()
-						.map_or_else(|| compact.message(), AsRef::as_ref)
-				)
-				.finish(),
-			Repr::Extern(external) => {
-				let mut debug = fmt.debug_struct("Extern");
-
-				debug.field("kind", &external.kind);
-				debug.field("data", &external.data);
-
-				if let Some(message) = &self.message {
-					debug.field("message", &message.as_ref());
-				}
-
-				debug.finish()
-			}
-			Repr::Os(code) => fmt
-				.debug_struct("Os")
-				.field("code", &(*code as i32))
-				.field("kind", &code.kind())
-				.field(
-					"message",
-					&self.message.as_ref().map_or(code.as_str(), AsRef::as_ref)
-				)
-				.finish()
-		}
+		write!(fmt, "{} (os error {})", self.0.as_str(), self.0 as i32)
 	}
 }
 
-impl Display for Error {
+impl Debug for Os {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-		if let Some(message) = &self.message {
-			return Display::fmt(message.as_ref(), fmt);
-		}
-
-		match &self.repr {
-			Repr::Simple(simple) => write!(fmt, "{}", simple.kind),
-			Repr::Compact(compact) => Display::fmt(&compact.message(), fmt),
-			Repr::Extern(external) => Display::fmt(&external.data, fmt),
-			Repr::Os(code) => write!(fmt, "{} (os error {})", code.as_str(), *code as i32)
-		}
+		fmt.debug_struct("Os")
+			.field("code", &(self.0 as i32))
+			.field("kind", &self.0.kind())
+			.field("message", &self.0.as_str())
+			.finish()
 	}
 }
 
-impl error::Error for Error {
-	#[allow(deprecated)]
-	fn description(&self) -> &str {
-		match &self.repr {
-			Repr::Os(code) => code.as_str(),
-			Repr::Simple(simple) => {
-				if let Some(message) = &self.message {
-					message.as_ref()
-				} else {
-					/* Safety: internally uses &'static str */
-					unsafe { transmute(io::Error::from(simple.kind).description()) }
-				}
-			}
-			Repr::Compact(compact) => compact.message(),
-			Repr::Extern(external) => external.data.description()
-		}
-	}
+impl IntoError for Os {}
 
-	#[allow(deprecated)]
-	fn cause(&self) -> Option<&dyn error::Error> {
-		match &self.repr {
-			Repr::Os(_) | Repr::Simple(..) | Repr::Compact(_) => None,
-			Repr::Extern(external) => external.data.cause()
-		}
-	}
+impl error::Error for Os {}
 
-	fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-		match &self.repr {
-			Repr::Os(_) | Repr::Simple(..) | Repr::Compact(_) => None,
-			Repr::Extern(external) => external.data.source()
-		}
-	}
-}
-
-#[compact_error]
+#[errors]
 pub enum Core {
-	Interrupted    = (ErrorKind::Interrupted, "Interrupted"),
-	WriteZero      = (ErrorKind::WriteZero, "Write EOF"),
-	InvalidUtf8    = (ErrorKind::InvalidData, "Invalid UTF-8 found in stream"),
-	UnexpectedEof  = (ErrorKind::UnexpectedEof, "Unexpected EOF"),
-	Overflow       = (ErrorKind::InvalidInput, "Integer overflow"),
-	OutOfMemory    = (ErrorKind::OutOfMemory, "Out of memory"),
-	NoAddresses    = (ErrorKind::InvalidInput, "Address list empty"),
-	InvalidCStr    = (ErrorKind::InvalidInput, "Path string contained a null byte"),
-	ConnectTimeout = (ErrorKind::TimedOut, "Connection timed out"),
-	Shutdown       = (ErrorKind::NotConnected, "Endpoint is shutdown"),
-	FormatterError = (ErrorKind::Other, "Formatter error"),
-	Pending        = (ErrorKind::Other, "Operation in progress"),
-	Panic          = (ErrorKind::Other, "Panicked")
+	#[error("Entity not found")]
+	NotFound,
+
+	#[error("Permission denied")]
+	PermissionDenied,
+
+	#[error("{0}")]
+	Interrupted(&'static str),
+
+	#[error("Write EOF")]
+	WriteZero,
+
+	#[error("Invalid UTF-8 found in stream")]
+	InvalidUtf8,
+
+	#[error("Unexpected EOF")]
+	UnexpectedEof,
+
+	#[error("Overflow occurred")]
+	Overflow,
+
+	#[error("Out of memory")]
+	OutOfMemory,
+
+	#[error("Address list empty")]
+	NoAddresses,
+
+	#[error("Path string contained a null byte")]
+	InvalidCStr,
+
+	#[error("Connect timed out")]
+	ConnectTimeout,
+
+	#[error("Endpoint is shutdown")]
+	Shutdown,
+
+	#[error("Formatter error")]
+	FormatterError,
+
+	#[error("{0}")]
+	Pending(&'static str)
 }
+
+impl Core {
+	#[must_use]
+	pub const fn kind(&self) -> ErrorKind {
+		match self {
+			Self::NotFound => ErrorKind::NotFound,
+			Self::PermissionDenied => ErrorKind::PermissionDenied,
+			Self::Interrupted(_) => ErrorKind::Interrupted,
+			Self::WriteZero => ErrorKind::WriteZero,
+			Self::InvalidUtf8 => ErrorKind::InvalidData,
+			Self::UnexpectedEof => ErrorKind::UnexpectedEof,
+			Self::Overflow => ErrorKind::InvalidInput,
+			Self::OutOfMemory => ErrorKind::OutOfMemory,
+			Self::NoAddresses => ErrorKind::InvalidInput,
+			Self::InvalidCStr => ErrorKind::InvalidData,
+			Self::ConnectTimeout => ErrorKind::TimedOut,
+			Self::Shutdown => ErrorKind::NotConnected,
+			Self::FormatterError => ErrorKind::Other,
+			Self::Pending(_) => ErrorKind::Other
+		}
+	}
+
+	#[must_use]
+	pub const fn interrupted() -> Self {
+		Self::Interrupted("Interrupted")
+	}
+}
+
+#[macro_export]
+macro_rules! fmt_error {
+	($($arg:tt)*) => {
+		<$crate::error::Error as ::std::convert::From<
+			$crate::error::re_exports::anyhow::Error
+		>>::from($crate::error::re_exports::anyhow::anyhow!($($arg)*))
+	}
+}
+
+pub use fmt_error;

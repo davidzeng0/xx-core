@@ -56,6 +56,15 @@ impl TimeSpec {
 	pub fn from_ms_i32(duration: i32) -> Self {
 		Self::from_ms(duration.try_into().unwrap())
 	}
+
+	#[must_use]
+	pub fn as_nanos(&self) -> Option<u128> {
+		let sec: u128 = self.sec.try_into().ok()?;
+		let nanos: u128 = self.nanos.try_into().ok()?;
+
+		#[allow(clippy::arithmetic_side_effects)]
+		Some(nanos + (sec * 1_000_000_000))
+	}
 }
 
 define_enum! {
@@ -85,11 +94,7 @@ pub fn time(clock: ClockId) -> Result<u64> {
 	/* Safety: FFI call */
 	result_from_libc(unsafe { clock_gettime(clock, &mut ts) } as isize)?;
 
-	let overflow = |_| Core::Overflow.as_err();
-	let sec: u64 = ts.sec.try_into().map_err(overflow)?;
-	let nanos: u64 = ts.nanos.try_into().map_err(overflow)?;
-
-	sec.checked_mul(1_000_000_000)
-		.and_then(|time| time.checked_add(nanos))
-		.ok_or_else(|| Core::Overflow.as_err())
+	ts.as_nanos()
+		.and_then(|nanos| -> Option<u64> { nanos.try_into().ok() })
+		.ok_or_else(|| Core::Overflow.into())
 }

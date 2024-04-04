@@ -250,9 +250,7 @@ fn expand_syscall_define(attrs: TokenStream, item: TokenStream) -> Result<TokenS
 					(#number) as i32
 					#(
 						,
-						::std::convert::Into::<
-							::xx_core::os::syscall::SyscallParameter
-						>::into(#args).0
+						::xx_core::os::syscall::SyscallParameter::from(#args).0
 					)*
 				)
 			};

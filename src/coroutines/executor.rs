@@ -37,13 +37,13 @@ impl Executor {
 	pub unsafe fn new_worker(&self, start: Start) -> Worker {
 		if self.pool.is_null() {
 			/* Safety: guaranteed by caller */
-			unsafe { Worker::new(self.into(), start) }
+			unsafe { Worker::new(ptr!(self), start) }
 		} else {
 			/* Safety: pool must be valid for this executor */
-			let fiber = unsafe { self.pool.as_ref() }.new_fiber(start);
+			let fiber = unsafe { ptr!(self.pool=>new_fiber(start)) };
 
 			/* Safety: guaranteed by caller */
-			unsafe { Worker::from_fiber(self.into(), fiber) }
+			unsafe { Worker::from_fiber(ptr!(self), fiber) }
 		}
 	}
 
@@ -74,7 +74,7 @@ impl Executor {
 		{
 			if worker.caller().is_null() {
 				/* Safety: a worker is never double suspended */
-				abort!("Double suspend detected");
+				panic_nounwind!("Double suspend detected");
 			}
 
 			/* Safety: clear the caller */
@@ -82,7 +82,7 @@ impl Executor {
 		}
 
 		/* Safety: workers are alive as long as they're executing */
-		unsafe { worker.fiber().switch(from.as_ref().fiber()) };
+		unsafe { Fiber::switch(worker.fiber(), from.as_ref().fiber()) };
 	}
 
 	/// Switch from whichever `current` worker is running to the new `worker`
@@ -99,17 +99,15 @@ impl Executor {
 		let worker = unsafe { worker.as_ref() };
 
 		#[cfg(debug_assertions)]
-		{
-			if !worker.caller().is_null() {
-				abort!("Loop detected");
-			}
+		if !worker.caller().is_null() {
+			panic_nounwind!("Loop detected");
 		}
 
 		/* Safety: previous resumed worker */
 		unsafe { worker.suspend_to(previous) };
 
 		/* Safety: workers must be alive as long as they're executing */
-		unsafe { previous.as_ref().fiber().switch(worker.fiber()) };
+		unsafe { Fiber::switch(ptr!(previous=>fiber()), worker.fiber()) };
 	}
 
 	/// Start a new worker
@@ -136,11 +134,9 @@ impl Executor {
 		/* Safety: guaranteed by caller */
 		unsafe {
 			if pool.is_null() {
-				worker.into_inner().exit(from.as_ref().fiber());
+				worker.into_inner().exit(ptr!(from=>fiber()));
 			} else {
-				worker
-					.into_inner()
-					.exit_to_pool(from.as_ref().fiber(), pool);
+				worker.into_inner().exit_to_pool(ptr!(from=>fiber()), pool);
 			}
 		}
 	}
@@ -148,6 +144,6 @@ impl Executor {
 
 impl Pin for Executor {
 	unsafe fn pin(&mut self) {
-		self.current.set(Ptr::from(&self.main));
+		self.current.set(ptr!(&self.main));
 	}
 }

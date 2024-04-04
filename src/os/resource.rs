@@ -124,24 +124,24 @@ pub mod raw {
 	use super::*;
 
 	#[syscall_define(Getrlimit)]
-	pub fn getrlimit(resource: Resource, limit: &mut Limit) -> Result<()>;
+	pub fn getrlimit(resource: Resource, limit: &mut Limit) -> OsResult<()>;
 
 	#[syscall_define(Prlimit64)]
 	pub fn prlimit64(
 		pid: i32, resource: Resource, new_limit: Option<&Limit>, old_limit: Option<&mut Limit>
-	) -> Result<()>;
+	) -> OsResult<()>;
 
 	#[syscall_define(Getrusage)]
-	pub fn getrusage(who: UsageWho, usage: &mut Usage) -> Result<()>;
+	pub fn getrusage(who: UsageWho, usage: &mut Usage) -> OsResult<()>;
 
 	#[syscall_define(Getpriority)]
-	pub fn getpriority(which: PriorityWhich, who: u32) -> Result<i32>;
+	pub fn getpriority(which: PriorityWhich, who: u32) -> OsResult<i32>;
 
 	#[syscall_define(Setpriority)]
-	pub fn setpriority(which: PriorityWhich, who: u32, prio: i32) -> Result<()>;
+	pub fn setpriority(which: PriorityWhich, who: u32, prio: i32) -> OsResult<()>;
 }
 
-pub fn get_rlimit(resource: Resource) -> Result<Limit> {
+pub fn get_rlimit(resource: Resource) -> OsResult<Limit> {
 	let mut limit = Limit::default();
 
 	raw::getrlimit(resource, &mut limit)?;
@@ -150,9 +150,11 @@ pub fn get_rlimit(resource: Resource) -> Result<Limit> {
 }
 
 #[syscall_define(Setrlimit)]
-pub fn set_rlimit(resource: Resource, limit: &Limit) -> Result<()>;
+pub fn set_rlimit(resource: Resource, limit: &Limit) -> OsResult<()>;
 
-pub fn p_rlimit(pid: Option<i32>, resource: Resource, new_limit: Option<&Limit>) -> Result<Limit> {
+pub fn p_rlimit(
+	pid: Option<i32>, resource: Resource, new_limit: Option<&Limit>
+) -> OsResult<Limit> {
 	let mut limit = Limit::default();
 
 	raw::prlimit64(pid.unwrap_or(0), resource, new_limit, Some(&mut limit))?;
@@ -160,11 +162,11 @@ pub fn p_rlimit(pid: Option<i32>, resource: Resource, new_limit: Option<&Limit>)
 	Ok(limit)
 }
 
-pub fn get_limit(resource: Resource) -> Result<u64> {
+pub fn get_limit(resource: Resource) -> OsResult<u64> {
 	Ok(get_rlimit(resource)?.current)
 }
 
-pub fn get_rusage(who: UsageWho) -> Result<Usage> {
+pub fn get_rusage(who: UsageWho) -> OsResult<Usage> {
 	let mut usage = Usage::default();
 
 	raw::getrusage(who, &mut usage)?;
@@ -172,7 +174,7 @@ pub fn get_rusage(who: UsageWho) -> Result<Usage> {
 	Ok(usage)
 }
 
-pub fn get_priority(which: PriorityWhich, who: Option<u32>) -> Result<i32> {
+pub fn get_priority(which: PriorityWhich, who: Option<u32>) -> OsResult<i32> {
 	const PRIORITY_ZERO: i32 = 20;
 	let prio = raw::getpriority(which, who.unwrap_or(0))?;
 
@@ -180,6 +182,6 @@ pub fn get_priority(which: PriorityWhich, who: Option<u32>) -> Result<i32> {
 	Ok(PRIORITY_ZERO - prio as i32)
 }
 
-pub fn set_priority(which: PriorityWhich, who: Option<u32>, prio: i32) -> Result<()> {
+pub fn set_priority(which: PriorityWhich, who: Option<u32>, prio: i32) -> OsResult<()> {
 	raw::setpriority(which, who.unwrap_or(0), prio)
 }

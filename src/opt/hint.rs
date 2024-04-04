@@ -6,8 +6,8 @@ const fn cold() {}
 
 #[inline(always)]
 #[must_use]
-pub const fn likely(cond: bool) -> bool {
-	if !cond {
+pub const fn expect(cond: bool, expect: bool) -> bool {
+	if cond != expect {
 		cold();
 	}
 
@@ -16,12 +16,14 @@ pub const fn likely(cond: bool) -> bool {
 
 #[inline(always)]
 #[must_use]
-pub const fn unlikely(cond: bool) -> bool {
-	if cond {
-		cold();
-	}
+pub const fn likely(cond: bool) -> bool {
+	expect(cond, true)
+}
 
-	cond
+#[inline(always)]
+#[must_use]
+pub const fn unlikely(cond: bool) -> bool {
+	expect(cond, false)
 }
 
 /// # Safety

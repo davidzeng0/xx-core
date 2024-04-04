@@ -43,7 +43,7 @@ impl VisitMut for ReplaceSelf {
 	}
 
 	fn visit_macro_mut(&mut self, mac: &mut Macro) {
-		visit_macro_punctuated_exprs(self, mac);
+		visit_macro_body(self, mac);
 	}
 }
 
@@ -52,6 +52,26 @@ pub enum LifetimeAnnotations {
 	Auto,
 	Closure,
 	None
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Inlining {
+	Never,
+	Default,
+	Always
+}
+
+impl ToTokens for Inlining {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		quote! { ::xx_core::closure:: }.to_tokens(tokens);
+
+		match self {
+			Self::Never => quote! { INLINE_NEVER },
+			Self::Default => quote! { INLINE_DEFAULT },
+			Self::Always => quote! { INLINE_ALWAYS }
+		}
+		.to_tokens(tokens);
+	}
 }
 
 struct AddLifetime {
@@ -188,8 +208,7 @@ fn capture_lifetimes(sig: &Signature, env_generics: Option<&Generics>) -> TokenS
 }
 
 fn add_lifetime(
-	sig: &mut Signature, env_generics: Option<&Generics>, annotations: LifetimeAnnotations,
-	is_trait: bool, capture_lifetime: bool
+	sig: &mut Signature, env_generics: Option<&Generics>, annotations: LifetimeAnnotations
 ) -> TokenStream {
 	if annotations == LifetimeAnnotations::None {
 		return quote! {};
@@ -199,8 +218,11 @@ fn add_lifetime(
 
 	op.visit_signature_mut(sig);
 
+	if op.explicit_lifetimes.is_empty() && op.added_lifetimes.is_empty() {
+		return quote! {};
+	}
+
 	let closure_lifetime = closure_lifetime();
-	let has_receiver = sig.receiver().is_some();
 
 	let clause = sig
 		.generics
@@ -239,28 +261,6 @@ fn add_lifetime(
 		add_bounds(&generics.params);
 	}
 
-	let has_self_bound = clause.predicates.iter().any(|predicate| {
-		let WherePredicate::Type(PredicateType {
-			bounded_ty: Type::Path(TypePath { qself: None, path }),
-			..
-		}) = predicate
-		else {
-			return false;
-		};
-
-		path.get_ident().is_some_and(|ident| ident == "Self")
-	});
-
-	if !has_self_bound && is_trait {
-		if has_receiver {
-			clause
-				.predicates
-				.push(parse_quote! { Self: #closure_lifetime });
-		} else {
-			clause.predicates.push(parse_quote! { Self: 'static });
-		}
-	}
-
 	sig.generics.params.push(closure_lifetime_parsed());
 
 	for lifetime in &op.added_lifetimes {
@@ -277,13 +277,9 @@ fn add_lifetime(
 			.push(parse_quote! { #lifetime: #closure_lifetime });
 	}
 
-	if capture_lifetime {
-		let lifetimes = capture_lifetimes(sig, env_generics);
+	let lifetimes = capture_lifetimes(sig, env_generics);
 
-		quote! { + #lifetimes }
-	} else {
-		quote! { + #closure_lifetime }
-	}
+	quote! { + #lifetimes }
 }
 
 pub fn make_tuple_of_types<T>(data: Vec<T>) -> TokenStream
@@ -311,7 +307,7 @@ fn build_tuples(
 	)
 }
 
-fn make_args(args_pat_type: &Vec<(TokenStream, TokenStream)>) -> (TokenStream, TokenStream) {
+fn make_args(args_pat_type: &[(TokenStream, TokenStream)]) -> (TokenStream, TokenStream) {
 	let mut args = Vec::new();
 	let mut types = Vec::new();
 
@@ -324,11 +320,11 @@ fn make_args(args_pat_type: &Vec<(TokenStream, TokenStream)>) -> (TokenStream, T
 }
 
 pub fn make_explicit_closure(
-	func: &mut Function<'_>, args: &Vec<(TokenStream, TokenStream)>, closure_type: TokenStream,
+	func: &mut Function<'_>, args: &[(TokenStream, TokenStream)], closure_type: TokenStream,
 	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream,
 	annotations: LifetimeAnnotations
 ) -> Result<TokenStream> {
-	add_lifetime(func.sig, func.env_generics, annotations, false, false);
+	add_lifetime(func.sig, func.env_generics, annotations);
 
 	let (types, construct, destruct) = build_tuples(&mut func.sig.inputs, |arg| match arg {
 		FnArg::Typed(pat) => {
@@ -368,11 +364,10 @@ pub fn make_explicit_closure(
 	let return_type = get_return_type(&func.sig.output);
 	let closure_return_type = transform_return(types.clone(), return_type.clone());
 
+	func.attrs.push(parse_quote! { #[inline(always)] });
 	func.sig.output = parse_quote! { -> #closure_return_type };
 
 	if let Some(block) = &mut func.block {
-		func.attrs.push(parse_quote!( #[inline(always)] ));
-
 		ReplaceSelf {}.visit_block_mut(block);
 
 		**block = parse_quote! {{
@@ -393,18 +388,47 @@ pub enum OpaqueClosureType<T> {
 }
 
 pub fn make_opaque_closure(
-	func: &mut Function<'_>, args: &Vec<(TokenStream, TokenStream)>,
+	func: &mut Function<'_>, args: &[(TokenStream, TokenStream)],
 	transform_return: impl Fn(TokenStream) -> TokenStream,
-	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>,
-	is_trait: bool, workaround: bool
+	closure_type: OpaqueClosureType<impl Fn(TokenStream, Inlining) -> (TokenStream, TokenStream)>,
+	is_trait: bool
 ) -> Result<TokenStream> {
 	let addl_lifetimes = add_lifetime(
 		func.sig,
 		func.env_generics,
-		LifetimeAnnotations::Auto,
-		is_trait,
-		workaround
+		if is_trait {
+			LifetimeAnnotations::None
+		} else {
+			LifetimeAnnotations::Auto
+		}
 	);
+
+	let mut inlining = None;
+
+	if let Some(attr) = remove_attr_list(func.attrs, "inline") {
+		let mut value = String::new();
+
+		attr.parse_nested_meta(|meta| {
+			if let Some(ident) = meta.path.get_ident() {
+				value = ident.to_string();
+			}
+
+			Ok(())
+		})?;
+
+		inlining = Some(match value.as_ref() {
+			"never" => Inlining::Never,
+			"always" => Inlining::Always,
+			_ => {
+				return Err(Error::new_spanned(
+					attr.tokens,
+					"Valid inline arguments are `always` and `never`"
+				))
+			}
+		});
+	}
+
+	let inlining = inlining.unwrap_or(Inlining::Default);
 
 	let (args, args_types) = make_args(args);
 
@@ -412,7 +436,7 @@ pub fn make_opaque_closure(
 	let closure_return_type = transform_return(get_return_type(return_type));
 	let (closure_return_type, trait_impl_wrap) = match closure_type {
 		OpaqueClosureType::Custom(transform) => {
-			let (trait_type, trait_impl) = transform(closure_return_type);
+			let (trait_type, trait_impl) = transform(closure_return_type, inlining);
 
 			(
 				parse_quote_spanned! { trait_type.span() => impl #trait_type },
@@ -438,6 +462,7 @@ pub fn make_opaque_closure(
 		**block = parse_quote! {{ #closure }};
 	}
 
+	func.attrs.push(parse_quote! { #[inline(always)] });
 	func.attrs
 		.push(parse_quote! { #[allow(clippy::type_complexity)] });
 	func.sig.output = parse_quote! { -> #closure_return_type #addl_lifetimes };

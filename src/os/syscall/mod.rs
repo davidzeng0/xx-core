@@ -2,7 +2,7 @@ use enumflags2::*;
 
 use crate::{
 	error::*,
-	macros::{import_sysdeps, syscall_impl},
+	macros::{import_sysdeps, macro_each, syscall_impl},
 	pointer::*
 };
 
@@ -31,25 +31,29 @@ macro_rules! impl_from_primitive {
 	};
 }
 
-impl_from_primitive!(usize);
-impl_from_primitive!(isize);
-impl_from_primitive!(u64);
-impl_from_primitive!(i64);
-impl_from_primitive!(u32);
-impl_from_primitive!(i32);
-impl_from_primitive!(u16);
-impl_from_primitive!(i16);
-impl_from_primitive!(u8);
-impl_from_primitive!(i8);
+macro_each!(
+	impl_from_primitive,
+	usize,
+	isize,
+	u64,
+	i64,
+	u32,
+	i32,
+	u16,
+	i16,
+	u8,
+	i8
+);
 
-impl<T, const MUTABLE: bool> From<Pointer<T, MUTABLE>> for SyscallParameter {
-	fn from(value: Pointer<T, MUTABLE>) -> Self {
+impl<T, const MUT: bool> From<Pointer<T, MUT>> for SyscallParameter {
+	fn from(value: Pointer<T, MUT>) -> Self {
 		value.int_addr().into()
 	}
 }
 
 macro_rules! impl_pointer {
 	($type:ty) => {
+		#[allow(unused_parens)]
 		impl<T> From<$type> for SyscallParameter {
 			fn from(value: $type) -> Self {
 				Pointer::from(value).into()
@@ -58,12 +62,9 @@ macro_rules! impl_pointer {
 	};
 }
 
-impl_pointer!(&T);
-impl_pointer!(&mut T);
-impl_pointer!(*const T);
-impl_pointer!(*mut T);
+macro_each!(impl_pointer, (&T), (&mut T), (*const T), (*mut T));
 
-impl From<SyscallResult> for Result<()> {
+impl From<SyscallResult> for OsResult<()> {
 	fn from(val: SyscallResult) -> Self {
 		result_from_int(val.0).map(|_| ())
 	}
@@ -71,7 +72,7 @@ impl From<SyscallResult> for Result<()> {
 
 macro_rules! impl_primitive_from {
 	($type:ty) => {
-		impl From<SyscallResult> for Result<$type> {
+		impl From<SyscallResult> for OsResult<$type> {
 			fn from(val: SyscallResult) -> Self {
 				#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 				result_from_int(val.0).map(|result| result as $type)
@@ -80,12 +81,9 @@ macro_rules! impl_primitive_from {
 	};
 }
 
-impl_primitive_from!(u32);
-impl_primitive_from!(i32);
-impl_primitive_from!(usize);
-impl_primitive_from!(isize);
+macro_each!(impl_primitive_from, u32, i32, usize, isize);
 
-impl From<SyscallResult> for Result<OwnedFd> {
+impl From<SyscallResult> for OsResult<OwnedFd> {
 	fn from(val: SyscallResult) -> Self {
 		result_from_int(val.0).map(|raw_fd| {
 			/* Safety: guaranteed by syscall declaration */
@@ -97,7 +95,7 @@ impl From<SyscallResult> for Result<OwnedFd> {
 	}
 }
 
-impl<T, const MUTABLE: bool> From<SyscallResult> for Result<Pointer<T, MUTABLE>> {
+impl<T, const MUT: bool> From<SyscallResult> for OsResult<Pointer<T, MUT>> {
 	fn from(val: SyscallResult) -> Self {
 		result_from_ptr(val.0).map(|addr| Pointer::from_int_addr(addr))
 	}

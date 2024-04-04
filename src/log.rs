@@ -13,7 +13,7 @@ use lazy_static::lazy_static;
 use log::{set_boxed_logger, Log, Metadata, Record};
 pub use log::{set_max_level, Level, LevelFilter};
 
-use crate::{macros::abort, pointer::*};
+use crate::{macros::panic_nounwind, pointer::*};
 
 pub mod internal {
 	pub use log::{log, log_enabled};
@@ -21,7 +21,7 @@ pub mod internal {
 	use super::*;
 
 	#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
-	fn get_struct_name<T>(_: Ptr<T>) -> &'static str
+	fn get_struct_name<T>() -> &'static str
 	where
 		T: ?Sized
 	{
@@ -54,7 +54,7 @@ pub mod internal {
 		segment.split("::").last().unwrap()
 	}
 
-	fn get_struct_addr_low<T>(val: Ptr<T>) -> usize
+	fn get_struct_addr_low<T, const MUT: bool>(val: Pointer<T, MUT>) -> usize
 	where
 		T: ?Sized
 	{
@@ -62,15 +62,16 @@ pub mod internal {
 	}
 
 	#[inline(never)]
-	pub fn log_target<T>(level: Level, target: Ptr<T>, args: Arguments<'_>)
-	where
+	pub fn log_target<T, const MUT: bool>(
+		level: Level, target: Pointer<T, MUT>, args: Arguments<'_>
+	) where
 		T: ?Sized
 	{
 		let mut fmt_buf = Cursor::new([0u8; 64]);
 		let _ = fmt_buf.write_fmt(format_args!(
 			"@ {:0>8x} {: >13}",
 			get_struct_addr_low(target),
-			get_struct_name(target)
+			get_struct_name::<T>()
 		));
 
 		#[allow(clippy::cast_possible_truncation)]
@@ -275,7 +276,7 @@ fn panic_hook(info: &PanicInfo<'_>) {
 #[ctor]
 fn init() {
 	if set_boxed_logger(Box::new(Logger)).is_err() {
-		abort!("Failed to initialize logger");
+		panic_nounwind!("Failed to initialize logger");
 	}
 
 	#[cfg(feature = "panic-log")]
@@ -286,18 +287,14 @@ fn init() {
 
 #[macro_export]
 macro_rules! log {
-	($level: expr, target: &$target: expr, $($arg: tt)+) => {
+	($level: expr, target: $target: expr, $($arg: tt)+) => {
 		if $crate::opt::hint::unlikely($crate::log::internal::log_enabled!($level)) {
 			$crate::log::internal::log_target(
 				$level,
-				$crate::pointer::Ptr::from(::std::ptr::addr_of!($target)),
+				$crate::macros::ptr!($target),
 				format_args!($($arg)+)
 			);
 		}
-	};
-
-	($level: expr, target: $target: expr, $($arg: tt)+) => {
-		$crate::log!($level, target: &*$target, $($arg)*);
 	};
 
 	($level: expr, $($arg: tt)+) => {

@@ -1,5 +1,3 @@
-use paste::paste;
-
 mod uint;
 pub use uint::*;
 mod async_fn;

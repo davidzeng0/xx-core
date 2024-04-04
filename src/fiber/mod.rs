@@ -2,8 +2,7 @@
 
 use std::{
 	arch::{asm, global_asm},
-	mem::{zeroed, ManuallyDrop},
-	panic::catch_unwind
+	mem::{zeroed, ManuallyDrop}
 };
 
 use super::{
@@ -11,7 +10,7 @@ use super::{
 	os::{mman::*, resource::*},
 	pointer::*
 };
-use crate::macros::abort;
+use crate::{macros::panic_nounwind, opt::hint::unreachable_unchecked};
 
 import_sysdeps!();
 
@@ -93,17 +92,13 @@ unsafe fn exit_fiber(arg: Ptr<()>) {
 	 * the stack, which for now it doesn't, unless you're exiting
 	 * the fiber to a pool
 	 */
-	let fiber = unsafe { ManuallyDrop::take(fiber) };
-
-	if catch_unwind(|| drop(fiber)).is_err() {
-		abort!("Fatal error: failed to exit fiber");
-	}
+	drop(unsafe { ManuallyDrop::take(fiber) });
 }
 
 unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
 	/* Safety: guaranteed by caller */
 	let arg = unsafe {
-		arg.cast::<(ManuallyDrop<Fiber>, MutPtr<Pool>)>()
+		arg.cast::<(ManuallyDrop<Fiber>, Ptr<Pool>)>()
 			.cast_mut()
 			.as_mut()
 	};
@@ -111,16 +106,11 @@ unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
 	/* Safety: ownership of the fiber is passed to us */
 	let mut fiber = unsafe { ManuallyDrop::take(&mut arg.0) };
 
-	let result = catch_unwind(|| {
-		/* Safety: guaranteed by caller */
-		unsafe {
-			fiber.clear_stack();
-			arg.1.as_ref().exit_fiber(fiber);
-		}
-	});
+	/* Safety: guaranteed by caller */
+	unsafe {
+		fiber.clear_stack();
 
-	if result.is_err() {
-		abort!("Fatal error: failed to exit fiber");
+		ptr!(arg.1=>exit_fiber(fiber));
 	}
 }
 
@@ -193,7 +183,7 @@ impl Fiber {
 	///
 	/// # Safety
 	/// `self` must be currently running
-	pub unsafe fn switch(&mut self, to: &mut Self) {
+	pub unsafe fn switch(this: MutPtr<Self>, to: MutPtr<Self>) {
 		/* note for arch specific implementation:
 		 * all registers must be declared clobbered
 		 *
@@ -204,7 +194,9 @@ impl Fiber {
 		 */
 
 		/* Safety: guaranteed by caller */
-		unsafe { switch(&mut self.context, &mut to.context) };
+		unsafe {
+			switch(ptr!(&mut this=>context), ptr!(&mut to=>context));
+		}
 	}
 
 	/// # Safety
@@ -220,18 +212,23 @@ impl Fiber {
 	///
 	/// # Safety
 	/// same as switch
-	pub unsafe fn exit(self, to: &mut Self) {
+	pub unsafe fn exit(self, to: MutPtr<Self>) -> ! {
 		let mut fiber = ManuallyDrop::new(self);
+		let ptr = ptr!(&mut fiber);
 
 		/* Safety: contract upheld by caller */
 		unsafe {
-			to.context.set_intercept(Intercept {
+			let context = &mut ptr!(to=>context);
+
+			context.set_intercept(Intercept {
 				intercept: exit_fiber,
-				arg: MutPtr::from(&mut fiber).as_unit().into(),
-				ret: to.context.program_counter()
+				arg: ptr.cast_const().cast(),
+				ret: context.program_counter()
 			});
 
-			fiber.switch(to);
+			Self::switch(ptr.cast(), to);
+
+			unreachable_unchecked();
 		}
 	}
 
@@ -240,18 +237,26 @@ impl Fiber {
 	///
 	/// # Safety
 	/// same as above
-	pub unsafe fn exit_to_pool(self, to: &mut Self, pool: Ptr<Pool>) {
+	pub unsafe fn exit_to_pool(self, to: MutPtr<Self>, pool: Ptr<Pool>) -> ! {
 		let mut arg = (ManuallyDrop::new(self), pool);
+		let ptr = ptr!(&mut arg);
 
 		/* Safety: contract upheld by caller */
 		unsafe {
-			to.context.set_intercept(Intercept {
+			let context = &mut ptr!(to=>context);
+
+			context.set_intercept(Intercept {
 				intercept: exit_fiber_to_pool,
-				arg: MutPtr::from(&mut arg).as_unit().into(),
-				ret: to.context.program_counter()
+				arg: ptr.cast_const().cast(),
+				ret: context.program_counter()
 			});
 
-			arg.0.switch(to);
+			Self::switch(ptr!(&mut ptr=>0).cast(), to);
+
+			unreachable_unchecked();
 		}
 	}
 }
+
+/* Safety: the stack is owned by the fiber */
+unsafe impl Send for Fiber {}

@@ -1,6 +1,6 @@
 use xx_core::{
 	fiber::{Fiber, Start},
-	pointer::{MutPtr, Ptr}
+	pointer::*
 };
 
 unsafe fn start(arg: Ptr<()>) {
@@ -10,7 +10,8 @@ unsafe fn start(arg: Ptr<()>) {
 	loop {
 		data.as_mut().2 += val;
 		val += 1;
-		data.as_mut().1.switch(&mut data.as_mut().0);
+
+		Fiber::switch(ptr!(&mut data=>1), ptr!(&mut data=>0));
 	}
 }
 
@@ -22,19 +23,21 @@ fn test_fibers() {
 
 		data.as_mut()
 			.1
-			.set_start(Start::new(start, data.as_unit().into()));
+			.set_start(Start::new(start, data.cast_const().cast()));
 
 		let mut val = 0;
 
 		for i in 0..10 {
-			data.as_mut().0.switch(&mut data.as_mut().1);
+			Fiber::switch(ptr!(&mut data=>0), ptr!(&mut data=>1));
+
 			val += i;
 
 			assert_eq!(data.as_ref().2, val);
 		}
 
 		data.as_mut().2 = 0;
-		data.as_mut().0.switch(&mut data.as_mut().1);
+
+		Fiber::switch(ptr!(&mut data=>0), ptr!(&mut data=>1));
 
 		assert_eq!(data.as_mut().2, 10);
 	}

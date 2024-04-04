@@ -100,18 +100,18 @@ impl<'a> BorrowedPollFd<'a> {
 #[syscall_define(Ppoll)]
 pub unsafe fn ppoll(
 	#[array(len = u32)] fds: &mut [PollFd], timeout: &TimeSpec, #[array] sigmask: SignalMask<'_>
-) -> Result<u32>;
+) -> OsResult<u32>;
 
 /// # Safety
 /// `PollFd`s must be valid for this function call
-pub unsafe fn poll_timeout(fds: &mut [PollFd], timeout: Duration) -> Result<u32> {
+pub unsafe fn poll_timeout(fds: &mut [PollFd], timeout: Duration) -> OsResult<u32> {
 	let ts = TimeSpec::from_duration(timeout);
 
 	/* Safety: guaranteed by caller */
 	unsafe { ppoll(fds, &ts, None) }
 }
 
-pub fn poll(fds: &mut [BorrowedPollFd<'_>], timeout: Duration) -> Result<u32> {
+pub fn poll(fds: &mut [BorrowedPollFd<'_>], timeout: Duration) -> OsResult<u32> {
 	/* Safety: fds are borrowed for this function call */
 	#[allow(clippy::multiple_unsafe_ops_per_block, clippy::transmute_ptr_to_ptr)]
 	unsafe {

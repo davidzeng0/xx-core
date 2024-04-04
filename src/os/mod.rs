@@ -42,7 +42,7 @@ pub mod raw {
 
 	#[repr(transparent)]
 	#[derive(Default, Debug)]
-	pub struct BorrowedRawBuf<'a, const MUTABLE: bool> {
+	pub struct BorrowedRawBuf<'a, const MUT: bool> {
 		pub buf: RawBuf,
 		pub phantom: PhantomData<&'a ()>
 	}
@@ -100,7 +100,7 @@ impl<'a, T> From<&'a [T]> for RawBuf<'a> {
 	fn from(value: &'a [T]) -> Self {
 		Self {
 			buf: raw::RawBuf {
-				ptr: Ptr::from(value.as_ptr()).cast_mut().cast(),
+				ptr: ptr!(value.as_ptr()).cast_mut().cast(),
 				len: size_of_val(value)
 			},
 			phantom: PhantomData
@@ -112,7 +112,7 @@ impl<'a, T> From<&'a T> for RawBuf<'a> {
 	fn from(value: &'a T) -> Self {
 		Self {
 			buf: raw::RawBuf {
-				ptr: Ptr::from(value).cast_mut().cast(),
+				ptr: ptr!(value).cast_mut().cast(),
 				len: size_of::<T>()
 			},
 			phantom: PhantomData
@@ -124,7 +124,7 @@ impl<'a, T> From<&'a mut [T]> for MutRawBuf<'a> {
 	fn from(value: &'a mut [T]) -> Self {
 		Self {
 			buf: raw::RawBuf {
-				ptr: MutPtr::from(value.as_mut_ptr()).cast(),
+				ptr: ptr!(value.as_mut_ptr()).cast(),
 				len: size_of_val(value)
 			},
 			phantom: PhantomData
@@ -135,10 +135,7 @@ impl<'a, T> From<&'a mut [T]> for MutRawBuf<'a> {
 impl<'a, T> From<&'a mut T> for MutRawBuf<'a> {
 	fn from(value: &'a mut T) -> Self {
 		Self {
-			buf: raw::RawBuf {
-				ptr: MutPtr::from(value).cast(),
-				len: size_of::<T>()
-			},
+			buf: raw::RawBuf { ptr: ptr!(value).cast(), len: size_of::<T>() },
 			phantom: PhantomData
 		}
 	}

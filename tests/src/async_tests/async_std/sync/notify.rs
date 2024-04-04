@@ -44,7 +44,7 @@ async fn notify_within(notify: Pinned<Rc<Notify>>) {
 		spawn(expect_success(notify.clone())).await;
 	}
 
-	notify.notify();
+	notify.notify(());
 }
 
 #[main]
@@ -53,18 +53,18 @@ async fn test_notify() {
 	let notify = Notify::new();
 	let handle = spawn(waiter(notify.clone())).await;
 
-	notify.notify();
+	notify.notify(());
 	handle.await.unwrap();
-	notify.notify();
+	notify.notify(());
 
 	let notify = Notify::new();
 	let handle = spawn(canceller(notify.clone())).await;
 
 	sleep(Duration::from_secs(1)).await.unwrap();
 
-	notify.notify();
+	notify.notify(());
 	handle.await.unwrap_err();
-	notify.notify();
+	notify.notify(());
 
 	let notify = Notify::new();
 
@@ -78,8 +78,8 @@ async fn test_notify() {
 		spawn(nested_cancel(notify.clone())).await;
 	}
 
-	notify.notify();
-	notify.notify();
+	notify.notify(());
+	notify.notify(());
 
 	let notify = Notify::new();
 	let mut handle = None;
@@ -102,17 +102,17 @@ async fn test_notify() {
 
 	assert!(!handle.is_done());
 
-	notify.notify();
+	notify.notify(());
 
 	let handle = handle.await;
 
 	assert!(!handle.is_done());
 
-	notify.notify();
+	notify.notify(());
 
 	assert!(handle.is_done());
 
-	notify.notify();
+	notify.notify(());
 
 	let notify = Notify::new();
 
@@ -120,9 +120,9 @@ async fn test_notify() {
 		spawn(spawn_within(notify.clone())).await;
 	}
 
-	notify.notify();
-	notify.notify();
-	notify.notify();
+	notify.notify(());
+	notify.notify(());
+	notify.notify(());
 
 	let notify = Notify::new();
 
@@ -130,6 +130,6 @@ async fn test_notify() {
 		spawn(notify_within(notify.clone())).await;
 	}
 
-	notify.notify();
-	notify.notify();
+	notify.notify(());
+	notify.notify(());
 }

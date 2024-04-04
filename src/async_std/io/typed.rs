@@ -15,12 +15,10 @@ use crate::{
 	pointer::*
 };
 
-#[compact_error]
+#[errors]
 pub enum ReadError {
-	SizeError = (
-		ErrorKind::InvalidInput,
-		"Invalid size for variably sized type"
-	)
+	#[error("Invalid size ({0}) for variably sized type")]
+	SizeError(usize)
 }
 
 macro_rules! impl_primitive_bytes_encoding_endian {
@@ -123,12 +121,9 @@ where
 {
 	let available = reader.buffer();
 
-	/* for some llvm or rustc reason, unlikely here does the actual job of
-	 * likely, and nets a performance gain on x64
-	 */
+	/* bytes variable is separated to improve optimizations */
 	#[allow(clippy::branches_sharing_code)]
-	Ok(if unlikely(available.len() >= N) {
-		/* bytes variable is separated to improve optimizations */
+	Ok(if available.len() >= N {
 		let mut bytes = [0u8; N];
 
 		/* this gets optimized to a single load instruction of size N, where N is a
@@ -189,17 +184,11 @@ macro_rules! impl_vint {
 
 macro_each!(impl_vint, u32, u64, u128);
 
-/// # Safety
-/// `size` <= N
 #[inline(always)]
-unsafe fn vint_from_bytes<T, const N: usize>(bytes: [u8; N], size: usize, le: bool) -> T
+fn vint_from_bytes<T, const N: usize>(bytes: [u8; N], size: usize, le: bool) -> T
 where
 	T: VInt<N>
 {
-	/* Safety: guaranteed by caller */
-	unsafe { assume(size <= N) };
-
-	/* just checked size <= N */
 	#[allow(clippy::cast_possible_truncation, clippy::arithmetic_side_effects)]
 	let shift = (N - size) as u32 * 8;
 
@@ -216,28 +205,6 @@ where
 	}
 }
 
-/// # Safety
-/// `size` <= N
-#[asynchronous]
-#[inline(always)]
-async unsafe fn read_vint_fast_unchecked<R, T, const N: usize>(
-	reader: &mut R, size: usize, le: bool
-) -> Result<Option<T>>
-where
-	R: BufRead + ?Sized,
-	T: VInt<N>
-{
-	/* Safety: guaranteed by caller */
-	unsafe { assume(size <= N) };
-
-	buf_load_bytes(reader, size).await.map(|c| {
-		c.map(|b| {
-			/* Safety: guaranteed by caller */
-			unsafe { vint_from_bytes(b, size, le) }
-		})
-	})
-}
-
 #[asynchronous]
 #[inline(always)]
 async fn read_vint_fast<R, T, const N: usize>(
@@ -251,11 +218,12 @@ where
 		if size == 0 {
 			Ok(Some(T::ZERO))
 		} else {
-			Err(ReadError::SizeError.as_err())
+			Err(ReadError::SizeError(size).into())
 		}
 	} else {
-		/* Safety: just checked that size <= N */
-		unsafe { read_vint_fast_unchecked(reader, size, le).await }
+		buf_load_bytes(reader, size)
+			.await
+			.map(|c| c.map(|b| vint_from_bytes(b, size, le)))
 	}
 }
 
@@ -269,41 +237,44 @@ where
 		return if size == 0 {
 			Ok(Some(T::ZERO))
 		} else {
-			Err(ReadError::SizeError.as_err())
+			Err(ReadError::SizeError(size).into())
 		};
 	}
 
 	let mut bytes = [0u8; N];
 
-	if unlikely(read_bytes(reader, &mut bytes[0..size]).await? == 0) {
-		return Ok(None);
-	}
-
-	/* Safety: we checked that size <= N */
-	Ok(Some(unsafe { vint_from_bytes(bytes, size, le) }))
+	Ok(if read_bytes(reader, &mut bytes[..size]).await? != 0 {
+		Some(vint_from_bytes(bytes, size, le))
+	} else {
+		None
+	})
 }
 
 macro_rules! read_vint_type {
 	($type:ty, $func:ident) => {
 		paste! {
+			#[inline(always)]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _le >](&mut self, size: usize) -> Result<Option<$type>> {
 				[< $func >](self, size, true).await
 			}
 
+			#[inline(always)]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _be >](&mut self, size: usize) -> Result<Option<$type>> {
 				[< $func >](self, size, false).await
 			}
 
+			#[inline(always)]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _le_or_err >](&mut self, size: usize) -> Result<$type> {
-				[< $func >](self, size, true).await?.ok_or_else(|| Core::UnexpectedEof.as_err())
+				[< $func >](self, size, true).await?.ok_or_else(|| Core::UnexpectedEof.into())
 			}
 
+			#[inline(always)]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _be_or_err >](&mut self, size: usize) -> Result<$type> {
-				[< $func >](self, size, false).await?.ok_or_else(|| Core::UnexpectedEof.as_err())
+				[< $func >](self, size, false).await?.ok_or_else(|| Core::UnexpectedEof.into())
 			}
 		}
 	};
@@ -319,6 +290,7 @@ macro_rules! read_vint_impl {
 
 macro_rules! read_vfloat_impl {
 	() => {
+		#[inline(always)]
 		#[asynchronous(traitext)]
 		async fn read_vfloat_le(&mut self, size: usize) -> Result<Option<f64>> {
 			if size == size_of::<f32>() {
@@ -326,10 +298,11 @@ macro_rules! read_vfloat_impl {
 			} else if size == size_of::<f64>() {
 				self.read_f64_le().await
 			} else {
-				Err(ReadError::SizeError.as_err())
+				Err(ReadError::SizeError(size).into())
 			}
 		}
 
+		#[inline(always)]
 		#[asynchronous(traitext)]
 		async fn read_vfloat_be(&mut self, size: usize) -> Result<Option<f64>> {
 			if size == size_of::<f32>() {
@@ -337,22 +310,24 @@ macro_rules! read_vfloat_impl {
 			} else if size == size_of::<f64>() {
 				self.read_f64_be().await
 			} else {
-				Err(ReadError::SizeError.as_err())
+				Err(ReadError::SizeError(size).into())
 			}
 		}
 
+		#[inline(always)]
 		#[asynchronous(traitext)]
 		async fn read_vfloat_le_or_err(&mut self, size: usize) -> Result<f64> {
 			self.read_vfloat_le(size)
 				.await?
-				.ok_or_else(|| Core::UnexpectedEof.as_err())
+				.ok_or_else(|| Core::UnexpectedEof.into())
 		}
 
+		#[inline(always)]
 		#[asynchronous(traitext)]
 		async fn read_vfloat_be_or_err(&mut self, size: usize) -> Result<f64> {
 			self.read_vfloat_be(size)
 				.await?
-				.ok_or_else(|| Core::UnexpectedEof.as_err())
+				.ok_or_else(|| Core::UnexpectedEof.into())
 		}
 	};
 }
@@ -361,11 +336,13 @@ macro_rules! read_num_type_endian {
 	($type: ty, $endian_type: ty, $endian: ident) => {
 		paste! {
 			#[asynchronous(traitext)]
+			#[inline(always)]
 			async fn [<read_ $endian_type>](&mut self) -> Result<Option<$type>> {
 				self.read_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>().await.map(|c| c.map(|t| t.0))
 			}
 
 			#[asynchronous(traitext)]
+			#[inline(always)]
 			async fn [<read_ $endian_type _or_err>](&mut self) -> Result<$type> {
 				self.[<read_ $endian_type>]().await?.ok_or_else(|| Core::UnexpectedEof.into())
 			}
@@ -402,7 +379,7 @@ macro_rules! read_num_impl {
 	};
 }
 
-pub trait ReadTyped: Read {
+pub trait ReadTyped: ReadSealed {
 	read_num_impl!(read_vint);
 
 	/// Read a type, returning None if EOF and no bytes were read
@@ -428,7 +405,7 @@ pub trait ReadTyped: Read {
 
 impl<T: Read> ReadTyped for T {}
 
-pub trait BufReadTyped: BufRead {
+pub trait BufReadTyped: BufReadSealed {
 	read_num_impl!(read_vint_fast);
 
 	/// Read a type, returning None if EOF and no bytes were read
@@ -463,19 +440,19 @@ struct FmtAdapter<'a, W: Write> {
 
 #[asynchronous]
 impl<'a, W: Write> FmtAdapter<'a, W> {
-	fn new(writer: &'a mut W, context: Ptr<Context>) -> FmtAdapter<'a, W> {
+	fn new(writer: &'a mut W, context: Ptr<Context>) -> Self {
 		Self { writer, context, wrote: 0, error: None }
 	}
 
 	/// # Safety
-	/// the context must be valid in the function call
+	/// the context must be valid for the function call
 	async unsafe fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
 		match fmt::write(self, args) {
 			Ok(()) => Ok(self.wrote),
 			Err(_) => Err(self
 				.error
 				.take()
-				.unwrap_or_else(|| Core::FormatterError.as_err()))
+				.unwrap_or_else(|| Core::FormatterError.into()))
 		}
 	}
 }
@@ -532,7 +509,7 @@ macro_rules! write_int {
 	};
 }
 
-pub trait WriteTyped: Write {
+pub trait WriteTyped: WriteSealed {
 	write_num_type_endian!(i8, i8, le);
 	write_num_type_endian!(u8, u8, le);
 	macro_each!(write_int, 16, 32, 64, 128);

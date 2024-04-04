@@ -7,8 +7,7 @@
 use std::{cell::Cell, mem::replace};
 
 use super::*;
-
-pub type PanickingResult<T> = std::thread::Result<T>;
+use crate::runtime::PanickingResult;
 
 /// # Safety
 /// the future must not be complete
@@ -56,9 +55,8 @@ impl<F: Future> FutureHandle<F> {
 
 	/// # Safety
 	/// See `Future::run`
-	/// The future must not have been started
-	/// Must call `FutureHandle::complete` when the future finishes, if it
-	/// doesn't complete immediately
+	/// Must not call twice
+	/// Must call `FutureHandle::complete` when the future finishes
 	/// Request arg must be set
 	unsafe fn run(&mut self) -> PanickingResult<Option<&mut F::Output>> {
 		let state = self.state.get_mut();
@@ -72,7 +70,7 @@ impl<F: Future> FutureHandle<F> {
 
 		let progress = catch_unwind(AssertUnwindSafe(|| {
 			/* Safety: guaranteed by caller */
-			unsafe { future.run(Ptr::from(&self.request)) }
+			unsafe { future.run(ptr!(&self.request)) }
 		}))?;
 
 		Ok(match progress {
@@ -89,9 +87,8 @@ impl<F: Future> FutureHandle<F> {
 		})
 	}
 
-	fn done(&self) -> bool {
-		/* Safety: exclusive unsafe cell access */
-		matches!(unsafe { self.state.as_ref() }, State::Done(_))
+	fn done(&mut self) -> bool {
+		matches!(self.state.get_mut(), State::Done(_))
 	}
 
 	/// # Safety
@@ -133,24 +130,30 @@ impl<F: Future> FutureHandle<F> {
 		}
 	}
 
-	fn take_cancel(&self) -> Option<F::Cancel> {
-		/* Safety: exclusive unsafe cell access */
-		let state = unsafe { self.state.as_mut() };
+	fn take_cancel(&mut self) -> Option<F::Cancel> {
+		let state = self.state.get_mut();
 
-		if matches!(state, State::Pending(_)) {
-			match replace(state, State::Empty) {
-				State::Pending(cancel) => Some(cancel),
+		if !matches!(state, State::Pending(_)) {
+			return None;
+		}
 
-				/* Safety: just checked */
-				_ => unsafe { unreachable_unchecked() }
-			}
-		} else {
-			None
+		match replace(state, State::Empty) {
+			State::Pending(cancel) => Some(cancel),
+
+			/* Safety: just checked */
+			_ => unsafe { unreachable_unchecked() }
 		}
 	}
 
-	fn try_cancel_catch_unwind(&self) -> Option<PanickingResult<Result<()>>> {
-		self.take_cancel().map(|cancel| {
+	/// # Safety
+	/// `this` must be a valid pointer
+	/// there must be no references to Self
+	/// `this` may become dangling after the function call
+	unsafe fn try_cancel_catch_unwind(this: MutPtr<Self>) -> Option<PanickingResult<Result<()>>> {
+		/* Safety: guaranteed by caller */
+		let cancel = unsafe { ptr!(this=>take_cancel()) };
+
+		cancel.map(|cancel| {
 			/* Safety: cancel is None if future isn't running */
 			unsafe { run_cancel(cancel) }
 		})
@@ -158,16 +161,18 @@ impl<F: Future> FutureHandle<F> {
 
 	/// # Safety
 	/// the future must be in progress
-	unsafe fn cancel_catch_unwind(&self) -> PanickingResult<Result<()>> {
-		match self.try_cancel_catch_unwind() {
+	/// See `try_cancel_catch_unwind`
+	unsafe fn cancel_catch_unwind(this: MutPtr<Self>) -> PanickingResult<Result<()>> {
+		/* Safety: guaranteed by caller */
+		match unsafe { Self::try_cancel_catch_unwind(this) } {
 			Some(result) => result,
 			/* Safety: guaranteed by caller */
 			None => unsafe { unreachable_unchecked!("`FutureHandle::cancel` called twice") }
 		}
 	}
 
-	fn set_arg<A>(&mut self, arg: Ptr<A>) {
-		self.request.set_arg(arg.as_unit());
+	fn set_arg(&mut self, arg: Ptr<()>) {
+		self.request.set_arg(arg);
 	}
 }
 
@@ -180,6 +185,7 @@ pub struct Branch<F1: Future, F2: Future, Cancel> {
 	sync_done: Cell<bool>
 }
 
+#[future]
 impl<
 		F1: Future,
 		F2: Future,
@@ -187,27 +193,33 @@ impl<
 		C2: Fn(PanickingResult<&F2::Output>) -> bool
 	> Branch<F1, F2, (C1, C2)>
 {
-	unsafe fn complete_single(&mut self, is_first: bool, should_cancel: bool) {
-		if self.sync_done.replace(false) {
+	unsafe fn complete_single(this: MutPtr<Self>, is_first: bool, should_cancel: bool) {
+		/* Safety: we have mutable access here */
+		let this = unsafe { this.as_mut() };
+
+		if this.sync_done.replace(false) {
 			return;
 		}
 
-		if self.handles.0.done() && self.handles.1.done() {
+		if this.handles.0.done() && this.handles.1.done() {
 			/* Safety: both futures finished */
 			let result = unsafe {
 				BranchOutput(
 					/* reverse order, because this is the last future to complete */
 					!is_first,
-					Some(self.handles.0.result()),
-					Some(self.handles.1.result())
+					Some(this.handles.0.result()),
+					Some(this.handles.1.result())
 				)
 			};
 
 			/*
 			 * Safety: complete the future. we must not access `self` once a cancel or a
 			 * complete is called, as we may be freed by the callee
+			 *
+			 * `this` is transitioned to a Disabled state after this call
+			 * which is okay, because it's not a protected tag
 			 */
-			unsafe { Request::complete(self.request, result) };
+			unsafe { Request::complete(this.request, result) };
 
 			return;
 		}
@@ -216,39 +228,45 @@ impl<
 			return;
 		}
 
-		/* Safety: if both aren't complete, then the other must be running */
+		/* Safety: if both aren't complete, then the other must be running
+		 *
+		 * `this` is transitioned to a Disabled state after this call
+		 * which is okay, because it's not a protected tag
+		 */
 		unsafe {
 			/* we can't do much if the cancel panics */
 			let _ = if is_first {
-				self.handles.1.cancel_catch_unwind()
+				FutureHandle::cancel_catch_unwind(ptr!(&mut this.handles.1))
 			} else {
-				self.handles.0.cancel_catch_unwind()
+				FutureHandle::cancel_catch_unwind(ptr!(&mut this.handles.0))
 			};
 		}
 	}
 
 	unsafe fn complete_first(_: ReqPtr<F1::Output>, arg: Ptr<()>, value: F1::Output) {
-		/* Safety: guaranteed by Future's contract */
-		let this = unsafe { arg.cast::<Self>().cast_mut().as_mut() };
-		let should_cancel = this.should_cancel.0(Ok(&value));
+		let this = arg.cast::<Self>().cast_mut();
 
 		/* Safety: the future has completed */
-		unsafe {
-			this.handles.0.complete(value);
-			this.complete_single(true, should_cancel);
-		}
+		let result = unsafe { ptr!(this=>handles.0.complete(value)) };
+
+		/* Safety: guaranteed by Future's contract */
+		let should_cancel = unsafe { ptr!(this=>should_cancel.0(Ok(result))) };
+
+		/* Safety: the future has completed */
+		unsafe { Self::complete_single(this, true, should_cancel) };
 	}
 
 	unsafe fn complete_second(_: ReqPtr<F2::Output>, arg: Ptr<()>, value: F2::Output) {
-		/* Safety: guaranteed by Future's contract */
-		let this = unsafe { arg.cast::<Self>().cast_mut().as_mut() };
-		let should_cancel = this.should_cancel.1(Ok(&value));
+		let this = arg.cast::<Self>().cast_mut();
 
 		/* Safety: the future has completed */
-		unsafe {
-			this.handles.1.complete(value);
-			this.complete_single(false, should_cancel);
-		}
+		let result = unsafe { ptr!(this=>handles.1.complete(value)) };
+
+		/* Safety: guaranteed by Future's contract */
+		let should_cancel = unsafe { ptr!(this=>should_cancel.1(Ok(result))) };
+
+		/* Safety: the future has completed */
+		unsafe { Self::complete_single(this, false, should_cancel) };
 	}
 
 	pub fn new(future_1: F1, future_2: F2, should_cancel: (C1, C2)) -> Self {
@@ -267,23 +285,44 @@ impl<
 		}
 	}
 
-	fn cancel_all(&self) -> Result<()> {
-		/* must prevent cancel 1 from calling cancel 2 in callback, as we need to
-		 * access it */
-		self.sync_done.set(true);
+	unsafe fn cancel_all(this: MutPtr<Self>) -> Result<()> {
+		let cancels = {
+			/* Safety: guaranteed by future's contract */
+			let this = unsafe { this.as_mut() };
 
-		/* cancel is None if one of the futures already completed. if both
+			/* it's insufficient to cancel directly
+			 * future 1: pending
+			 * future 2: done
+			 *
+			 * cancel future 1: completes synchronously, completes the branch
+			 * cancel future 2: use-after-free
+			 */
+			let cancels = (this.handles.0.take_cancel(), this.handles.1.take_cancel());
+
+			/* must prevent cancel 1 from trying to call cancel 2 in callback, which is a
+			 * None */
+			if cancels.0.is_some() && cancels.1.is_some() {
+				this.sync_done.set(true);
+			}
+
+			cancels
+		};
+
+		/* Safety: cancel is None if one of the futures already completed. if both
 		 * completed, we wouldn't be here because caller must uphold Future's
-		 * contract */
-		let cancel = [
-			self.handles.0.try_cancel_catch_unwind(),
-			self.handles.1.try_cancel_catch_unwind()
-		];
+		 * contract
+		 */
+		let cancel = unsafe {
+			[
+				cancels.0.map(|cancel| run_cancel(cancel)),
+				cancels.1.map(|cancel| run_cancel(cancel))
+			]
+		};
 
 		let mut result = Ok(());
 
 		for cancel in cancel {
-			let Some(cancel_result) = unwrap_panic!(cancel.transpose()) else {
+			let Some(cancel_result) = runtime::join(cancel.transpose()) else {
 				continue;
 			};
 
@@ -298,21 +337,25 @@ impl<
 	/// # Safety
 	/// see `Future::run`
 	/// self must be pinned
+	/// `this` must be a valid pointer
 	#[future]
-	pub unsafe fn run(&mut self) -> BranchOutput<F1::Output, F2::Output> {
+	pub unsafe fn run(this_ptr: MutPtr<Self>) -> BranchOutput<F1::Output, F2::Output> {
 		#[cancel]
-		fn cancel(self: Ptr<Self>) -> Result<()> {
+		fn cancel(self: MutPtr<Self>) -> Result<()> {
 			/* Safety: caller must uphold Future's contract */
-			unsafe { self.as_ref().cancel_all() }
+			unsafe { Self::cancel_all(self) }
 		}
 
-		self.request = request;
+		/* Safety: guaranteed by caller */
+		let this = unsafe { this_ptr.as_mut() };
+
+		this.request = request;
 
 		/* Safety: caller must uphold Future's contract */
-		if let Some(result) = unwrap_panic!(unsafe { self.handles.0.run() }) {
-			if self.should_cancel.0(Ok(result)) {
+		if let Some(result) = runtime::join(unsafe { this.handles.0.run() }) {
+			if this.should_cancel.0(Ok(result)) {
 				/* Safety: future completed */
-				let result = unsafe { self.handles.0.result() };
+				let result = unsafe { this.handles.0.result() };
 
 				return Progress::Done(BranchOutput(true, Some(result), None));
 			}
@@ -321,24 +364,24 @@ impl<
 		#[allow(clippy::never_loop)]
 		loop {
 			/* Safety: caller must uphold Future's contract */
-			let Some(result) = unsafe { self.handles.1.run() }.transpose() else {
+			let Some(result) = unsafe { this.handles.1.run() }.transpose() else {
 				break;
 			};
 
-			let done = self.handles.0.done();
+			let done = this.handles.0.done();
 
 			if done {
-				unwrap_panic!(result);
-			} else if self.should_cancel.1(result.map(|output| &*output)) {
-				self.sync_done.set(true);
+				runtime::join(result);
+			} else if this.should_cancel.1(result.map(|output| &*output)) {
+				this.sync_done.set(true);
 
-				/* Safety: let compiler know about our (possible) temporary reborrow */
-				unsafe { self.pin() };
+				/* Safety: reborrow may occur in cancel */
+				unsafe { this.pin() };
 
 				/* Safety: future is in progress */
-				let _ = unsafe { self.handles.0.cancel_catch_unwind() };
+				let _ = unsafe { FutureHandle::cancel_catch_unwind(ptr!(&mut this.handles.0)) };
 
-				if self.sync_done.replace(false) {
+				if this.sync_done.replace(false) {
 					break;
 				}
 			}
@@ -347,25 +390,24 @@ impl<
 			let result = unsafe {
 				BranchOutput(
 					done,
-					Some(self.handles.0.result()),
-					Some(self.handles.1.result())
+					Some(this.handles.0.result()),
+					Some(this.handles.1.result())
 				)
 			};
 
 			return Progress::Done(result);
 		}
 
-		/* we no longer have mutable access */
-		Progress::Pending(cancel(MutPtr::from(self).cast_const(), request))
+		Progress::Pending(cancel(this_ptr, request))
 	}
 }
 
 impl<F1: Future, F2: Future, Cancel> Pin for Branch<F1, F2, Cancel> {
 	unsafe fn pin(&mut self) {
-		let arg = MutPtr::from(&mut *self).cast_const();
+		let arg = ptr!(&*self);
 
-		self.handles.0.set_arg(arg);
-		self.handles.1.set_arg(arg);
+		self.handles.0.set_arg(arg.cast());
+		self.handles.1.set_arg(arg.cast());
 	}
 }
 
@@ -382,5 +424,5 @@ where
 	let mut branch = Branch::new(future_1, future_2, should_cancel);
 
 	/* Safety: branch is pinned. we are blocked until the future completes */
-	block_on(unsafe { branch.pin_local().run() }).await
+	block_on(unsafe { Branch::run(ptr!(&mut *branch.pin_local())) }).await
 }

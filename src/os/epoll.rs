@@ -77,20 +77,20 @@ define_struct! {
 pub struct EventPoll(OwnedFd);
 
 #[allow(clippy::module_name_repetitions)]
-pub fn epoll_create(_size: u32) -> Result<OwnedFd> {
+pub fn epoll_create(_size: u32) -> OsResult<OwnedFd> {
 	epoll_create1(BitFlags::default())
 }
 
 #[syscall_define(EpollCreate1)]
-pub fn epoll_create1(flags: BitFlags<CreateFlag>) -> Result<OwnedFd>;
+pub fn epoll_create1(flags: BitFlags<CreateFlag>) -> OsResult<OwnedFd>;
 
 #[syscall_define(EpollCtl)]
 pub fn epoll_ctl(
 	epfd: BorrowedFd<'_>, op: ControlOp, fd: BorrowedFd<'_>, event: &mut Event
-) -> Result<()>;
+) -> OsResult<()>;
 
 #[allow(clippy::module_name_repetitions)]
-pub fn epoll_wait(fd: BorrowedFd<'_>, events: &mut [Event], timeout: i32) -> Result<u32> {
+pub fn epoll_wait(fd: BorrowedFd<'_>, events: &mut [Event], timeout: i32) -> OsResult<u32> {
 	epoll_pwait(fd, events, timeout, None)
 }
 
@@ -98,24 +98,24 @@ pub fn epoll_wait(fd: BorrowedFd<'_>, events: &mut [Event], timeout: i32) -> Res
 pub fn epoll_pwait(
 	fd: BorrowedFd<'_>, #[array(len = i32)] events: &mut [Event], timeout: i32,
 	#[array] sigmask: SignalMask<'_>
-) -> Result<u32>;
+) -> OsResult<u32>;
 
 #[syscall_define(EpollPwait2)]
 pub fn epoll_pwait2(
 	fd: BorrowedFd<'_>, #[array(len = i32)] events: &mut [Event], timeout: &TimeSpec,
 	#[array] sigmask: SignalMask<'_>
-) -> Result<u32>;
+) -> OsResult<u32>;
 
 impl EventPoll {
-	pub fn create(flags: BitFlags<CreateFlag>) -> Result<Self> {
+	pub fn create(flags: BitFlags<CreateFlag>) -> OsResult<Self> {
 		epoll_create1(flags).map(Self)
 	}
 
-	pub fn ctl(&self, op: ControlOp, fd: BorrowedFd<'_>, event: &mut Event) -> Result<()> {
+	pub fn ctl(&self, op: ControlOp, fd: BorrowedFd<'_>, event: &mut Event) -> OsResult<()> {
 		epoll_ctl(self.0.as_fd(), op, fd, event)
 	}
 
-	pub fn wait(&self, events: &mut [Event], timeout: Duration) -> Result<u32> {
+	pub fn wait(&self, events: &mut [Event], timeout: Duration) -> OsResult<u32> {
 		let ts = TimeSpec::from_duration(timeout);
 
 		epoll_pwait2(self.0.as_fd(), events, &ts, None)

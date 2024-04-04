@@ -87,13 +87,13 @@ pub trait Write {
 	}
 }
 
-pub trait AsWriteRef: Write {
+pub trait AsWriteRef: WriteSealed {
 	fn as_ref(&mut self) -> WriteRef<'_, Self> {
 		WriteRef::new(self)
 	}
 }
 
-impl<T: Write> AsWriteRef for T {}
+impl<T: WriteSealed> AsWriteRef for T {}
 
 #[macro_export]
 macro_rules! write_wrapper {

@@ -1,26 +1,27 @@
-use std::rc::Rc;
+use std::{marker::PhantomData, rc::Rc};
 
 use super::*;
 use crate::{
 	container::zero_alloc::linked_list::*,
-	container_of,
 	coroutines::{block_on, is_interrupted},
 	error::*,
 	future::*,
+	macros::container_of,
 	pointer::*
 };
 
-struct Waiter {
+struct Waiter<T> {
 	node: Node,
-	request: ReqPtr<Result<()>>
+	request: ReqPtr<Result<T>>
 }
 
-pub struct Notify {
-	waiters: LinkedList
+pub struct Notify<T = ()> {
+	waiters: LinkedList,
+	phantom: PhantomData<T>
 }
 
 #[asynchronous]
-impl Notify {
+impl<T: Clone> Notify<T> {
 	/// # Safety
 	/// caller must
 	/// - pin this Notify
@@ -29,7 +30,7 @@ impl Notify {
 	/// only if waiters is empty
 	#[must_use]
 	pub const unsafe fn new_unpinned() -> Self {
-		Self { waiters: LinkedList::new() }
+		Self { waiters: LinkedList::new(), phantom: PhantomData }
 	}
 
 	#[must_use]
@@ -41,15 +42,15 @@ impl Notify {
 	/// # Safety
 	/// Waiter must be pinned, unlinked, and live as long as it is linked
 	#[future]
-	unsafe fn wait_notified(&self, waiter: &mut Waiter) -> Result<()> {
+	unsafe fn wait_notified(&self, waiter: &mut Waiter<T>) -> Result<T> {
 		#[cancel]
-		fn cancel(waiter: &Waiter) -> Result<()> {
+		fn cancel(waiter: &Waiter<T>) -> Result<()> {
 			/* Safety: we linked this node earlier */
 			unsafe { waiter.node.unlink_unchecked() };
 
-			/* Safety: inform the cancellation. waiter is unlinked, so there won't be
+			/* Safety: send the cancellation. waiter is unlinked, so there won't be
 			 * another completion */
-			unsafe { Request::complete(waiter.request, Err(Core::Interrupted.as_err())) };
+			unsafe { Request::complete(waiter.request, Err(Core::interrupted().into())) };
 
 			Ok(())
 		}
@@ -62,9 +63,9 @@ impl Notify {
 		Progress::Pending(cancel(waiter, request))
 	}
 
-	pub async fn notified(&self) -> Result<()> {
+	pub async fn notified(&self) -> Result<T> {
 		if is_interrupted().await {
-			return Err(Core::Interrupted.as_err());
+			return Err(Core::interrupted().into());
 		}
 
 		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
@@ -76,7 +77,7 @@ impl Notify {
 		}
 	}
 
-	pub fn notify(&self) {
+	pub fn notify(&self, value: T) {
 		let mut list = LinkedList::new();
 		let list = list.pin_local();
 
@@ -85,7 +86,7 @@ impl Notify {
 		unsafe { self.waiters.move_elements(&list) };
 
 		while let Some(node) = list.pop_front() {
-			let waiter = container_of!(node, Waiter:node);
+			let waiter = container_of!(node, Waiter<T>:node);
 
 			/* Safety: all nodes are wrapped in Waiter */
 			let request = unsafe { waiter.as_ref() }.request;
@@ -94,12 +95,12 @@ impl Notify {
 			 * Safety: complete the future
 			 * Note: this cannot panic
 			 */
-			unsafe { Request::complete(request, Ok(())) };
+			unsafe { Request::complete(request, Ok(value.clone())) };
 		}
 	}
 }
 
-impl Pin for Notify {
+impl<T> Pin for Notify<T> {
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
 		unsafe { self.waiters.pin() };

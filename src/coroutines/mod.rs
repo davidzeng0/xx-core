@@ -1,18 +1,19 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-pub use crate::macros::asynchronous;
+pub use crate::macros::{asynchronous, join, select};
 use crate::{
 	debug,
 	error::*,
 	fiber::*,
 	future::{self, closure::*, future, Cancel, Complete, Future, Progress, ReqPtr, Request},
-	macros::{abort, unreachable_unchecked, unwrap_panic},
+	impls::AsyncFnOnce,
+	macros::{panic_nounwind, unreachable_unchecked},
 	opt::hint::*,
 	pointer::*,
-	warn
+	runtime, warn
 };
 
-mod branch;
+pub mod branch;
 use branch::*;
 
 pub mod closure;
@@ -40,6 +41,18 @@ pub trait Task {
 	fn run(self, context: Ptr<Context>) -> Self::Output;
 }
 
+#[asynchronous]
+pub trait TaskExtensions: Task + Sized {
+	async fn map<F>(self, map: F) -> F::Output
+	where
+		F: AsyncFnOnce<Self::Output>
+	{
+		map.call_once(self.await).await
+	}
+}
+
+impl<T: Task> TaskExtensions for T {}
+
 /// Get a pointer to the current context
 ///
 /// Always returns a valid, dereferenceable pointer if the calling function is
@@ -59,7 +72,7 @@ where
 	T: Task
 {
 	/* Safety: guaranteed by caller */
-	unsafe { context.as_ref() }.run(task)
+	unsafe { ptr!(context=>run(task)) }
 }
 
 #[asynchronous]
@@ -67,16 +80,39 @@ pub async fn block_on<F>(future: F) -> F::Output
 where
 	F: Future
 {
-	/* Safety: we are in an async function */
-	let context = unsafe { get_context().await.as_ref() };
+	let context = get_context().await;
 
-	context.block_on(future)
+	/* Safety: we are in an async function */
+	unsafe { ptr!(context=>block_on(future)) }
+}
+
+#[asynchronous]
+pub async fn current_budget() -> u32 {
+	let context = get_context().await;
+
+	/* Safety: we are in an async function */
+	unsafe { ptr!(context=>current_budget() as u32) }
+}
+
+#[asynchronous]
+pub async fn acquire_budget(amount: Option<u32>) -> bool {
+	let amount: u16 = match amount.unwrap_or(1).try_into() {
+		Ok(ok) => ok,
+		Err(_) => return false
+	};
+
+	let context = get_context().await;
+
+	/* Safety: we are in an async function */
+	unsafe { ptr!(context=>decrease_budget(amount).is_some()) }
 }
 
 #[asynchronous]
 pub async fn is_interrupted() -> bool {
+	let context = get_context().await;
+
 	/* Safety: we are in an async function */
-	unsafe { get_context().await.as_ref() }.interrupted()
+	unsafe { ptr!(context=>interrupted()) }
 }
 
 #[asynchronous]
@@ -84,14 +120,16 @@ pub async fn check_interrupt() -> Result<()> {
 	if !is_interrupted().await {
 		Ok(())
 	} else {
-		Err(Core::Interrupted.as_err())
+		Err(Core::interrupted().into())
 	}
 }
 
 #[asynchronous]
 pub async fn clear_interrupt() {
+	let context = get_context().await;
+
 	/* Safety: we are in an async function */
-	unsafe { get_context().await.as_ref() }.clear_interrupt();
+	unsafe { ptr!(context=>clear_interrupt()) };
 }
 
 #[asynchronous]
@@ -110,7 +148,7 @@ pub async fn check_interrupt_take() -> Result<()> {
 	if !take_interrupt().await {
 		Ok(())
 	} else {
-		Err(Core::Interrupted.as_err())
+		Err(Core::interrupted().into())
 	}
 }
 

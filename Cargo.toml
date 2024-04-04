@@ -12,6 +12,8 @@ num-derive = "0.4.2"
 num-traits = "0.2.18"
 paste = "1.0.14"
 lazy_static = "1.4.0"
+anyhow = "1.0.81"
+thiserror = "1.0.58"
 xx-core-macros = { path = "macros" }
 
 [features]
@@ -19,6 +21,7 @@ default = ["log", "panic-log"]
 log = []
 panic-log = []
 tracing = []
+tracing-ext = ["tracing"]
 
 [lints.rust]
 elided_lifetimes_in_paths = "warn"

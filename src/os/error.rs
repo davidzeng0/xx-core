@@ -568,25 +568,28 @@ impl OsError {
 	}
 }
 
-pub fn result_from_libc(result: isize) -> Result<isize> {
+#[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
+pub fn result_from_libc(result: isize) -> OsResult<isize> {
 	if result >= 0 {
 		return Ok(result);
 	}
 
-	Err(io::Error::last_os_error().into())
+	let code = io::Error::last_os_error().raw_os_error().unwrap();
+
+	Err(OsError::from_raw(code))
 }
 
-pub fn result_from_int(result: isize) -> Result<isize> {
+pub fn result_from_int(result: isize) -> OsResult<isize> {
 	if result >= 0 {
 		return Ok(result);
 	}
 
 	#[allow(clippy::cast_possible_truncation, clippy::arithmetic_side_effects)]
-	Err(Error::from_raw_os_error(-result as i32))
+	Err(OsError::from_raw(-result as i32))
 }
 
 #[allow(clippy::cast_sign_loss)]
-pub fn result_from_ptr(result: isize) -> Result<usize> {
+pub fn result_from_ptr(result: isize) -> OsResult<usize> {
 	let err = -4096isize as usize;
 
 	if result as usize <= err {
@@ -594,5 +597,5 @@ pub fn result_from_ptr(result: isize) -> Result<usize> {
 	}
 
 	#[allow(clippy::cast_possible_truncation, clippy::arithmetic_side_effects)]
-	Err(Error::from_raw_os_error(-result as i32))
+	Err(OsError::from_raw(-result as i32))
 }

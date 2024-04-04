@@ -69,7 +69,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 					sig: &mut cancel.sig,
 					block: Some(&mut cancel.block)
 				},
-				&vec![(quote! { () }, quote! { () })],
+				&[(quote! { () }, quote! { () })],
 				quote! { ::xx_core::future::closure::CancelClosure },
 				|capture, ret| quote_spanned! { ret.span() => ::xx_core::future::closure::CancelClosure<#capture> },
 				LifetimeAnnotations::Closure
@@ -91,9 +91,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 
 				#[allow(unused_variables)]
 				#(#attrs)*
-				let #ident = | #inputs | #output {
-					#unsafety #block
-				};
+				let #ident = | #inputs | #output #unsafety #block;
 			};
 
 			break;
@@ -106,19 +104,18 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 
 	make_opaque_closure(
 		func,
-		&vec![(
+		&[(
 			quote! { request },
 			quote! { ::xx_core::future::ReqPtr<#return_type> }
 		)],
 		|_| quote_spanned! { return_type.span() => ::xx_core::future::Progress<#return_type, #cancel_closure_type> },
-		OpaqueClosureType::Custom(|ret: TokenStream| {
+		OpaqueClosureType::Custom(|ret: TokenStream, _| {
 			(
 				quote_spanned! { ret.span() => ::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type> },
 				quote! { ::xx_core::future::closure::FutureClosure }
 			)
 		}),
-		false,
-		true
+		false
 	)?;
 
 	Ok(())

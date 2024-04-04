@@ -156,18 +156,15 @@ impl TryFrom<AddressStorage> for Address {
 		match AddressFamily::from_u16(value.common.family) {
 			Some(AddressFamily::INet) => {
 				/* Safety: reinterpret is safe */
-				Ok(Self::V4(*unsafe { Ptr::from(&value).cast().as_ref() }))
+				Ok(Self::V4(unsafe { ptr!(*ptr!(&value).cast()) }))
 			}
 
 			Some(AddressFamily::INet6) => {
 				/* Safety: reinterpret is safe */
-				Ok(Self::V6(*unsafe { Ptr::from(&value).cast().as_ref() }))
+				Ok(Self::V6(unsafe { ptr!(*ptr!(&value).cast()) }))
 			}
 
-			_ => Err(Error::simple(
-				ErrorKind::NotFound,
-				Some("Unknown address family")
-			))
+			_ => Err(fmt_error!("Unknown address family"))
 		}
 	}
 }

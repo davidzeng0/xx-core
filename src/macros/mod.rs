@@ -1,11 +1,11 @@
-pub use xx_core_macros::{
-	asynchronous, compact_error, duration, future, syscall_define, syscall_impl, wrapper_functions
-};
+pub use xx_core_macros::*;
 
 mod pointer;
+mod runtime;
+mod traits;
 pub use pointer::*;
-mod branch;
-pub use branch::*;
+pub use runtime::*;
+pub use traits::*;
 
 #[macro_export]
 macro_rules! macro_each {
@@ -43,3 +43,16 @@ macro_rules! import_sysdeps {
 }
 
 pub use import_sysdeps;
+
+#[macro_export]
+macro_rules! require_unsafe {
+	() => {
+		({
+			const unsafe fn require_unsafe() {}
+
+			require_unsafe();
+		})
+	};
+}
+
+pub use require_unsafe;

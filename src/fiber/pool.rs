@@ -35,7 +35,7 @@ impl Pool {
 
 			data.active = match data.active.checked_add(1) {
 				Some(active) => active,
-				None => abort!("Fatal error: fiber count overflow")
+				None => panic_nounwind!("Fatal error: fiber count overflow")
 			};
 
 			data.pool.pop()
@@ -78,7 +78,7 @@ impl Pool {
 
 		data.active = match data.active.checked_sub(1) {
 			Some(active) => active,
-			None => abort!("Fatal error: fiber count overflow")
+			None => panic_nounwind!("Fatal error: fiber count overflow")
 		};
 
 		let ideal = Self::calculate_ideal(data.active);

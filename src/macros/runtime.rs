@@ -1,11 +1,11 @@
 #[macro_export]
-macro_rules! abort {
+macro_rules! panic_nounwind {
 	($($arg: tt)*) => {
 		$crate::runtime::panic_nounwind(::std::format_args!($($arg)*))
 	}
 }
 
-pub use abort;
+pub use panic_nounwind;
 
 #[macro_export]
 macro_rules! unreachable_unchecked {
@@ -24,15 +24,3 @@ macro_rules! unreachable_unchecked {
 }
 
 pub use unreachable_unchecked;
-
-#[macro_export]
-macro_rules! unwrap_panic {
-	($result:expr) => {
-		match $result {
-			Ok(ok) => ok,
-			Err(err) => ::std::panic::resume_unwind(err)
-		}
-	};
-}
-
-pub use unwrap_panic;

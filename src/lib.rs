@@ -18,3 +18,4 @@ extern crate self as xx_core;
 
 pub extern crate enumflags2;
 pub extern crate num_traits;
+pub extern crate paste;

@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 use std::{
 	cell,
 	cmp::Ordering,
@@ -7,17 +9,46 @@ use std::{
 	rc::Rc
 };
 
-use crate::macros::wrapper_functions;
+pub use crate::macros::ptr;
+use crate::macros::{seal_trait, wrapper_functions};
 
 #[repr(transparent)]
-pub struct Pointer<T: ?Sized, const MUTABLE: bool> {
+pub struct Pointer<T: ?Sized, const MUT: bool> {
 	ptr: *mut T
 }
 
 pub type Ptr<T> = Pointer<T, false>;
 pub type MutPtr<T> = Pointer<T, true>;
 
-impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
+pub mod internal {
+	use super::*;
+
+	pub trait AsPointer {
+		type Target;
+
+		fn as_pointer(&self) -> Self::Target;
+	}
+
+	pub trait PointerOffset {
+		fn offset<T, const MUT: bool>(self, pointer: Pointer<T, MUT>) -> Pointer<T, MUT>;
+	}
+
+	impl PointerOffset for usize {
+		fn offset<T, const MUT: bool>(self, mut pointer: Pointer<T, MUT>) -> Pointer<T, MUT> {
+			pointer.ptr = pointer.ptr.wrapping_add(self);
+			pointer
+		}
+	}
+
+	impl PointerOffset for isize {
+		fn offset<T, const MUT: bool>(self, mut pointer: Pointer<T, MUT>) -> Pointer<T, MUT> {
+			pointer.ptr = pointer.ptr.wrapping_offset(self);
+			pointer
+		}
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> Pointer<T, MUT> {
 	wrapper_functions! {
 		inner = self.ptr;
 
@@ -30,13 +61,8 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 	}
 
 	#[must_use]
-	pub const fn cast<T2>(self) -> Pointer<T2, MUTABLE> {
+	pub const fn cast<T2>(self) -> Pointer<T2, MUT> {
 		Pointer { ptr: self.ptr.cast::<()>().cast() }
-	}
-
-	#[must_use]
-	pub const fn as_unit(self) -> Pointer<(), MUTABLE> {
-		self.cast()
 	}
 
 	#[must_use]
@@ -53,11 +79,12 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 	}
 
 	#[must_use]
-	pub const fn offset(self, offset: isize) -> Self
+	#[allow(clippy::impl_trait_in_params)]
+	pub fn offset(self, offset: impl internal::PointerOffset) -> Self
 	where
 		T: Sized
 	{
-		Self { ptr: self.ptr.wrapping_offset(offset) }
+		offset.offset(self)
 	}
 
 	#[must_use]
@@ -78,29 +105,7 @@ impl<T: ?Sized, const MUTABLE: bool> Pointer<T, MUTABLE> {
 	}
 }
 
-impl<T: Sized, const MUTABLE: bool> Add<usize> for Pointer<T, MUTABLE> {
-	type Output = Self;
-
-	fn add(self, count: usize) -> Self {
-		Self { ptr: self.ptr.wrapping_add(count) }
-	}
-}
-
-impl<T: Sized, const MUTABLE: bool> Sub<usize> for Pointer<T, MUTABLE> {
-	type Output = Self;
-
-	fn sub(self, count: usize) -> Self {
-		Self { ptr: self.ptr.wrapping_sub(count) }
-	}
-}
-
-impl<T: Sized, const MUTABLE: bool> Default for Pointer<T, MUTABLE> {
-	fn default() -> Self {
-		Self::null()
-	}
-}
-
-impl<T, const MUTABLE: bool> Pointer<T, MUTABLE> {
+impl<T, const MUT: bool> Pointer<T, MUT> {
 	wrapper_functions! {
 		inner = self.ptr;
 
@@ -112,6 +117,14 @@ impl<T: ?Sized> Ptr<T> {
 	#[must_use]
 	pub const fn cast_mut(self) -> MutPtr<T> {
 		MutPtr { ptr: self.ptr }
+	}
+}
+
+impl<T: ?Sized> internal::AsPointer for Ptr<T> {
+	type Target = *const T;
+
+	fn as_pointer(&self) -> *const T {
+		self.ptr
 	}
 }
 
@@ -141,6 +154,14 @@ impl<T: ?Sized> MutPtr<T> {
 	}
 }
 
+impl<T: ?Sized> internal::AsPointer for MutPtr<T> {
+	type Target = *mut T;
+
+	fn as_pointer(&self) -> *mut T {
+		self.ptr
+	}
+}
+
 impl<T> MutPtr<T> {
 	wrapper_functions! {
 		inner = self.ptr;
@@ -151,19 +172,13 @@ impl<T> MutPtr<T> {
 }
 
 /* derive Clone requires that T: Clone */
-impl<T: ?Sized, const MUTABLE: bool> Clone for Pointer<T, MUTABLE> {
+impl<T: ?Sized, const MUT: bool> Clone for Pointer<T, MUT> {
 	fn clone(&self) -> Self {
 		*self
 	}
 }
 
-impl<T: ?Sized, const MUTABLE: bool> Copy for Pointer<T, MUTABLE> {}
-
-impl<T: ?Sized> From<MutPtr<T>> for Ptr<T> {
-	fn from(value: MutPtr<T>) -> Self {
-		Self { ptr: value.ptr }
-	}
-}
+impl<T: ?Sized, const MUT: bool> Copy for Pointer<T, MUT> {}
 
 impl<T: ?Sized> From<*mut T> for MutPtr<T> {
 	fn from(ptr: *mut T) -> Self {
@@ -190,33 +205,56 @@ impl<T: ?Sized> From<&T> for Ptr<T> {
 	}
 }
 
-impl<T: ?Sized, const MUTABLE: bool> PartialEq for Pointer<T, MUTABLE> {
+impl<T: ?Sized, const MUT: bool> PartialEq for Pointer<T, MUT> {
 	fn eq(&self, other: &Self) -> bool {
 		std::ptr::eq(self.ptr, other.ptr)
 	}
 }
 
-impl<T: ?Sized, const MUTABLE: bool> Eq for Pointer<T, MUTABLE> {}
+impl<T: ?Sized, const MUT: bool> Eq for Pointer<T, MUT> {}
 
-impl<T: ?Sized, const MUTABLE: bool> PartialOrd for Pointer<T, MUTABLE> {
+impl<T: ?Sized, const MUT: bool> PartialOrd for Pointer<T, MUT> {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
 		Some(self.cmp(other))
 	}
 }
 
-impl<T: ?Sized, const MUTABLE: bool> Ord for Pointer<T, MUTABLE> {
+impl<T: ?Sized, const MUT: bool> Ord for Pointer<T, MUT> {
+	#[allow(ambiguous_wide_pointer_comparisons)]
 	fn cmp(&self, other: &Self) -> Ordering {
 		self.ptr.cmp(&other.ptr)
 	}
 }
 
-impl<T: ?Sized, const MUTABLE: bool> Debug for Pointer<T, MUTABLE> {
+impl<T: Sized, const MUT: bool> Add<usize> for Pointer<T, MUT> {
+	type Output = Self;
+
+	fn add(self, count: usize) -> Self {
+		Self { ptr: self.ptr.wrapping_add(count) }
+	}
+}
+
+impl<T: Sized, const MUT: bool> Sub<usize> for Pointer<T, MUT> {
+	type Output = Self;
+
+	fn sub(self, count: usize) -> Self {
+		Self { ptr: self.ptr.wrapping_sub(count) }
+	}
+}
+
+impl<T: Sized, const MUT: bool> Default for Pointer<T, MUT> {
+	fn default() -> Self {
+		Self::null()
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> Debug for Pointer<T, MUT> {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
 		Debug::fmt(&self.ptr, fmt)
 	}
 }
 
-impl<T: ?Sized, const MUTABLE: bool> fmt::Pointer for Pointer<T, MUTABLE> {
+impl<T: ?Sized, const MUT: bool> fmt::Pointer for Pointer<T, MUT> {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
 		fmt::Pointer::fmt(&self.ptr, fmt)
 	}
@@ -271,7 +309,9 @@ impl<T: Clone> Clone for Pinned<Box<T>> {
 	}
 }
 
-pub trait PinExt: Pin {
+seal_trait!(Pin);
+
+pub trait PinExt: PinSealed {
 	fn pin_local(&mut self) -> Pinned<&mut Self> {
 		let mut pinned = Pinned::new(self);
 
@@ -308,7 +348,7 @@ pub trait PinExt: Pin {
 	}
 }
 
-impl<T: Pin> PinExt for T {}
+impl<T: PinSealed> PinExt for T {}
 
 #[repr(transparent)]
 pub struct UnsafeCell<T> {
@@ -351,5 +391,13 @@ impl<T: Pin> Pin for UnsafeCell<T> {
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
 		unsafe { self.get_mut().pin() };
+	}
+}
+
+impl<T> internal::AsPointer for UnsafeCell<T> {
+	type Target = *mut T;
+
+	fn as_pointer(&self) -> *mut T {
+		self.get().as_pointer()
 	}
 }

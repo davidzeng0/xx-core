@@ -1,7 +1,8 @@
 .global xx_core_fiber_arm64_start
 xx_core_fiber_arm64_start:
-	ldp x30, x0, [sp, #-0x10]
-	br x30
+	mov x30, xzr
+	ldp x1, x0, [sp, #-0x10]
+	br x1
 
 .global xx_core_fiber_arm64_intercept
 xx_core_fiber_arm64_intercept:
