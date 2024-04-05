@@ -15,7 +15,7 @@ pub fn error(_: TokenStream, item: TokenStream) -> TokenStream {
 		)]
 	});
 
-	input.attrs.push(parse_quote!{
+	input.attrs.push(parse_quote! {
 		#[allow(missing_copy_implementations)]
 	});
 

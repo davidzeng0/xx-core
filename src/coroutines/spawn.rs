@@ -363,10 +363,10 @@ impl<Output> JoinHandle<Output> {
 	}
 }
 
+#[asynchronous(task)]
 impl<Output> Task for JoinHandle<Output> {
 	type Output = Output;
 
-	#[asynchronous(task)]
 	async fn run(self) -> Output {
 		let result = self.try_join().await;
 

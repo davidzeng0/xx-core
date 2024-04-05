@@ -8,8 +8,14 @@ mod traits;
 use traits::*;
 
 fn transform_block(block: &mut Block) {
+	let index = block
+		.stmts
+		.iter()
+		.position(|stmt| !matches!(stmt, Stmt::Item(_)))
+		.unwrap_or(block.stmts.len());
+
 	block.stmts.insert(
-		0,
+		index,
 		parse_quote! {
 			let __xx_internal_async_context = unsafe {
 				::xx_core::pointer::Ptr::<
