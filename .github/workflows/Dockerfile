@@ -5,6 +5,7 @@ RUN apt update && \
 	apt clean
 
 RUN cargo install cargo-valgrind cargo-llvm-cov
+RUN rustup toolchain install nightly
 
 WORKDIR /base
 ENTRYPOINT [ "/bin/bash", "-c" ]
