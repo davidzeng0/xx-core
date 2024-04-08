@@ -52,7 +52,7 @@ impl<O1, O2> Select<O1, O2> {
 	pub unsafe fn from_branch(branch: BranchOutput<O1, O2>) -> Self {
 		let BranchOutput(is_first, a, b) = branch;
 
-		match (is_first, a, b) {
+		match (is_first, a.map(runtime::join), b.map(runtime::join)) {
 			(true, Some(a), b) => Self::First(a, b),
 			(false, a, Some(b)) => Self::Second(b, a),
 			/* Safety: at least one task must be completed */
@@ -67,7 +67,8 @@ where
 	F1: Future,
 	F2: Future
 {
-	let result = branch(future_1, future_2, (|_| true, |_| true)).await;
+	/* Safety: should_cancel does not panic */
+	let result = unsafe { branch(future_1, future_2, (|_| true, |_| true)).await };
 
 	/* Safety: this is a select */
 	unsafe { Select::from_branch(result) }

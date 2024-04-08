@@ -1,7 +1,7 @@
 use super::*;
 
 define_context! {
-	pub(super) struct Context {
+	pub struct Context {
 		x19: usize,
 		x29: usize,
 		stack: usize,
@@ -52,7 +52,7 @@ impl Context {
 	}
 }
 
-pub(super) unsafe fn switch(from: MutPtr<Context>, to: MutPtr<Context>) {
+pub unsafe fn switch(from: MutPtr<Context>, to: MutPtr<Context>) {
 	/* Safety: guaranteed by caller */
 	unsafe {
 		asm!(

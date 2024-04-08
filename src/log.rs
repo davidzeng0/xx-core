@@ -1,11 +1,11 @@
 use std::{
 	any::type_name,
-	backtrace::{Backtrace, BacktraceStatus},
+	backtrace::*,
 	fmt::{self, Arguments},
-	io::{stderr, BufWriter, Cursor, Result, Stderr, Write},
-	panic::{set_hook, Location, PanicInfo},
+	io::*,
+	panic::*,
 	str::from_utf8,
-	sync::{Mutex, MutexGuard}
+	sync::*
 };
 
 use ctor::ctor;

@@ -23,9 +23,9 @@ pub use macro_each;
 #[macro_export]
 macro_rules! import_sysdeps {
 	() => {
-		#[cfg(target_arch = "aarch64")]
+		#[cfg(any(target_arch = "aarch64", doc))]
 		mod arm64;
-		#[cfg(target_arch = "x86_64")]
+		#[cfg(any(target_arch = "x86_64", doc))]
 		mod x64;
 
 		mod platform {
@@ -46,13 +46,11 @@ pub use import_sysdeps;
 
 #[macro_export]
 macro_rules! require_unsafe {
-	() => {
-		({
-			const unsafe fn require_unsafe() {}
+	() => {{
+		const unsafe fn require_unsafe() {}
 
-			require_unsafe();
-		})
-	};
+		require_unsafe();
+	}};
 }
 
 pub use require_unsafe;

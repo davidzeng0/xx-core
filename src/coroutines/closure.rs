@@ -1,36 +1,28 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::*;
-use crate::{closure, macros::macro_each};
+use crate::closure;
 
-pub type OpaqueClosure<F, Output, const INLINE: u32> =
-	closure::OpaqueClosure<F, Ptr<Context>, Output, INLINE>;
+pub type OpaqueClosure<F, Output> = closure::OpaqueClosure<F, Ptr<Context>, Output>;
 
-macro_rules! impl_closure {
-	($inline:ident) => {
-		impl<F, Output> Task for OpaqueClosure<F, Output, { closure::$inline }>
-		where
-			F: FnOnce(Ptr<Context>) -> Output
-		{
-			type Output = Output;
+impl<F: FnOnce(Ptr<Context>) -> Output, Output> Task for OpaqueClosure<F, Output> {
+	type Output = Output;
 
-			#[inline(always)]
-			fn run(self, context: Ptr<Context>) -> Output {
-				self.call(context)
-			}
-		}
-	};
+	#[asynchronous(task)]
+	#[inline(always)]
+	async fn run(self) -> Output {
+		self.call(get_context().await)
+	}
 }
-
-macro_each!(impl_closure, INLINE_NEVER, INLINE_DEFAULT, INLINE_ALWAYS);
 
 pub type Closure<Capture, Output> = closure::Closure<Capture, Ptr<Context>, Output>;
 
 impl<Capture, Output> Task for Closure<Capture, Output> {
 	type Output = Output;
 
+	#[asynchronous(task)]
 	#[inline(always)]
-	fn run(self, context: Ptr<Context>) -> Output {
-		self.call(context)
+	async fn run(self) -> Output {
+		self.call(get_context().await)
 	}
 }

@@ -2,11 +2,16 @@
 
 use super::*;
 
+/// The async equivalent of [`std::io::Write`]
+///
+/// This trait is object safe
 #[asynchronous]
 pub trait Write {
-	/// Write from `buf`, returning the amount of bytes read
+	/// Write from `buf`, returning the amount of bytes wrote
 	///
-	/// Returning zero strictly means EOF, unless the buffer's size was zero
+	/// Returns zero if `buf` is empty, or if the stream reached EOF
+	///
+	/// See also [`std::io::Write::write`]
 	async fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
 	/// Flush (if any) buffered data
@@ -18,6 +23,8 @@ pub trait Write {
 	/// EOF
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
+	///
+	/// See also [`std::io::Write::write_all`]
 	async fn write_all(&mut self, buf: &[u8]) -> Result<usize> {
 		/* see Read::read_exact */
 		write_from!(buf);
@@ -39,7 +46,10 @@ pub trait Write {
 		check_interrupt_if_zero(wrote).await
 	}
 
-	/// Same as above, except partial writes are treated as an error
+	/// Same as [`Write::write_all`], except it returns an [`UnexpectedEof`] on
+	/// partial writes
+	///
+	/// [`UnexpectedEof`]: Core::UnexpectedEof
 	async fn write_exact(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
@@ -54,10 +64,17 @@ pub trait Write {
 		Ok(wrote)
 	}
 
+	/// Returns `true` if this `Write` implementation has an efficient
+	/// [`Write::write_vectored`] implementation
+	///
+	/// See also [`std::io::Write::is_write_vectored`]
 	fn is_write_vectored(&self) -> bool {
 		false
 	}
 
+	/// Like [`Write::write`], except that it writes from a slice of buffers
+	///
+	/// See also [`std::io::Read::read_vectored`]
 	async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
 		match bufs.iter().find(|b| !b.is_empty()) {
 			Some(buf) => self.write(&buf[..]).await,
@@ -86,14 +103,6 @@ pub trait Write {
 		Ok(total)
 	}
 }
-
-pub trait AsWriteRef: WriteSealed {
-	fn as_ref(&mut self) -> WriteRef<'_, Self> {
-		WriteRef::new(self)
-	}
-}
-
-impl<T: WriteSealed> AsWriteRef for T {}
 
 #[macro_export]
 macro_rules! write_wrapper {
@@ -127,20 +136,3 @@ macro_rules! write_wrapper {
 }
 
 pub use write_wrapper;
-
-pub struct WriteRef<'a, W: Write + ?Sized> {
-	writer: &'a mut W
-}
-
-impl<'a, W: Write + ?Sized> WriteRef<'a, W> {
-	pub fn new(writer: &'a mut W) -> Self {
-		Self { writer }
-	}
-}
-
-impl<W: Write + ?Sized> Write for WriteRef<'_, W> {
-	write_wrapper! {
-		inner = writer;
-		mut inner = writer;
-	}
-}

@@ -1,6 +1,6 @@
 use std::io::SeekFrom;
 
-use xx_core::coroutines::{get_context, with_context};
+use xx_core::coroutines::{get_context, scoped};
 
 use super::*;
 use crate::async_tests::util::read::*;
@@ -20,7 +20,7 @@ pub async fn test_buf_reader() -> Result<()> {
 
 	macro_rules! wait {
 		($expr:expr) => {
-			unsafe { with_context(context, $expr) }
+			unsafe { scoped(context, $expr) }
 		};
 	}
 

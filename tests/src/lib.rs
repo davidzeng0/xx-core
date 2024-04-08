@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 mod async_tests;
 mod fiber;
 mod impls;

@@ -150,11 +150,11 @@ fn branch(env: &Expr, tasks: &[&Expr], mode: Mode<'_>) -> TokenStream {
 						if let Some(
 							BranchOutput(_, other0, other1)
 						) = other {
-							let other = other0;
+							let other = other0.map(runtime::join);
 
 							#second_a
 
-							let other = other1;
+							let other = other1.map(runtime::join);
 
 							#second_b
 						}

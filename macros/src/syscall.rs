@@ -124,6 +124,37 @@ pub fn syscall_impl(item: TokenStream) -> TokenStream {
 	syscall_impl.expand()
 }
 
+struct ArrayOptions {
+	len: Option<Expr>
+}
+
+fn parse_options(meta: &Meta) -> Result<ArrayOptions> {
+	let mut options = ArrayOptions { len: None };
+
+	let Meta::List(list) = meta else {
+		return Ok(options);
+	};
+
+	let metas = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(list.tokens.clone())?;
+
+	for meta in metas {
+		let Meta::NameValue(nv) = meta else {
+			return Err(Error::new_spanned(
+				meta,
+				"Expected a `option` = `value` arg"
+			));
+		};
+
+		if nv.path.get_ident().is_some_and(|ident| ident != "len") {
+			return Err(Error::new_spanned(nv.path, "Unknown option"));
+		}
+
+		options.len = Some(nv.value);
+	}
+
+	Ok(options)
+}
+
 #[allow(clippy::type_complexity)]
 fn get_raw_args(
 	args: &mut Punctuated<FnArg, Token![,]>
@@ -136,7 +167,7 @@ fn get_raw_args(
 
 	for arg in args {
 		let FnArg::Typed(ty) = arg else {
-			return Err(Error::new_spanned(arg, "Receiver not allowed here"));
+			return Err(Error::new_spanned(arg, "Receiver is not allowed here"));
 		};
 
 		let array = remove_attr_kind(&mut ty.attrs, "array", |meta| {
@@ -148,13 +179,11 @@ fn get_raw_args(
 		let Some(array) = array else {
 			let (pat, ty) = (&pat_ty.pat, &pat_ty.ty);
 
-			pat_ty.ty = parse_quote_spanned! {
-				ty.span() =>
+			pat_ty.ty = parse_quote_spanned! { ty.span() =>
 				<#ty as ::xx_core::os::syscall::IntoRaw>::Raw
 			};
 
-			into_raw.push(parse_quote_spanned! {
-				pat.span() =>
+			into_raw.push(parse_quote_spanned! { pat.span() =>
 				::xx_core::os::syscall::IntoRaw::into_raw(#pat)
 			});
 
@@ -167,31 +196,11 @@ fn get_raw_args(
 			return Err(Error::new_spanned(pat_ty.pat, "Pattern not allowed here"));
 		};
 
-		let mut length_type = None;
-		let mut into_length_type = None;
-
-		if let Meta::List(list) = array.meta {
-			let metas = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(list.tokens)?;
-
-			for meta in metas {
-				let Meta::NameValue(nv) = meta else {
-					return Err(Error::new_spanned(
-						meta,
-						"Expected a `option` = `value` arg"
-					));
-				};
-
-				if nv.path.get_ident().is_some_and(|ident| ident != "len") {
-					return Err(Error::new_spanned(nv.path, "Unknown option"));
-				}
-
-				into_length_type = Some(quote_spanned! {
-					nv.value.span() => .try_into().unwrap()
-				});
-
-				length_type = Some(nv.value);
-			}
-		}
+		let options = parse_options(&array.meta)?;
+		let length_type = options.len;
+		let into_length_type = length_type.as_ref().map(|len| {
+			quote_spanned! { len.span() => .try_into().unwrap() }
+		});
 
 		vars.push(parse_quote_spanned! { pat_ident.span() =>
 			let #pat_ident = ::xx_core::os::syscall::IntoRawArray::into_raw_array(#pat_ident);

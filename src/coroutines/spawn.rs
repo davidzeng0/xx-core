@@ -3,10 +3,11 @@
 use std::{cell::Cell, mem::replace, rc::Rc};
 
 use super::*;
-use crate::{runtime::PanickingResult, trace, warn};
+use crate::{runtime::MaybePanic, trace, warn};
 
 #[allow(clippy::module_name_repetitions)]
-pub type SpawnResult<T> = PanickingResult<T>;
+pub type SpawnResult<T> = MaybePanic<T>;
+
 enum SpawnData<E, T: Task> {
 	Uninit,
 	Start(E, T, Worker, ReqPtr<SpawnResult<T::Output>>),
@@ -61,7 +62,6 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 	) -> SpawnResult<Option<T::Output>> {
 		let environment = catch_unwind(AssertUnwindSafe(|| entry(worker))).map_err(|err| {
 			warn!(
-				/* Safety: logging */
 				target: worker,
 				"== Failed to start worker: panicked when trying to create a new context"
 			);
@@ -69,8 +69,9 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 			err
 		})?;
 
-		let context = environment.context();
+		let context = call_non_panicking(|| environment.context());
 		let is_async = Cell::new(false);
+		let data = SpawnData::Pending(ptr!(context), ptr!(&is_async));
 
 		/* pass back a pointer to is_async. the caller will tell us
 		 * if we've suspended from this function
@@ -81,9 +82,7 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 		 *
 		 * Safety: we have mutable access here
 		 */
-		unsafe {
-			ptr!(this=>data = SpawnData::Pending(ptr!(context), ptr!(&is_async)));
-		}
+		unsafe { ptr!(this=>data = data) };
 
 		let result = catch_unwind(AssertUnwindSafe(|| context.run(task)));
 
@@ -191,7 +190,7 @@ where
 	}
 
 	/* Safety: runtime is valid and executor is valid */
-	let executor = unsafe { ptr!(runtime=>executor()) };
+	let executor = call_non_panicking(|| unsafe { ptr!(runtime=>executor()) });
 
 	/* Safety: worker is exited when complete */
 	let entry = |worker| unsafe { ptr!(runtime=>clone(worker)) };
@@ -308,18 +307,25 @@ impl<Output> JoinHandle<Output> {
 		unsafe { self.task.handle.as_mut() }
 	}
 
+	/// # Safety
+	/// future must be in progress
+	unsafe fn try_cancel(&self) -> Result<()> {
+		/* Safety: guaranteed by caller */
+		unsafe { self.handle().try_cancel() }.unwrap_or(Ok(()))
+	}
+
 	#[future]
 	fn join(self) -> SpawnResult<Output> {
 		#[cancel]
-		fn cancel(this: Self) -> Result<()> {
-			/* Safety: exclusive unsafe cell access. we may already be cancelling */
-			unsafe { this.handle().try_cancel() }.unwrap_or(Ok(()))
+		fn cancel(self) -> Result<()> {
+			/* Safety: guaranteed by Future's contract. we may already be cancelling */
+			unsafe { self.try_cancel() }
 		}
 
 		/* Safety: exclusive unsafe cell access */
 		unsafe { self.handle().waiter = request };
 
-		/* we could make JoinTask return Progress::Done instead of checking below,
+		/* we could make JoinHandle return Progress::Done instead of checking below,
 		 * but we want to avoid calling future::block_on if possible
 		 */
 		Progress::Pending(cancel(self, request))
@@ -337,7 +343,7 @@ impl<Output> JoinHandle<Output> {
 			Ok(())
 		} else {
 			/* Safety: task is running */
-			unsafe { self.handle().try_cancel() }.unwrap_or(Ok(()))
+			unsafe { self.try_cancel() }
 		}
 	}
 

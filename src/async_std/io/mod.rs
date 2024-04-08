@@ -1,3 +1,6 @@
+#![warn(unsafe_code)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::{
 	io::{IoSlice, IoSliceMut, SeekFrom},
 	mem::{take, transmute},
@@ -22,15 +25,13 @@ pub mod split;
 pub mod typed;
 pub mod write;
 
-pub use buf_reader::*;
-pub use buf_writer::*;
-pub use read::*;
-pub use seek::*;
-pub use split::*;
-pub use write::*;
+#[doc(inline)]
+pub use {buf_reader::*, buf_writer::*, read::*, seek::*, split::*, write::*};
 
+/// The default buffer size (16 KiB) for buffered I/O
 pub const DEFAULT_BUFFER_SIZE: usize = 0x4000;
 
+/// Checks if the slice is valid UTF-8, otherwise returns an `Err`
 pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	match from_utf8(buf) {
 		Ok(_) => Ok(()),
@@ -38,6 +39,7 @@ pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	}
 }
 
+/// If `len` is zero, checks if the current async task is interrupted
 #[asynchronous]
 pub async fn check_interrupt_if_zero(len: usize) -> Result<usize> {
 	if unlikely(len == 0) {
@@ -47,8 +49,12 @@ pub async fn check_interrupt_if_zero(len: usize) -> Result<usize> {
 	Ok(len)
 }
 
+/// Advances a slice of slices
+///
+/// See also [`std::io::IoSlice::advance_slices`]
+///
 /// # Panics
-/// if `amount` is greater than the length of the buffers combined
+/// If `amount` is greater than the length of the buffers combined
 pub fn advance_slices(bufs: &mut &mut [IoSlice<'_>], mut amount: usize) {
 	let mut remove = 0;
 
@@ -61,9 +67,10 @@ pub fn advance_slices(bufs: &mut &mut [IoSlice<'_>], mut amount: usize) {
 		} else {
 			let left = &buf[amount..];
 
+			#[allow(unsafe_code)]
 			/* Safety: this mimics the IoSliceMut::advance function, no lifetimes are
 			 * violated here */
-			*buf = IoSlice::new(unsafe { transmute(left) });
+			(*buf = IoSlice::new(unsafe { transmute(left) }));
 			amount = 0;
 
 			break;
@@ -75,8 +82,12 @@ pub fn advance_slices(bufs: &mut &mut [IoSlice<'_>], mut amount: usize) {
 	assert_eq!(amount, 0);
 }
 
+/// Advances a slice of slices
+///
+/// See also [`std::io::IoSlice::advance_slices`]
+///
 /// # Panics
-/// if `amount` is greater than the length of the buffers combined
+/// If `amount` is greater than the length of the buffers combined
 pub fn advance_slices_mut(bufs: &mut &mut [IoSliceMut<'_>], mut amount: usize) {
 	let mut remove = 0;
 
@@ -89,9 +100,10 @@ pub fn advance_slices_mut(bufs: &mut &mut [IoSliceMut<'_>], mut amount: usize) {
 		} else {
 			let left = &mut buf[amount..];
 
+			#[allow(unsafe_code)]
 			/* Safety: this mimics the IoSliceMut::advance function, no lifetimes are
 			 * violated here */
-			*buf = IoSliceMut::new(unsafe { transmute(left) });
+			(*buf = IoSliceMut::new(unsafe { transmute(left) }));
 			amount = 0;
 
 			break;
@@ -103,6 +115,10 @@ pub fn advance_slices_mut(bufs: &mut &mut [IoSliceMut<'_>], mut amount: usize) {
 	assert_eq!(amount, 0);
 }
 
+/// Checks that `len` <= `buf.len()`
+///
+/// Returns `len`
+///
 /// # Panics
 /// if `len` > `buf.len()`
 #[allow(clippy::must_use_candidate)]
@@ -112,6 +128,9 @@ pub fn length_check(buf: &[u8], len: usize) -> usize {
 	len
 }
 
+/// Returns [`UnexpectedEof`] unless the current task is interrupted
+///
+/// [`UnexpectedEof`]: Core::UnexpectedEof
 #[asynchronous]
 pub async fn short_io_error_unless_interrupt() -> Error {
 	check_interrupt()
@@ -121,6 +140,7 @@ pub async fn short_io_error_unless_interrupt() -> Error {
 }
 
 #[macro_export]
+/// Utility macro for returning early if `buf` is empty
 macro_rules! read_into {
 	($buf:ident) => {
 		if $crate::opt::hint::unlikely($buf.is_empty()) {
@@ -143,6 +163,7 @@ macro_rules! read_into {
 pub use read_into;
 
 #[macro_export]
+/// Utility macro for returning early if `buf` is empty
 macro_rules! write_from {
 	($buf:ident) => {
 		if $crate::opt::hint::unlikely($buf.is_empty()) {

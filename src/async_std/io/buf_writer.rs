@@ -1,9 +1,9 @@
 use super::*;
 use crate::impls::UIntExtensions;
 
+/// The async equivalent of [`std::io::BufWriter`]
 pub struct BufWriter<W> {
-	inner: W,
-
+	writer: W,
 	buf: Vec<u8>,
 	pos: usize
 }
@@ -22,6 +22,9 @@ impl<W: Write> BufWriter<W> {
 
 		self.buf.extend_from_slice(buf);
 
+		#[cfg(feature = "tracing")]
+		crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), buf.len());
+
 		buf.len()
 	}
 
@@ -30,7 +33,7 @@ impl<W: Write> BufWriter<W> {
 	async fn flush_buf(&mut self) -> Result<()> {
 		while self.pos < self.buf.len() {
 			let buf = &self.buf[self.pos..];
-			let wrote = self.inner.write(buf).await?;
+			let wrote = self.writer.write(buf).await?;
 
 			if unlikely(wrote == 0) {
 				return Err(Core::WriteZero.into());
@@ -48,29 +51,39 @@ impl<W: Write> BufWriter<W> {
 		Ok(())
 	}
 
+	/// Creates a new `BufWriter<W>` with a [`DEFAULT_BUFFER_SIZE`]
 	pub fn new(inner: W) -> Self {
 		Self::with_capacity(inner, DEFAULT_BUFFER_SIZE)
 	}
 
+	/// Creates a new `BufWriter<W>` with the specified buffer capacity
 	pub fn with_capacity(inner: W, capacity: usize) -> Self {
 		Self::from_parts(inner, Vec::with_capacity(capacity), 0)
 	}
 
+	/// Creates a new `BufWriter<W>` from parts
+	///
 	/// # Panics
-	/// if `pos` > `buf.len()`
-	pub fn from_parts(inner: W, buf: Vec<u8>, pos: usize) -> Self {
+	/// If `pos` > `buf.len()`
+	pub fn from_parts(writer: W, buf: Vec<u8>, pos: usize) -> Self {
 		assert!(pos <= buf.len());
 
-		Self { inner, buf, pos }
+		Self { writer, buf, pos }
 	}
 
-	/// Calling `into_inner` without flushing will lead to data loss
+	/// Unwraps this `BufWriter<W>`, returning the underlying writer
+	///
+	/// Any leftover data in the internal buffer is lost
 	pub fn into_inner(self) -> W {
-		self.inner
+		self.writer
 	}
 
+	/// Unwraps this `BufWriter<W>`, returning its parts
+	///
+	/// The `Vec<u8>` contains the buffered data,
+	/// and the `usize` is the position to start flushing
 	pub fn into_parts(self) -> (W, Vec<u8>, usize) {
-		(self.inner, self.buf, self.pos)
+		(self.writer, self.buf, self.pos)
 	}
 }
 
@@ -78,31 +91,22 @@ impl<W: Write> BufWriter<W> {
 impl<W: Write> Write for BufWriter<W> {
 	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		if self.buf.spare_capacity_mut().len() >= buf.len() {
-			let wrote = self.write_buffered(buf);
-
-			#[cfg(feature = "tracing")]
-			crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
-
-			return Ok(wrote);
+			return Ok(self.write_buffered(buf));
 		}
 
 		self.flush_buf().await?;
 
-		if buf.len() >= self.buf.capacity() {
-			let wrote = self.inner.write(buf).await?;
+		Ok(if buf.len() >= self.buf.capacity() {
+			let wrote = self.writer.write(buf).await?;
 
 			#[cfg(feature = "tracing")]
 			crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Direct({})", buf.len(), wrote);
 
-			Ok(wrote)
+			#[allow(clippy::let_and_return)]
+			wrote
 		} else {
-			let wrote = self.write_buffered(buf);
-
-			#[cfg(feature = "tracing")]
-			crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), wrote);
-
-			Ok(wrote)
-		}
+			self.write_buffered(buf)
+		})
 	}
 
 	/// Flush buffer to stream
@@ -111,7 +115,7 @@ impl<W: Write> Write for BufWriter<W> {
 	/// to finish flushing
 	async fn flush(&mut self) -> Result<()> {
 		self.flush_buf().await?;
-		self.inner.flush().await
+		self.writer.flush().await
 	}
 }
 
@@ -142,7 +146,7 @@ impl<W: Write + Seek> BufWriter<W> {
 	async fn seek_inner(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.flush_buf().await?;
 
-		let pos = self.inner.seek(seek).await;
+		let pos = self.writer.seek(seek).await;
 
 		#[cfg(feature = "tracing")]
 		crate::trace!(target: &*self, "## seek_inner(seek = {:?}) = {:?}", seek, pos);
@@ -165,27 +169,30 @@ impl<W: Write + Seek> BufWriter<W> {
 #[asynchronous]
 impl<W: Write + Seek> Seek for BufWriter<W> {
 	fn stream_len_fast(&self) -> bool {
-		self.inner.stream_len_fast()
+		self.writer.stream_len_fast()
 	}
 
 	async fn stream_len(&mut self) -> Result<u64> {
-		self.inner.stream_len().await
+		self.writer.stream_len().await
 	}
 
 	fn stream_position_fast(&self) -> bool {
-		self.inner.stream_position_fast()
+		self.writer.stream_position_fast()
 	}
 
+	/// # Panics
+	/// If there was an overflow calculating the stream position
 	async fn stream_position(&mut self) -> Result<u64> {
-		let pos = self.inner.stream_position().await?;
+		let pos = self.writer.stream_position().await?;
 		let buffered = self.buf.len();
 
-		#[allow(clippy::expect_used)]
 		Ok(pos
 			.checked_add(buffered as u64)
 			.expect("Overflow occurred calculating stream position"))
 	}
 
+	/// # Panics
+	/// If there was an overflow calculating the new position
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		match seek {
 			SeekFrom::Current(pos) => self.seek_relative(pos).await,
@@ -199,7 +206,6 @@ impl<W: Write + Seek> Seek for BufWriter<W> {
 
 			SeekFrom::End(pos) => {
 				if self.stream_len_fast() && self.stream_position_fast() {
-					#[allow(clippy::expect_used)]
 					let new_pos = self
 						.stream_len()
 						.await?

@@ -351,12 +351,15 @@ pub trait PinExt: PinSealed {
 impl<T: PinSealed> PinExt for T {}
 
 #[repr(transparent)]
-pub struct UnsafeCell<T> {
+pub struct UnsafeCell<T: ?Sized> {
 	data: cell::UnsafeCell<T>
 }
 
-impl<T> UnsafeCell<T> {
-	pub const fn new(data: T) -> Self {
+impl<T: ?Sized> UnsafeCell<T> {
+	pub const fn new(data: T) -> Self
+	where
+		T: Sized
+	{
 		Self { data: cell::UnsafeCell::new(data) }
 	}
 
@@ -382,19 +385,22 @@ impl<T> UnsafeCell<T> {
 		unsafe { self.get().as_mut() }
 	}
 
-	pub fn into_inner(self) -> T {
+	pub fn into_inner(self) -> T
+	where
+		T: Sized
+	{
 		self.data.into_inner()
 	}
 }
 
-impl<T: Pin> Pin for UnsafeCell<T> {
+impl<T: Pin + ?Sized> Pin for UnsafeCell<T> {
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
 		unsafe { self.get_mut().pin() };
 	}
 }
 
-impl<T> internal::AsPointer for UnsafeCell<T> {
+impl<T: ?Sized> internal::AsPointer for UnsafeCell<T> {
 	type Target = *mut T;
 
 	fn as_pointer(&self) -> *mut T {

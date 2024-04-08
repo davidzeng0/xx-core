@@ -3,7 +3,7 @@
 use std::cell::Cell;
 
 use super::*;
-use crate::opt::hint::assume;
+use crate::{macros::assert_unsafe_precondition, opt::hint::assume};
 
 pub struct Node {
 	prev: Cell<Ptr<Self>>,
@@ -55,7 +55,7 @@ impl Node {
 
 	pub fn linked(&self) -> bool {
 		/*
-		 * Safety: if we are linked, both must be non-null or null
+		 * Safety: if we are linked, both must be non-null, or both must be null
 		 * May help with optimizations
 		 */
 		unsafe { assume(self.prev.get().is_null() == self.next.get().is_null()) };
@@ -66,6 +66,8 @@ impl Node {
 	/// # Safety
 	/// This node must be valid and linked
 	pub unsafe fn unlink_unchecked(&self) {
+		assert_unsafe_precondition!(self.linked());
+
 		let (prev, next) = (
 			self.prev.replace(Ptr::null()),
 			self.next.replace(Ptr::null())
@@ -115,7 +117,9 @@ impl LinkedList {
 
 		/*
 		 * Safety: the node is in our list
-		 * Calling head().unlink() should optimize away the linked check
+		 *
+		 * calling head().unlink() should optimize away the linked check,
+		 * also aborts in debug if the condition isn't satisfied
 		 */
 		unsafe { assume(ptr!(head=>linked())) };
 
@@ -127,7 +131,9 @@ impl LinkedList {
 
 		/*
 		 * Safety: the node is in our list
-		 * Calling tail().unlink() should optimize away the linked check
+		 *
+		 * calling tail().unlink() should optimize away the linked check
+		 * also aborts in debug if the condition isn't satisfied
 		 */
 		unsafe { assume(ptr!(tail=>linked())) };
 
@@ -176,7 +182,7 @@ impl LinkedList {
 	/// This list must be pinned, Node must be pinned and linked to this list
 	pub unsafe fn remove(&self, node: &Node) {
 		/* Safety: guaranteed by caller */
-		unsafe { node.unlink() };
+		unsafe { node.unlink_unchecked() };
 	}
 
 	/// # Safety
@@ -185,6 +191,8 @@ impl LinkedList {
 		if self.empty() {
 			return;
 		}
+
+		assert_unsafe_precondition!(other.empty());
 
 		let (prev, next) = (self.base.prev.get(), self.base.next.get());
 

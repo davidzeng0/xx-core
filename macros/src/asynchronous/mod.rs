@@ -13,17 +13,15 @@ fn transform_block(block: &mut Block) {
 		.iter()
 		.position(|stmt| !matches!(stmt, Stmt::Item(_)))
 		.unwrap_or(block.stmts.len());
+	let stmt = parse_quote! {
+		let __xx_internal_async_context = unsafe {
+			::xx_core::pointer::Ptr::<
+				::xx_core::coroutines::Context
+			>::as_ref(__xx_internal_async_context)
+		};
+	};
 
-	block.stmts.insert(
-		index,
-		parse_quote! {
-			let __xx_internal_async_context = unsafe {
-				::xx_core::pointer::Ptr::<
-					::xx_core::coroutines::Context
-				>::as_ref(__xx_internal_async_context)
-			};
-		}
-	);
+	block.stmts.insert(index, stmt);
 }
 
 fn tuple_args(args: &mut Punctuated<Pat, Token![,]>) {
@@ -38,7 +36,9 @@ fn tuple_args(args: &mut Punctuated<Pat, Token![,]>) {
 
 			_ => {
 				pats.push(input.clone());
-				tys.push(parse_quote! { _ });
+				tys.push(Type::Infer(TypeInfer {
+					underscore_token: Default::default()
+				}));
 			}
 		}
 	}
@@ -57,11 +57,9 @@ impl TransformAsync {
 		let (attrs, capture, mut block) = (&inner.attrs, &inner.capture, inner.block.clone());
 
 		transform_block(&mut block);
-
 		parse_quote_spanned! { inner.span() =>
 			#(#attrs)*
 			::xx_core::coroutines::closure::OpaqueClosure
-				::<_, _, { ::xx_core::closure::INLINE_DEFAULT }>
 				::new(
 				#capture
 				|__xx_internal_async_context: ::xx_core::pointer::Ptr<
@@ -95,7 +93,7 @@ impl TransformAsync {
 			if asyncness.is_some() {
 				match body {
 					Expr::Block(blk) => block = blk.clone(),
-					_ => block = parse_quote! {{ #[allow(unused_braces)] #body }}
+					_ => block = parse_quote! {{ #body }}
 				}
 
 				break;
@@ -114,12 +112,6 @@ impl TransformAsync {
 			return Expr::Closure(closure.clone());
 		}
 
-		self.visit_expr_block_mut(&mut block);
-
-		transform_block(&mut block.block);
-
-		*body = Expr::Block(block);
-
 		tuple_args(&mut closure.inputs);
 
 		closure.inputs.push(Pat::Type(parse_quote! {
@@ -127,6 +119,12 @@ impl TransformAsync {
 				::xx_core::coroutines::Context
 			>
 		}));
+
+		transform_block(&mut block.block);
+
+		*body = Expr::Block(block);
+
+		self.visit_expr_mut(body);
 
 		parse_quote_spanned! { closure.span() =>
 			::xx_core::impls::internal::OpaqueAsyncFn(#closure)
@@ -162,21 +160,36 @@ enum Lang {
 	GetContext
 }
 
-fn get_lang(attrs: &mut Vec<Attribute>) -> Result<Option<Lang>> {
+fn get_lang(attrs: &mut Vec<Attribute>) -> Result<Option<(Lang, Span)>> {
 	let mut lang = None;
 
-	if let Some(value) = remove_attr_name_value(attrs, "lang") {
-		let Expr::Lit(ExprLit { lit: Lit::Str(str), .. }) = value else {
-			return Err(Error::new_spanned(value, "Expected a str"));
+	if let Some(attr) = remove_attr_name_value(attrs, "lang") {
+		let Expr::Lit(ExprLit { lit: Lit::Str(str), .. }) = &attr.value else {
+			return Err(Error::new_spanned(attr.value, "Expected a str"));
 		};
 
-		match str.value().as_ref() {
-			"get_context" => lang = Some(Lang::GetContext),
-			_ => return Err(Error::new_spanned(str, "Unknown lang"))
-		}
+		lang = Some((
+			match str.value().as_ref() {
+				"get_context" => Lang::GetContext,
+				_ => return Err(Error::new_spanned(str, "Unknown lang item"))
+			},
+			attr.span()
+		));
 	}
 
 	Ok(lang)
+}
+
+fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> {
+	let mut removed = Vec::new();
+
+	for target in targets {
+		while let Some(attr) = remove_attr_kind(attrs, target, |_| true) {
+			removed.push(attr);
+		}
+	}
+
+	removed
 }
 
 fn transform_async(func: &mut Function<'_>, closure_type: ClosureType) -> Result<()> {
@@ -184,12 +197,13 @@ fn transform_async(func: &mut Function<'_>, closure_type: ClosureType) -> Result
 		return if !func.is_root {
 			Ok(())
 		} else {
-			Err(Error::new_spanned(
-				func.sig.fn_token,
-				"The `async` keyword is missing from the function declaration"
-			))
+			let message = "The `async` keyword is missing from the function declaration";
+
+			Err(Error::new_spanned(func.sig.fn_token, message))
 		};
 	}
+
+	let attrs = remove_attrs(func.attrs, &["inline", "must_use"]);
 
 	if closure_type != ClosureType::None {
 		func.attrs
@@ -203,7 +217,7 @@ fn transform_async(func: &mut Function<'_>, closure_type: ClosureType) -> Result
 			TransformAsync {}.visit_block_mut(block);
 		}
 
-		(Some(lang), block) => {
+		(Some((lang, span)), block) => {
 			let Some(block) = block else {
 				return Err(Error::new_spanned(&func.sig, "An empty block is required"));
 			};
@@ -211,6 +225,11 @@ fn transform_async(func: &mut Function<'_>, closure_type: ClosureType) -> Result
 			if !block.stmts.is_empty() {
 				return Err(Error::new_spanned(block, "This block must be empty"));
 			}
+
+			block.stmts.push(parse_quote_spanned! { span =>
+				#[allow(unused_imports)]
+				use ::xx_core::coroutines::lang;
+			});
 
 			block.stmts.push(Stmt::Expr(
 				match lang {
@@ -225,13 +244,13 @@ fn transform_async(func: &mut Function<'_>, closure_type: ClosureType) -> Result
 
 	let context_ident = quote! { __xx_internal_async_context };
 	let context_type = quote! { ::xx_core::pointer::Ptr<::xx_core::coroutines::Context> };
-	let args = [(context_ident.clone(), context_type.clone())];
+	let args = [(context_ident, context_type)];
 
 	match closure_type {
 		ClosureType::None => {
-			func.sig
-				.inputs
-				.push(parse_quote! { #context_ident: #context_type });
+			let (ident, ty) = &args[0];
+
+			func.sig.inputs.push(parse_quote! { #ident: #ty });
 		}
 
 		ClosureType::Opaque | ClosureType::OpaqueTrait => {
@@ -239,10 +258,10 @@ fn transform_async(func: &mut Function<'_>, closure_type: ClosureType) -> Result
 				func,
 				&args,
 				|rt| rt,
-				OpaqueClosureType::Custom(|rt: TokenStream, inlining: Inlining| {
+				OpaqueClosureType::Custom(|rt: TokenStream| {
 					(
 						quote_spanned! { rt.span() => ::xx_core::coroutines::Task<Output = #rt> },
-						quote! { ::xx_core::coroutines::closure::OpaqueClosure::<_, _, { #inlining }> }
+						quote! { __xx_internal_async_support::Wrap }
 					)
 				}),
 				closure_type == ClosureType::OpaqueTrait
@@ -260,6 +279,36 @@ fn transform_async(func: &mut Function<'_>, closure_type: ClosureType) -> Result
 				LifetimeAnnotations::Auto
 			)?;
 		}
+	}
+
+	if let Some(block) = &mut func.block {
+		block.stmts.insert(
+			0,
+			parse_quote! {
+				mod __xx_internal_async_support {
+					use std::marker::PhantomData;
+					use xx_core::{coroutines::*, pointer::*};
+
+					pub struct Wrap<F, Args, Output>(F, PhantomData<(Args, Output)>);
+
+					impl<F: FnOnce(Args) -> Output, Args, Output> Wrap<F, Args, Output> {
+						#[inline(always)]
+						pub const fn new(func: F) -> Self {
+							Self(func, PhantomData)
+						}
+					}
+
+					impl<F: FnOnce(Ptr<Context>) -> Output, Output> Task for Wrap<F, Ptr<Context>, Output> {
+						type Output = Output;
+
+						#(#attrs)*
+						fn run(self, context: Ptr<Context>) -> Output {
+							self.0(context)
+						}
+					}
+				}
+			}
+		);
 	}
 
 	Ok(())
@@ -285,6 +334,16 @@ impl AsyncKind {
 			Self::Task => ClosureType::None
 		}
 	}
+
+	fn from_str(str: &str) -> Option<Self> {
+		Some(match str {
+			"explicit" => Self::Explicit,
+			"traitfn" => Self::TraitFn,
+			"traitext" => Self::TraitExt,
+			"task" => Self::Task,
+			_ => return None
+		})
+	}
 }
 
 fn parse_attrs(attrs: TokenStream) -> Result<AsyncKind> {
@@ -293,19 +352,13 @@ fn parse_attrs(attrs: TokenStream) -> Result<AsyncKind> {
 
 	for option in &options {
 		if kind != AsyncKind::Default {
-			return Err(Error::new_spanned(
-				options,
-				"Invalid combination of options"
-			));
+			let message = "Invalid combination of options";
+
+			return Err(Error::new_spanned(options, message));
 		}
 
-		kind = match option.to_string().as_ref() {
-			"explicit" => AsyncKind::Explicit,
-			"traitfn" => AsyncKind::TraitFn,
-			"traitext" => AsyncKind::TraitExt,
-			"task" => AsyncKind::Task,
-			_ => return Err(Error::new_spanned(option, "Unknown option"))
-		};
+		kind = AsyncKind::from_str(&option.to_string())
+			.ok_or_else(|| Error::new_spanned(option, "Unknown option"))?;
 	}
 
 	Ok(kind)
@@ -316,17 +369,19 @@ fn try_transform(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
 	let item = parse2::<Functions>(item)?;
 
 	let transform_functions = |ty: ClosureType| {
-		transform_functions(
-			item.clone(),
+		item.clone().transform_all(
 			|func| transform_async(func, ty),
-			|item| !matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
+			|item| {
+				ty == ClosureType::None ||
+					!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
+			}
 		)
 	};
 
 	match async_kind {
 		AsyncKind::Default => (),
 		AsyncKind::TraitFn => return async_impl(item),
-		_ => return transform_functions(async_kind.closure_type())
+		kind => return transform_functions(kind.closure_type())
 	}
 
 	match &item {

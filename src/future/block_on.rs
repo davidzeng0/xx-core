@@ -1,7 +1,7 @@
 use std::mem::replace;
 
 use super::*;
-use crate::macros::unreachable_unchecked;
+use crate::{macros::unreachable_unchecked, runtime::call_non_panicking};
 
 enum BlockState<Resume, Output> {
 	Pending(Resume),
@@ -21,7 +21,7 @@ where
 		unsafe { unreachable_unchecked!("Double complete detected") };
 	};
 
-	resume();
+	call_non_panicking(resume);
 }
 
 /// Block on a future

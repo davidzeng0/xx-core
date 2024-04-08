@@ -88,9 +88,9 @@ impl WrapperFunctions {
 				.receiver()
 				.is_some_and(|rec| rec.mutability.is_some())
 			{
-				self.inner_mut.to_token_stream()
+				&self.inner_mut
 			} else {
-				self.inner.to_token_stream()
+				&self.inner
 			};
 
 			call.push(quote_spanned! { function.sig.span() => (#inner) });

@@ -8,12 +8,49 @@ pub struct Function<'a> {
 	pub block: Option<&'a mut Block>
 }
 
+impl<'a> Function<'a> {
+	pub fn from_item_fn(
+		is_root: bool, env_generics: Option<&'a Generics>, func: &'a mut ImplItemFn
+	) -> Self {
+		Self {
+			is_root,
+			attrs: &mut func.attrs,
+			env_generics,
+			sig: &mut func.sig,
+			block: Some(&mut func.block)
+		}
+	}
+
+	pub fn from_trait_fn(
+		is_root: bool, env_generics: Option<&'a Generics>, func: &'a mut TraitItemFn
+	) -> Self {
+		Self {
+			is_root,
+			attrs: &mut func.attrs,
+			env_generics,
+			sig: &mut func.sig,
+			block: func.default.as_mut()
+		}
+	}
+}
+
 #[derive(Clone)]
 pub enum Functions {
 	Fn(ImplItemFn),
 	TraitFn(TraitItemFn),
 	Trait(ItemTrait),
 	Impl(ItemImpl)
+}
+
+impl ToTokens for Functions {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		match self {
+			Self::Fn(func) => func.to_tokens(tokens),
+			Self::TraitFn(func) => func.to_tokens(tokens),
+			Self::Impl(item) => item.to_tokens(tokens),
+			Self::Trait(item) => item.to_tokens(tokens)
+		}
+	}
 }
 
 impl Parse for Functions {
@@ -50,82 +87,117 @@ impl Parse for Functions {
 	}
 }
 
-pub fn transform_functions(
-	item: Functions, callback: impl Fn(&mut Function<'_>) -> Result<()>,
-	allowed: impl FnOnce(&Functions) -> bool
-) -> Result<TokenStream> {
-	if !allowed(&item) {
-		let tokens = match &item {
-			Functions::Fn(func) => func.to_token_stream(),
-			Functions::TraitFn(func) => func.to_token_stream(),
-			Functions::Impl(item) => item.to_token_stream(),
-			Functions::Trait(item) => item.to_token_stream()
-		};
+pub fn create_doc_item_fn(func: &ImplItemFn) -> ImplItemFn {
+	let mut func = func.clone();
 
-		return Err(Error::new_spanned(tokens, "Unexpected declaration"));
+	func.attrs = vec![parse_quote! { #[cfg(doc)] }];
+	func.block.stmts.clear();
+	func
+}
+
+pub fn create_doc_trait_fn(func: &TraitItemFn) -> TraitItemFn {
+	let mut func = func.clone();
+
+	func.attrs = vec![parse_quote! { #[cfg(doc)] }];
+
+	if let Some(block) = func.default.as_mut() {
+		block.stmts.clear();
 	}
 
-	Ok(match item {
-		Functions::Fn(mut func) => {
-			callback(&mut Function {
-				is_root: true,
-				attrs: &mut func.attrs,
-				env_generics: None,
-				sig: &mut func.sig,
-				block: Some(&mut func.block)
-			})?;
+	func
+}
 
-			func.to_token_stream()
+impl Functions {
+	pub fn transform_all(
+		self, callback: impl Fn(&mut Function<'_>) -> Result<()>,
+		allowed: impl FnOnce(&Self) -> bool
+	) -> Result<TokenStream> {
+		if !allowed(&self) {
+			return Err(Error::new_spanned(self, "Unexpected declaration"));
 		}
 
-		Functions::TraitFn(mut func) => {
-			callback(&mut Function {
-				is_root: true,
-				attrs: &mut func.attrs,
-				env_generics: None,
-				sig: &mut func.sig,
-				block: func.default.as_mut()
-			})?;
+		Ok(match self {
+			Self::Fn(mut func) => {
+				let mut original = create_doc_item_fn(&func);
 
-			func.to_token_stream()
-		}
+				callback(&mut Function::from_item_fn(true, None, &mut func))?;
 
-		Functions::Impl(mut item) => {
-			for impl_item in &mut item.items {
-				let ImplItem::Fn(func) = impl_item else {
-					continue;
-				};
+				original.attrs.extend_from_slice(&func.attrs);
 
-				callback(&mut Function {
-					is_root: false,
-					attrs: &mut func.attrs,
-					env_generics: Some(&item.generics),
-					sig: &mut func.sig,
-					block: Some(&mut func.block)
-				})?;
+				quote! {
+					#original
+
+					#[cfg(not(doc))]
+					#func
+				}
 			}
 
-			item.to_token_stream()
-		}
+			Self::TraitFn(mut func) => {
+				let mut original = create_doc_trait_fn(&func);
 
-		Functions::Trait(mut item) => {
-			for trait_item in &mut item.items {
-				let TraitItem::Fn(func) = trait_item else {
-					continue;
-				};
+				callback(&mut Function::from_trait_fn(true, None, &mut func))?;
 
-				callback(&mut Function {
-					is_root: false,
-					attrs: &mut func.attrs,
-					env_generics: Some(&item.generics),
-					sig: &mut func.sig,
-					block: func.default.as_mut()
-				})?;
+				original.attrs.extend_from_slice(&func.attrs);
+
+				quote! {
+					#original
+
+					#[cfg(not(doc))]
+					#func
+				}
 			}
 
-			item.to_token_stream()
-		}
-	})
+			Self::Impl(mut item) => {
+				let mut originals = Vec::new();
+
+				for impl_item in &mut item.items {
+					let ImplItem::Fn(func) = impl_item else {
+						continue;
+					};
+
+					let mut original = create_doc_item_fn(func);
+
+					callback(&mut Function::from_item_fn(
+						false,
+						Some(&item.generics),
+						func
+					))?;
+
+					original.attrs.extend_from_slice(&func.attrs);
+					originals.push(ImplItem::Fn(original));
+					func.attrs.push(parse_quote! { #[cfg(not(doc))] });
+				}
+
+				item.items.append(&mut originals);
+				item.to_token_stream()
+			}
+
+			Self::Trait(mut item) => {
+				let mut originals = Vec::new();
+
+				for trait_item in &mut item.items {
+					let TraitItem::Fn(func) = trait_item else {
+						continue;
+					};
+
+					let mut original = create_doc_trait_fn(func);
+
+					callback(&mut Function::from_trait_fn(
+						false,
+						Some(&item.generics),
+						func
+					))?;
+
+					original.attrs.extend_from_slice(&func.attrs);
+					originals.push(TraitItem::Fn(original));
+					func.attrs.push(parse_quote! { #[cfg(not(doc))] });
+				}
+
+				item.items.append(&mut originals);
+				item.to_token_stream()
+			}
+		})
+	}
 }
 
 pub fn transform_fn(
@@ -137,7 +209,7 @@ pub fn transform_fn(
 		Err(err) => return err.to_compile_error()
 	};
 
-	match transform_functions(parsed, callback, allowed) {
+	match parsed.transform_all(callback, allowed) {
 		Ok(ts) => ts,
 		Err(err) => err.to_compile_error()
 	}

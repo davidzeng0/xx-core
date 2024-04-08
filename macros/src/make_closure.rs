@@ -54,26 +54,6 @@ pub enum LifetimeAnnotations {
 	None
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Inlining {
-	Never,
-	Default,
-	Always
-}
-
-impl ToTokens for Inlining {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		quote! { ::xx_core::closure:: }.to_tokens(tokens);
-
-		match self {
-			Self::Never => quote! { INLINE_NEVER },
-			Self::Default => quote! { INLINE_DEFAULT },
-			Self::Always => quote! { INLINE_ALWAYS }
-		}
-		.to_tokens(tokens);
-	}
-}
-
 struct AddLifetime {
 	annotations: LifetimeAnnotations,
 	explicit_lifetimes: Vec<Lifetime>,
@@ -330,7 +310,7 @@ pub fn make_explicit_closure(
 		FnArg::Typed(pat) => {
 			let destr = pat.pat.as_ref().clone();
 
-			RemoveRefMut {}.visit_pat_mut(pat.pat.as_mut());
+			RemoveModifiers {}.visit_pat_mut(pat.pat.as_mut());
 
 			(pat.ty.as_ref().clone(), pat.pat.as_ref().clone(), destr)
 		}
@@ -390,7 +370,7 @@ pub enum OpaqueClosureType<T> {
 pub fn make_opaque_closure(
 	func: &mut Function<'_>, args: &[(TokenStream, TokenStream)],
 	transform_return: impl Fn(TokenStream) -> TokenStream,
-	closure_type: OpaqueClosureType<impl Fn(TokenStream, Inlining) -> (TokenStream, TokenStream)>,
+	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>,
 	is_trait: bool
 ) -> Result<TokenStream> {
 	let addl_lifetimes = add_lifetime(
@@ -403,40 +383,13 @@ pub fn make_opaque_closure(
 		}
 	);
 
-	let mut inlining = None;
-
-	if let Some(attr) = remove_attr_list(func.attrs, "inline") {
-		let mut value = String::new();
-
-		attr.parse_nested_meta(|meta| {
-			if let Some(ident) = meta.path.get_ident() {
-				value = ident.to_string();
-			}
-
-			Ok(())
-		})?;
-
-		inlining = Some(match value.as_ref() {
-			"never" => Inlining::Never,
-			"always" => Inlining::Always,
-			_ => {
-				return Err(Error::new_spanned(
-					attr.tokens,
-					"Valid inline arguments are `always` and `never`"
-				))
-			}
-		});
-	}
-
-	let inlining = inlining.unwrap_or(Inlining::Default);
-
 	let (args, args_types) = make_args(args);
 
 	let return_type = &mut func.sig.output;
 	let closure_return_type = transform_return(get_return_type(return_type));
 	let (closure_return_type, trait_impl_wrap) = match closure_type {
 		OpaqueClosureType::Custom(transform) => {
-			let (trait_type, trait_impl) = transform(closure_return_type, inlining);
+			let (trait_type, trait_impl) = transform(closure_return_type);
 
 			(
 				parse_quote_spanned! { trait_type.span() => impl #trait_type },

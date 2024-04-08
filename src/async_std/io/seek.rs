@@ -2,17 +2,30 @@
 
 use super::*;
 
+/// The async equivalent of [`std::io::Seek`]
+///
+/// This trait is object safe
 #[asynchronous]
 pub trait Seek {
+	/// Seek to an offset, in bytes
+	///
+	/// If the seek operation completed successfully, this method returns the
+	/// new position from the start of the stream
+	///
+	/// See also [`std::io::Seek::seek`]
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64>;
 
-	/// Whether or not stream length can be calculated without an
-	/// expensive I/O operation
+	/// Returns true if the `Seek` implementation has an efficient
+	/// [`stream_len`] implementation
+	///
+	/// [`stream_len`]: Seek::stream_len
 	fn stream_len_fast(&self) -> bool {
 		false
 	}
 
 	/// Get the length of the stream in bytes
+	///
+	/// See also [`std::io::Seek::stream_len`]
 	async fn stream_len(&mut self) -> Result<u64> {
 		let old_pos = self.stream_position().await?;
 		let len = self.seek(SeekFrom::End(0)).await?;
@@ -24,18 +37,24 @@ pub trait Seek {
 		Ok(len)
 	}
 
-	/// Whether or not stream length can be calculated without an
-	/// expensive I/O operation
+	/// Returns true if the `Seek` implementation has an efficient
+	/// [`stream_position`] implementation
+	///
+	/// [`stream_position`]: Seek::stream_position
 	fn stream_position_fast(&self) -> bool {
 		false
 	}
 
-	/// Get the position in the stream in bytes
+	/// Get the current position in the stream in bytes
+	///
+	/// See also [`std::io::Seek::stream_position`]
 	async fn stream_position(&mut self) -> Result<u64> {
 		self.seek(SeekFrom::Current(0)).await
 	}
 
 	/// Rewinds the stream to the beginning
+	///
+	/// This is a convenience method, equivalent to `seek(SeekFrom::Start(0))``
 	async fn rewind(&mut self) -> Result<()> {
 		self.seek(SeekFrom::Start(0)).await?;
 

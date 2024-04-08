@@ -30,11 +30,15 @@ pub mod internal {
 	{
 		type Output = Output;
 
+		#[cfg(not(doc))]
 		#[asynchronous(traitext)]
 		#[inline(always)]
 		async fn call_once(self, args: Args) -> Output {
 			self.0(args, get_context().await)
 		}
+
+		#[cfg(doc)]
+		fn call_once(self, args: Args) -> impl Task<Output = Self::Output> {}
 	}
 
 	impl<F: FnMut(Args, Ptr<Context>) -> Output, Args, Output> AsyncFnMut<Args>
@@ -42,20 +46,28 @@ pub mod internal {
 	{
 		type Output = Output;
 
+		#[cfg(not(doc))]
 		#[asynchronous(traitext)]
 		#[inline(always)]
 		async fn call_mut(&mut self, args: Args) -> Output {
 			self.0(args, get_context().await)
 		}
+
+		#[cfg(doc)]
+		fn call_mut(&mut self, args: Args) -> impl Task<Output = Self::Output> {}
 	}
 
 	impl<F: Fn(Args, Ptr<Context>) -> Output, Args, Output> AsyncFn<Args> for OpaqueAsyncFn<F, 2> {
 		type Output = Output;
 
+		#[cfg(not(doc))]
 		#[asynchronous(traitext)]
 		#[inline(always)]
 		async fn call(&self, args: Args) -> Output {
 			self.0(args, get_context().await)
 		}
+
+		#[cfg(doc)]
+		fn call(&self, args: Args) -> impl Task<Output = Self::Output> {}
 	}
 }

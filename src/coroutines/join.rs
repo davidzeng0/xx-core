@@ -26,28 +26,12 @@ impl<O1, O2> Join<O1, O2> {
 	/// branch must be a result of a valid join futures call
 	pub unsafe fn from_branch(branch: BranchOutput<O1, O2>) -> Self {
 		let BranchOutput(_, a, b) = branch;
-
-		match Join(a, b).flatten() {
-			Some(result) => result,
-
-			/* Safety: both tasks must run to completion */
-			_ => unsafe { unreachable_unchecked!("Branch failed") }
-		}
-	}
-
-	/// # Safety
-	/// branch must be a result of a valid join call
-	pub unsafe fn from_spawn_branch(
-		branch: BranchOutput<SpawnResult<O1>, SpawnResult<O2>>
-	) -> Self {
-		let BranchOutput(_, a, b) = branch;
 		let result = Join(a.transpose(), b.transpose()).flatten();
 
 		match runtime::join(result).flatten() {
 			Some(result) => result,
 
-			/* Safety: both tasks must run to completion. if one task panicked, this function
-			 * would panic */
+			/* Safety: both tasks must run to completion */
 			_ => unsafe { unreachable_unchecked!("Branch failed") }
 		}
 	}
@@ -59,7 +43,15 @@ where
 	F1: Future,
 	F2: Future
 {
-	let branch = branch(future_1, future_2, (|_| false, |_| false)).await;
+	/* Safety: should_cancel does not panic */
+	let branch = unsafe {
+		branch(
+			future_1,
+			future_2,
+			(result::Result::is_err, result::Result::is_err)
+		)
+		.await
+	};
 
 	/* Safety: this is a join future */
 	unsafe { Join::from_branch(branch) }
@@ -97,5 +89,5 @@ where
 	.await;
 
 	/* Safety: this is a join */
-	unsafe { Join::from_spawn_branch(branch) }
+	unsafe { Join::from_branch(branch.flatten()) }
 }

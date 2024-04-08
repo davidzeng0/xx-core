@@ -23,8 +23,8 @@ pub type Complete<T> = unsafe fn(ReqPtr<T>, Ptr<()>, T);
 /// The lifetime of the request must last until the callback is executed
 pub struct Request<T> {
 	/// The user data to be passed back.
-	arg: Ptr<()>,
-	callback: Complete<T>
+	pub arg: Ptr<()>,
+	pub callback: Complete<T>
 }
 
 impl<T> Clone for Request<T> {

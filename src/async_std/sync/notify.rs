@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, rc::Rc};
+use std::{cell::Cell, marker::PhantomData, rc::Rc};
 
 use super::*;
 use crate::{
@@ -17,6 +17,7 @@ struct Waiter<T> {
 
 pub struct Notify<T = ()> {
 	waiters: LinkedList,
+	count: Cell<usize>,
 	phantom: PhantomData<T>
 }
 
@@ -30,7 +31,11 @@ impl<T: Clone> Notify<T> {
 	/// only if waiters is empty
 	#[must_use]
 	pub const unsafe fn new_unpinned() -> Self {
-		Self { waiters: LinkedList::new(), phantom: PhantomData }
+		Self {
+			waiters: LinkedList::new(),
+			count: Cell::new(0),
+			phantom: PhantomData
+		}
 	}
 
 	#[must_use]
@@ -40,16 +45,22 @@ impl<T: Clone> Notify<T> {
 	}
 
 	/// # Safety
-	/// Waiter must be pinned, unlinked, and live as long as it is linked
+	/// Waiter must be pinned, unlinked, and live until it's waked
 	#[future]
 	unsafe fn wait_notified(&self, waiter: &mut Waiter<T>) -> Result<T> {
 		#[cancel]
-		fn cancel(waiter: &Waiter<T>) -> Result<()> {
+		fn cancel(waiter: MutPtr<Waiter<T>>) -> Result<()> {
+			/* Safety: guaranteed by future's contract */
+			let waiter = unsafe { waiter.as_ref() };
+
 			/* Safety: we linked this node earlier */
 			unsafe { waiter.node.unlink_unchecked() };
 
 			/* Safety: send the cancellation. waiter is unlinked, so there won't be
-			 * another completion */
+			 * another completion
+			 *
+			 * note: the waiter may no longer be valid after this call
+			 */
 			unsafe { Request::complete(waiter.request, Err(Core::interrupted().into())) };
 
 			Ok(())
@@ -57,10 +68,14 @@ impl<T: Clone> Notify<T> {
 
 		waiter.request = request;
 
-		/* Safety: guaranteed by caller. we don't mutably borrow waiter anymore */
+		/* Safety: guaranteed by caller
+		 *
+		 * note: even though we have &mut to Waiter, modifications to the node's
+		 * pointers is not actually UB (according to miri tree borrows)
+		 */
 		unsafe { self.waiters.append(&waiter.node) };
 
-		Progress::Pending(cancel(waiter, request))
+		Progress::Pending(cancel(ptr!(waiter), request))
 	}
 
 	pub async fn notified(&self) -> Result<T> {
@@ -70,26 +85,34 @@ impl<T: Clone> Notify<T> {
 
 		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
 
+		/* we don't really care if it overflows */
+		#[allow(clippy::arithmetic_side_effects)]
+		self.count.set(self.count.get() + 1);
+
 		/* Safety: waiter is new, pinned, and lives until it completes */
 		#[allow(clippy::multiple_unsafe_ops_per_block)]
-		unsafe {
-			block_on(self.wait_notified(&mut waiter)).await
-		}
+		let result = unsafe { block_on(self.wait_notified(&mut waiter)).await };
+
+		#[allow(clippy::arithmetic_side_effects)]
+		self.count.set(self.count.get() - 1);
+
+		result
 	}
 
-	pub fn notify(&self, value: T) {
+	pub fn notify(&self, value: T) -> usize {
 		let mut list = LinkedList::new();
 		let list = list.pin_local();
+		let count = self.count.get();
 
 		/* Safety: our new list is pinned, and we clear out all nodes before
 		 * returning */
 		unsafe { self.waiters.move_elements(&list) };
 
 		while let Some(node) = list.pop_front() {
-			let waiter = container_of!(node, Waiter<T>:node);
+			let waiter = container_of!(node, Waiter<T> => node);
 
 			/* Safety: all nodes are wrapped in Waiter */
-			let request = unsafe { waiter.as_ref() }.request;
+			let request = unsafe { ptr!(waiter=>request) };
 
 			/*
 			 * Safety: complete the future
@@ -97,6 +120,8 @@ impl<T: Clone> Notify<T> {
 			 */
 			unsafe { Request::complete(request, Ok(value.clone())) };
 		}
+
+		count
 	}
 }
 

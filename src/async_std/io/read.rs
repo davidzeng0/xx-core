@@ -5,6 +5,7 @@ use memchr::memchr;
 use super::*;
 use crate::impls::AsyncFnOnce;
 
+/// Read from `src` to `dest`
 pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	let len = dest.len().min(src.len());
 
@@ -18,8 +19,10 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 	len
 }
 
+/// Appends to `buf` by calling `read` with the string's buffer
+///
+/// Resets the buffer if the bytes are not valid UTF-8 or on panic
 #[asynchronous]
-#[allow(clippy::items_after_statements)]
 pub async fn append_to_string<F>(buf: &mut String, read: F) -> Result<Option<usize>>
 where
 	F: for<'a> AsyncFnOnce<&'a mut Vec<u8>, Output = Result<Option<usize>>>
@@ -36,6 +39,7 @@ where
 		}
 	}
 
+	#[allow(unsafe_code)]
 	let mut guard = Guard {
 		len: buf.len(),
 		/* Safety: we truncate if the utf8 check fails */
@@ -53,16 +57,23 @@ where
 	Ok(read)
 }
 
+/// The async equivalent of [`std::io::Read`]
+///
+/// This trait is object safe
 #[asynchronous]
 pub trait Read {
 	/// Read into `buf`, returning the amount of bytes read
 	///
-	/// Returning zero strictly means EOF, unless the buffer's size was zero
+	/// Returns zero if the `buf` is empty, or if the stream reached EOF
+	///
+	/// See also [`std::io::Read::read`]
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
 	/// Read until the buffer is filled, an I/O error, an interrupt, or an EOF
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
+	///
+	/// See also [`std::io::Read::read_exact`]
 	async fn read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
@@ -83,8 +94,14 @@ pub trait Read {
 		check_interrupt_if_zero(read).await
 	}
 
-	/// Same as above, except returns err on partial reads, even
-	/// when interrupted
+	/// Same as [`read_fully`], except returns an [`UnexpectedEof`] error
+	/// on partial reads Returns the number of bytes read, which is the same as
+	/// `buf.len()`
+	///
+	/// See also [`std::io::Read::read_exact`]
+	///
+	/// [`read_fully`]: Read::read_fully
+	/// [`UnexpectedEof`]: Core::UnexpectedEof
 	async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
@@ -102,6 +119,8 @@ pub trait Read {
 	/// Reads until an EOF, I/O error, or interrupt
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
+	///
+	/// See also [`std::io::Read::read_to_end`]
 	async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
 		let start_len = buf.len();
 		let mut len = buf.len();
@@ -158,6 +177,16 @@ pub trait Read {
 		check_interrupt_if_zero(len - start_len).await
 	}
 
+	/// Reads until EOF, I/O error, or interrupt
+	///
+	/// On interrupt, returns the number of bytes read if it is not zero
+	///
+	/// Interrupts may cause the read operation to stop in the middle of a
+	/// character, in which case an [`InvalidUtf8`] error may be returned
+	///
+	/// See also [`std::io::Read::read_to_string`]
+	///
+	/// [`InvalidUtf8`]: Core::InvalidUtf8
 	async fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
 		append_to_string(buf, |vec: &mut Vec<u8>| async move {
 			self.read_to_end(vec).await.map(Some)
@@ -166,10 +195,21 @@ pub trait Read {
 		.map(Option::unwrap)
 	}
 
+	/// Returns `true` if this `Read` implementation has an efficient
+	/// [`read_vectored`] implementation
+	///
+	/// See also [`std::io::Read::is_read_vectored`]
+	///
+	/// [`read_vectored`]: Read::read_vectored
 	fn is_read_vectored(&self) -> bool {
 		false
 	}
 
+	/// Like [`read`], except that it reads into a slice of buffers
+	///
+	/// See also [`std::io::Read::read_vectored`]
+	///
+	/// [`read`]: Read::read
 	async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
 		match bufs.iter_mut().find(|b| !b.is_empty()) {
 			Some(buf) => self.read(&mut buf[..]).await,
@@ -177,6 +217,10 @@ pub trait Read {
 		}
 	}
 
+	/// Like [`read_vectored`], except that it keeps reading until all the
+	/// buffers are filled
+	///
+	/// [`read_vectored`]: Read::read_vectored
 	async fn read_all_vectored(&mut self, mut bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
 		let mut total = 0;
 
@@ -198,14 +242,6 @@ pub trait Read {
 		Ok(total)
 	}
 }
-
-pub trait AsReadRef: ReadSealed {
-	fn as_ref(&mut self) -> ReadRef<'_, Self> {
-		ReadRef::new(self)
-	}
-}
-
-impl<T: ReadSealed> AsReadRef for T {}
 
 #[macro_export]
 macro_rules! read_wrapper {
@@ -243,37 +279,29 @@ macro_rules! read_wrapper {
 
 pub use read_wrapper;
 
-pub struct ReadRef<'a, R: Read + ?Sized> {
-	reader: &'a mut R
-}
-
-impl<'a, R: Read + ?Sized> ReadRef<'a, R> {
-	pub fn new(reader: &'a mut R) -> Self {
-		Self { reader }
-	}
-}
-
-impl<R: Read + ?Sized> Read for ReadRef<'_, R> {
-	read_wrapper! {
-		inner = reader;
-		mut inner = reader;
-	}
-}
-
+/// The async equivalent of [`std::io::BufRead`]
+///
+/// This trait is object safe
 #[asynchronous]
 pub trait BufRead: Read {
-	/// Fill any remaining space in the internal buffer,
+	/// Fill any remaining space in the internal buffer
 	/// up to `amount` total unconsumed bytes
 	///
 	/// Returns the number of additional bytes filled, which can be zero
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize>;
 
-	#[inline(never)]
+	/// Calls [`fill_amount`] with the [`capacity`]
+	///
+	/// [`fill_amount`]: BufRead::fill_amount
+	/// [`capacity`]: BufRead::capacity
 	async fn fill(&mut self) -> Result<usize> {
 		self.fill_amount(self.capacity()).await
 	}
 
-	/// Read until `byte`
+	/// Reads all bytes into `buf` until the delimiter `byte`, or EOF
+	///
+	/// The `byte` is included in the `buf`
+	/// Returns the number of bytes read
 	///
 	/// On interrupted, the read bytes can be calculated using the difference in
 	/// length of `buf` and can be called again with a new slice
@@ -311,12 +339,20 @@ pub trait BufRead: Read {
 		Ok(Some(buf.len() - start_len))
 	}
 
-	/// See `read_until`
+	/// Reads all bytes into `buf` until a newline (0xA byte) or EOF, and strips
+	/// the line ending, if any
 	///
 	/// On interrupt, this function cannot be called again because it may stop
-	/// reading in the middle of a utf8 character
+	/// reading in the middle of a utf8 character, in which case it may return
+	/// an [`InvalidUtf8`] error
 	///
 	/// Returns the number of bytes read, if any
+	///
+	/// See also [`read_until`]
+	///
+	/// [`InvalidUtf8`]: Core::InvalidUtf8
+	///
+	/// [`read_until`]: BufRead::read_until
 	async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>> {
 		let result = append_to_string(buf, |vec: &mut Vec<u8>| async move {
 			self.read_until(b'\n', vec).await
@@ -334,22 +370,48 @@ pub trait BufRead: Read {
 		result
 	}
 
+	/// Returns the capacity of the internal buffer
 	fn capacity(&self) -> usize;
 
+	/// Returns the remaining space in the internal buffer
 	fn spare_capacity(&self) -> usize;
 
+	/// Returns a slice to the unconsumed buffered data
 	fn buffer(&self) -> &[u8];
 
+	/// Consumes `count` bytes from the buffer
+	///
+	/// # Panics
+	/// If `count` is greater than the number of unconsumed bytes
+	///
+	/// See also [`std::io::BufRead::consume`]
 	fn consume(&mut self, count: usize);
 
+	/// Same as [`consume`], but unchecked
+	///
 	/// # Safety
 	/// `count` must be within the valid range
+	///
+	/// [`consume`]: BufRead::consume
+	#[allow(unsafe_code)]
 	unsafe fn consume_unchecked(&mut self, count: usize);
 
+	/// Unconsume `count` bytes from the buffer
+	///
+	/// The next call to [`Read::read`] will return the unconsumed bytes
+	///
+	/// # Panics
+	/// If `count` is greater than the maximum number of bytes that can be
+	/// unconsumed
 	fn unconsume(&mut self, count: usize);
 
+	/// Same as [`unconsume`], but unchecked
+	///
 	/// # Safety
 	/// `count` must be within the valid range
+	///
+	/// [`unconsume`]: BufRead::unconsume
+	#[allow(unsafe_code)]
 	unsafe fn unconsume_unchecked(&mut self, count: usize);
 
 	/// Discard all data in the buffer
@@ -357,6 +419,9 @@ pub trait BufRead: Read {
 }
 
 pub trait IntoLines: BufReadSealed {
+	/// Returns an iterator over the lines of this reader
+	///
+	/// See also [`std::io::BufRead::lines`]
 	fn lines(self) -> Lines<Self>
 	where
 		Self: Sized
@@ -402,12 +467,14 @@ macro_rules! bufread_wrapper {
 			fn consume(&mut self, count: usize);
 
 			#[asynchronous(traitfn)]
+			#[allow(unsafe_code)]
 			unsafe fn consume_unchecked(&mut self, count: usize);
 
 			#[asynchronous(traitfn)]
 			fn unconsume(&mut self, count: usize);
 
 			#[asynchronous(traitfn)]
+			#[allow(unsafe_code)]
 			unsafe fn unconsume_unchecked(&mut self, count: usize);
 
 			#[asynchronous(traitfn)]
@@ -417,13 +484,6 @@ macro_rules! bufread_wrapper {
 }
 
 pub use bufread_wrapper;
-
-impl<R: BufRead + ?Sized> BufRead for ReadRef<'_, R> {
-	bufread_wrapper! {
-		inner = reader;
-		mut inner = reader;
-	}
-}
 
 pub struct Lines<R> {
 	reader: R
@@ -441,11 +501,8 @@ impl<R: BufRead> AsyncIterator for Lines<R> {
 
 	async fn next(&mut self) -> Option<Self::Item> {
 		let mut line = String::new();
+		let read = self.reader.read_line(&mut line).await.transpose()?;
 
-		match self.reader.read_line(&mut line).await {
-			Err(err) => Some(Err(err)),
-			Ok(Some(_)) => Some(Ok(line)),
-			Ok(None) => None
-		}
+		Some(read.map(|_| line))
 	}
 }

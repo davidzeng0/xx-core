@@ -82,7 +82,7 @@ impl Executor {
 		}
 
 		/* Safety: workers are alive as long as they're executing */
-		unsafe { Fiber::switch(worker.fiber(), from.as_ref().fiber()) };
+		unsafe { Fiber::switch(worker.fiber(), ptr!(from=>fiber())) };
 	}
 
 	/// Switch from whichever `current` worker is running to the new `worker`

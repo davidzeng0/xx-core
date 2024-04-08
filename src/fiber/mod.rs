@@ -10,19 +10,18 @@ use super::{
 	os::{mman::*, resource::*},
 	pointer::*
 };
-use crate::{macros::panic_nounwind, opt::hint::unreachable_unchecked};
+use crate::{assert_unsafe_precondition, macros::panic_nounwind, opt::hint::unreachable_unchecked};
 
 import_sysdeps!();
 
 macro_rules! define_context {
 	(
-		pub(super) struct $name: ident
+		pub struct $name: ident
 		$($rest: tt)*
 	) => {
 		#[repr(C)]
-		pub(super) struct $name $($rest)*
+		pub struct $name $($rest)*
 
-		#[allow(deprecated)]
 		impl Default for $name {
 			fn default() -> Self {
 				/* Safety: repr(C) */
@@ -143,7 +142,6 @@ impl Fiber {
 			.map()
 			.expect("Failed to allocate stack for fiber");
 
-		#[allow(clippy::cast_possible_truncation)]
 		Self {
 			/* fiber context. stores to-be-preserved registers,
 			 * including any that cannot be corrupted by inline asm
@@ -184,6 +182,8 @@ impl Fiber {
 	/// # Safety
 	/// `self` must be currently running
 	pub unsafe fn switch(this: MutPtr<Self>, to: MutPtr<Self>) {
+		assert_unsafe_precondition!(!this.is_null() && !to.is_null());
+
 		/* note for arch specific implementation:
 		 * all registers must be declared clobbered
 		 *
@@ -194,9 +194,7 @@ impl Fiber {
 		 */
 
 		/* Safety: guaranteed by caller */
-		unsafe {
-			switch(ptr!(&mut this=>context), ptr!(&mut to=>context));
-		}
+		unsafe { switch(ptr!(&mut this=>context), ptr!(&mut to=>context)) };
 	}
 
 	/// # Safety
@@ -213,6 +211,8 @@ impl Fiber {
 	/// # Safety
 	/// same as switch
 	pub unsafe fn exit(self, to: MutPtr<Self>) -> ! {
+		assert_unsafe_precondition!(!to.is_null());
+
 		let mut fiber = ManuallyDrop::new(self);
 		let ptr = ptr!(&mut fiber);
 
@@ -238,6 +238,8 @@ impl Fiber {
 	/// # Safety
 	/// same as above
 	pub unsafe fn exit_to_pool(self, to: MutPtr<Self>, pool: Ptr<Pool>) -> ! {
+		assert_unsafe_precondition!(!to.is_null());
+
 		let mut arg = (ManuallyDrop::new(self), pool);
 		let ptr = ptr!(&mut arg);
 

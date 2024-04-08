@@ -15,12 +15,6 @@ use crate::{
 	pointer::*
 };
 
-#[errors]
-pub enum ReadError {
-	#[error("Invalid size ({0}) for variably sized type")]
-	SizeError(usize)
-}
-
 macro_rules! impl_primitive_bytes_encoding_endian {
 	($type:ty, $endian:ident, $trait_endian:ident) => {
 		paste! {
@@ -215,11 +209,9 @@ where
 	T: VInt<N>
 {
 	if unlikely(size == 0 || size > N) {
-		if size == 0 {
-			Ok(Some(T::ZERO))
-		} else {
-			Err(ReadError::SizeError(size).into())
-		}
+		assert!(size == 0, "Invalid size ({}) for variably sized type", size);
+
+		Ok(Some(T::ZERO))
 	} else {
 		buf_load_bytes(reader, size)
 			.await
@@ -234,11 +226,9 @@ where
 	T: VInt<N>
 {
 	if unlikely(size == 0 || size > N) {
-		return if size == 0 {
-			Ok(Some(T::ZERO))
-		} else {
-			Err(ReadError::SizeError(size).into())
-		};
+		assert!(size == 0, "Invalid size ({}) for variably sized type", size);
+
+		return Ok(Some(T::ZERO));
 	}
 
 	let mut bytes = [0u8; N];
@@ -298,7 +288,7 @@ macro_rules! read_vfloat_impl {
 			} else if size == size_of::<f64>() {
 				self.read_f64_le().await
 			} else {
-				Err(ReadError::SizeError(size).into())
+				panic!("Invalid size ({}) for variably sized type", size);
 			}
 		}
 
@@ -310,7 +300,7 @@ macro_rules! read_vfloat_impl {
 			} else if size == size_of::<f64>() {
 				self.read_f64_be().await
 			} else {
-				Err(ReadError::SizeError(size).into())
+				panic!("Invalid size ({}) for variably sized type", size);
 			}
 		}
 
@@ -391,7 +381,7 @@ pub trait ReadTyped: ReadSealed {
 		read_bytes_n(self).await.map(|c| c.map(T::from_bytes))
 	}
 
-	/// Read a type, assuming EOF is an error
+	/// Read a type, returning an error on EOF
 	#[asynchronous(traitext)]
 	async fn read_type_or_err<T, const N: usize>(&mut self) -> Result<T>
 	where
@@ -417,7 +407,7 @@ pub trait BufReadTyped: BufReadSealed {
 		buf_read_bytes(self).await.map(|c| c.map(T::from_bytes))
 	}
 
-	/// Read a type, assuming EOF is an error
+	/// Read a type, returning an error on EOF
 	#[asynchronous(traitext)]
 	async fn read_type_or_err<T, const N: usize>(&mut self) -> Result<T>
 	where
@@ -445,7 +435,8 @@ impl<'a, W: Write> FmtAdapter<'a, W> {
 	}
 
 	/// # Safety
-	/// the context must be valid for the function call
+	/// the context and function args must be valid for the suspending function
+	/// call
 	async unsafe fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
 		match fmt::write(self, args) {
 			Ok(()) => Ok(self.wrote),
@@ -460,7 +451,8 @@ impl<'a, W: Write> FmtAdapter<'a, W> {
 impl<W: Write> fmt::Write for FmtAdapter<'_, W> {
 	fn write_str(&mut self, s: &str) -> fmt::Result {
 		/* Safety: guaranteed by caller of `write_args` */
-		let result = unsafe { with_context(self.context, self.writer.write_string_all_or_err(s)) };
+		#[allow(unsafe_code)]
+		let result = unsafe { scoped(self.context, self.writer.write_string_all_or_err(s)) };
 
 		match result {
 			Ok(n) => {
@@ -525,7 +517,10 @@ pub trait WriteTyped: WriteSealed {
 		let mut adapter = FmtAdapter::new(self, get_context().await);
 
 		/* Safety: we are in an async function */
-		unsafe { adapter.write_args(args).await }
+		#[allow(unsafe_code)]
+		unsafe {
+			adapter.write_args(args).await
+		}
 	}
 
 	/// Attempts to write the entire string, returning the number of bytes

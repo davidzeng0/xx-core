@@ -7,8 +7,6 @@ use std::{
 
 use super::*;
 
-const BUDGET: u16 = 128;
-
 /// The environment for an async worker
 ///
 /// # Safety
@@ -68,7 +66,7 @@ where
 
 	TypeId::of::<E>().hash(&mut hasher);
 
-	/* comparing i128s is generally slower than u32
+	/* comparing `TypeId`s is generally slower than u32
 	 *
 	 * u32 is enough to ensure that two different runtimes
 	 * are in fact different
@@ -97,6 +95,21 @@ where
 
 struct Canceller(MutPtr<()>, unsafe fn(MutPtr<()>) -> Result<()>);
 
+impl Canceller {
+	const fn new<C: Cancel>(cancel: MutPtr<Option<C>>) -> Self {
+		Self(cancel.cast(), run_cancel::<C>)
+	}
+
+	/// # Safety
+	/// See `Cancel::run`
+	unsafe fn call(self) -> Result<()> {
+		let Self(arg, cancel) = self;
+
+		/* Safety: guaranteed by caller */
+		unsafe { cancel(arg) }
+	}
+}
+
 struct ContextInner {
 	budget: u16,
 	guards: u32,
@@ -123,7 +136,8 @@ impl Context {
 			worker,
 			environment: type_for::<E>(),
 			inner: UnsafeCell::new(ContextInner {
-				budget: BUDGET,
+				#[allow(clippy::cast_possible_truncation)]
+				budget: DEFAULT_BUDGET as u16,
 				guards: 0,
 				interrupted: false,
 				cancel: None
@@ -160,14 +174,16 @@ impl Context {
 		let block = |cancel| {
 			/* avoid allocations by storing on the stack */
 			let mut cancel = Some(cancel);
-			let canceller = Canceller(ptr!(&mut cancel).cast(), run_cancel::<F::Cancel>);
+			let canceller = Canceller::new(ptr!(&mut cancel));
 
-			/* Safety: context is valid while executing. exclusive unsafe
-			 * cell access */
+			/* Safety: context is valid while executing
+			 * exclusive unsafe cell access
+			 */
 			unsafe {
 				let inner = self.inner.as_mut();
 
-				inner.budget = BUDGET;
+				#[allow(clippy::cast_possible_truncation)]
+				(inner.budget = DEFAULT_BUDGET as u16);
 				inner.cancel = Some(canceller);
 
 				self.suspend();
@@ -221,12 +237,12 @@ impl Context {
 				break;
 			}
 
-			let Some(Canceller(arg, cancel)) = inner.cancel.take() else {
+			let Some(canceller) = inner.cancel.take() else {
 				break;
 			};
 
-			/* this function may recursively call itself if a task awaits
-			 * itself
+			/* this function may recursively call itself if a task
+			 * is awaiting itself
 			 *
 			 * the context may no longer be valid after this call
 			 *
@@ -235,7 +251,7 @@ impl Context {
 			 *
 			 * Safety: guaranteed by caller
 			 */
-			return unsafe { cancel(arg) };
+			return unsafe { canceller.call() };
 		}
 
 		if !already_interrupted {
@@ -272,7 +288,7 @@ impl Context {
 	{
 		if self.environment == type_for::<E>() {
 			/* Safety: type is checked */
-			Some(unsafe { E::from_context(self) })
+			Some(call_non_panicking(|| unsafe { E::from_context(self) }))
 		} else {
 			None
 		}

@@ -98,8 +98,8 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 		}
 	}
 
-	func.sig.output = parse_quote_spanned! {
-		return_type.span() => -> ::xx_core::future::Progress<#return_type, #cancel_closure_type>
+	func.sig.output = parse_quote_spanned! { return_type.span() =>
+		-> ::xx_core::future::Progress<#return_type, #cancel_closure_type>
 	};
 
 	make_opaque_closure(
@@ -109,7 +109,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 			quote! { ::xx_core::future::ReqPtr<#return_type> }
 		)],
 		|_| quote_spanned! { return_type.span() => ::xx_core::future::Progress<#return_type, #cancel_closure_type> },
-		OpaqueClosureType::Custom(|ret: TokenStream, _| {
+		OpaqueClosureType::Custom(|ret: TokenStream| {
 			(
 				quote_spanned! { ret.span() => ::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type> },
 				quote! { ::xx_core::future::closure::FutureClosure }
