@@ -37,9 +37,9 @@ jobs:
       - name: Check & Lint
         run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo +nightly clippy --all-targets -- -A unused_qualifications
       - name: Test debug build
-        run: ./docker_run cd tests \&\& cargo test \&\& cargo valgrind test
+        run: ./docker_run cd tests \&\& cargo test --tests \&\& cargo valgrind test --tests
       - name: Test release build
-        run: ./docker_run cd tests \&\& cargo test -r \&\& cargo valgrind test -r
+        run: ./docker_run cd tests \&\& cargo test -r --tests \&\& cargo valgrind test -r --tests
       - name: Generate test coverage
         run: ./docker_run cd tests \&\& cargo llvm-cov --all-features --codecov --output-path codecov.json --disable-default-ignore-filename-regex --ignore-filename-regex \\\(.cargo/registry\\\|rustc\\\)
       - name: Upload coverage reports to Codecov
