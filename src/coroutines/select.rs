@@ -89,7 +89,7 @@ where
 /// The executor and the created runtime outlive the worker
 #[asynchronous]
 pub async unsafe fn select<E, T1, T2>(
-	runtime: Ptr<E>, task_1: T1, task_2: T2
+	runtime: &E, task_1: T1, task_2: T2
 ) -> Select<T1::Output, T2::Output>
 where
 	E: Environment,

@@ -33,6 +33,12 @@ impl Executor {
 	}
 
 	/// # Safety
+	/// `pool` must be either valid for this executor or null
+	pub unsafe fn set_pool(&mut self, pool: Ptr<Pool>) {
+		self.pool = pool;
+	}
+
+	/// # Safety
 	/// Executor must outlive the worker
 	pub unsafe fn new_worker(&self, start: Start) -> Worker {
 		if self.pool.is_null() {

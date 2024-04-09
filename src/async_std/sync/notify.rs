@@ -105,7 +105,8 @@ impl<T: Clone> Notify<T> {
 		let count = self.count.get();
 
 		/* Safety: our new list is pinned, and we clear out all nodes before
-		 * returning */
+		 * returning
+		 */
 		unsafe { self.waiters.move_elements(&list) };
 
 		while let Some(node) = list.pop_front() {

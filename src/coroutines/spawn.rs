@@ -15,12 +15,12 @@ enum SpawnData<E, T: Task> {
 	Done(SpawnResult<T::Output>)
 }
 
-struct SpawnWorker<Entry, T: Task> {
-	data: SpawnData<Entry, T>
+struct SpawnWorker<E, T: Task> {
+	data: SpawnData<E, T>
 }
 
 #[future]
-impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<Entry, T> {
+impl<E: Environment, T: Task> SpawnWorker<E, T> {
 	/// # Safety
 	/// `arg` must be dereferenceable as a &mut Self.
 	/// Self::data must be a `SpawnData::Start`
@@ -28,7 +28,7 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 	unsafe fn worker_start(arg: Ptr<()>) {
 		let this = arg.cast::<Self>().cast_mut();
 
-		let SpawnData::Start(entry, task, mut worker, request) =
+		let SpawnData::Start(env, task, mut worker, request) =
 			/* Safety: guaranteed by caller */
 			replace(unsafe { &mut ptr!(this=>data) }, SpawnData::Uninit)
 		else {
@@ -42,7 +42,7 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 			let worker = worker.pin_local();
 
 			if let Some(sync_output) =
-				Self::execute(this, ptr!(&*worker), entry, task, request).transpose()
+				Self::execute(this, env, ptr!(&*worker), task, request).transpose()
 			{
 				/* Safety: `this` is still a valid pointer */
 				unsafe { ptr!(this=>data = SpawnData::Done(sync_output)) };
@@ -57,21 +57,16 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 
 	#[inline(always)]
 	fn execute(
-		this: MutPtr<Self>, worker: Ptr<Worker>, entry: Entry, task: T,
+		this: MutPtr<Self>, mut env: E, worker: Ptr<Worker>, task: T,
 		request: ReqPtr<SpawnResult<T::Output>>
 	) -> SpawnResult<Option<T::Output>> {
-		let environment = catch_unwind(AssertUnwindSafe(|| entry(worker))).map_err(|err| {
-			warn!(
-				target: worker,
-				"== Failed to start worker: panicked when trying to create a new context"
-			);
+		let context = call_non_panicking(|| env.context_mut());
 
-			err
-		})?;
+		/* Safety: guaranteed by caller */
+		unsafe { context.set_worker(worker) };
 
-		let context = call_non_panicking(|| environment.context());
 		let is_async = Cell::new(false);
-		let data = SpawnData::Pending(ptr!(context), ptr!(&is_async));
+		let data = SpawnData::Pending(ptr!(&*context), ptr!(&is_async));
 
 		/* pass back a pointer to is_async. the caller will tell us
 		 * if we've suspended from this function
@@ -100,9 +95,9 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 	}
 
 	/// # Safety
-	/// The executor, `task`, and the created runtime outlive the worker.
+	/// The `env` and `task` are valid and outlive the worker.
 	#[future]
-	unsafe fn spawn(executor: Ptr<Executor>, entry: Entry, task: T) -> SpawnResult<T::Output> {
+	unsafe fn spawn(env: E, task: T) -> SpawnResult<T::Output> {
 		#[cancel]
 		fn cancel(context: Ptr<Context>) -> Result<()> {
 			/* Safety: guaranteed by Future's contract */
@@ -114,10 +109,12 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 		/* Safety: worker_start never panics */
 		let start = unsafe { Start::new(Self::worker_start, ptr!(&mut spawn).cast_const().cast()) };
 
+		let executor = call_non_panicking(|| env.executor());
+
 		/* Safety: guaranteed by caller */
 		let worker = unsafe { ptr!(executor=>new_worker(start)) };
 
-		spawn.data = SpawnData::Start(entry, task, worker, request);
+		spawn.data = SpawnData::Start(env, task, worker, request);
 
 		let SpawnData::Start(_, _, worker, _) = &spawn.data else {
 			/* Safety: we just assigned this */
@@ -149,16 +146,13 @@ impl<Env: Environment, Entry: FnOnce(Ptr<Worker>) -> Env, T: Task> SpawnWorker<E
 /// [`Future`]
 ///
 /// # Safety
-/// The executor, `task`, and the created runtime outlive the worker.
+/// The `env` and `task` are valid and outlive the worker.
 ///
 /// [`Future`]: crate::future::Future
 #[future]
-pub unsafe fn spawn_task<E, F, T>(
-	executor: Ptr<Executor>, entry: F, task: T
-) -> SpawnResult<T::Output>
+pub unsafe fn spawn_task<E, T>(env: E, task: T) -> SpawnResult<T::Output>
 where
 	E: Environment,
-	F: FnOnce(Ptr<Worker>) -> E,
 	T: Task
 {
 	#[cancel]
@@ -168,7 +162,7 @@ where
 	}
 
 	/* Safety: guaranteed by caller */
-	unsafe { SpawnWorker::spawn(executor, entry, task).run(request) }
+	unsafe { SpawnWorker::spawn(env, task).run(request) }
 }
 
 /// Utility function that calls the above with the
@@ -176,10 +170,9 @@ where
 ///
 /// # Safety
 /// see above
-/// `runtime` must be a valid pointer for the duration of the function. the
-/// trait implementer must return a valid executor
+/// the created env must outlife the task and the worker
 #[future]
-pub unsafe fn spawn_task_with_env<E, T>(runtime: Ptr<E>, task: T) -> SpawnResult<T::Output>
+pub unsafe fn spawn_task_with_env<E, T>(runtime: &E, task: T) -> SpawnResult<T::Output>
 where
 	E: Environment,
 	T: Task
@@ -189,14 +182,8 @@ where
 		Ok(())
 	}
 
-	/* Safety: runtime is valid and executor is valid */
-	let executor = call_non_panicking(|| unsafe { ptr!(runtime=>executor()) });
-
-	/* Safety: worker is exited when complete */
-	let entry = |worker| unsafe { ptr!(runtime=>clone(worker)) };
-
 	/* Safety: guaranteed by caller */
-	unsafe { spawn_task(executor, entry, task).run(request) }
+	unsafe { spawn_task(runtime.clone(), task).run(request) }
 }
 
 struct SpawnHandle<Output> {
@@ -259,7 +246,7 @@ impl<Output> Spawn<Output> {
 	/// `runtime` is a valid pointer to an env that returns a valid executor
 	/// task must outlive its execution time
 	/// the executor must outlive the task execution time
-	unsafe fn run<E, T>(runtime: Ptr<E>, task: T) -> JoinHandle<Output>
+	unsafe fn run<E, T>(runtime: &E, task: T) -> JoinHandle<Output>
 	where
 		E: Environment,
 		T: Task<Output = Output>
@@ -385,10 +372,8 @@ impl<Output> Task for JoinHandle<Output> {
 /// Returns a join handle which may be used to get the result from the task
 ///
 /// # Safety
-/// `runtime` is a valid pointer to an env that returns a valid executor
-/// task must outlive its execution time
-/// the executor must outlive the task execution time
-pub unsafe fn spawn<E, T>(runtime: Ptr<E>, task: T) -> JoinHandle<T::Output>
+/// See `spawn_task_with_env`
+pub unsafe fn spawn<E, T>(runtime: &E, task: T) -> JoinHandle<T::Output>
 where
 	E: Environment,
 	T: Task

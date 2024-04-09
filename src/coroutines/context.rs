@@ -17,6 +17,11 @@ pub unsafe trait Environment: 'static {
 	/// This function must never panic
 	fn context(&self) -> &Context;
 
+	/// Gets the context associated with the worker
+	///
+	/// This function must never panic
+	fn context_mut(&mut self) -> &mut Context;
+
 	/// Returns the Environment that owns the Context
 	///
 	/// This function must never panic
@@ -28,10 +33,9 @@ pub unsafe trait Environment: 'static {
 	/// Creates a new environment for a new worker
 	///
 	/// # Safety
-	/// `worker` must outlive Self
 	/// the runtime and the contained context must be alive while it's executing
 	/// this function is unsafe so that Context::run may be safe
-	unsafe fn clone(&self, worker: Ptr<Worker>) -> Self;
+	unsafe fn clone(&self) -> Self;
 
 	/// Returns the executor
 	///
@@ -127,13 +131,15 @@ impl Context {
 	/// # Safety
 	/// the context must be alive while it's executing
 	/// this function is unsafe so that Context::run may be safe
+	///
+	/// must call `set_worker`
 	#[must_use]
-	pub unsafe fn new<E>(worker: Ptr<Worker>) -> Self
+	pub unsafe fn new<E>() -> Self
 	where
 		E: Environment
 	{
 		Self {
-			worker,
+			worker: Ptr::null(),
 			environment: type_for::<E>(),
 			inner: UnsafeCell::new(ContextInner {
 				#[allow(clippy::cast_possible_truncation)]
@@ -143,6 +149,12 @@ impl Context {
 				cancel: None
 			})
 		}
+	}
+
+	/// # Safety
+	/// worker must be a valid pointer, and must outlive this context
+	pub unsafe fn set_worker(&mut self, worker: Ptr<Worker>) {
+		self.worker = worker;
 	}
 
 	/// Runs async task `T`
@@ -171,6 +183,7 @@ impl Context {
 	where
 		F: Future
 	{
+		let worker = self.worker;
 		let block = |cancel| {
 			/* avoid allocations by storing on the stack */
 			let mut cancel = Some(cancel);
@@ -187,17 +200,14 @@ impl Context {
 				inner.cancel = Some(canceller);
 
 				self.suspend();
+
+				ptr!(self.inner=>cancel = None);
 			}
 		};
 
 		let resume = || {
-			/* Safety: context is valid while executing. exclusive unsafe
-			 * cell access */
-			unsafe {
-				ptr!(self.inner=>cancel = None);
-
-				self.resume();
-			}
+			/* Safety: context is valid while executing */
+			unsafe { ptr!(worker=>resume()) }
 		};
 
 		/* Safety: we are blocked until the future completes */

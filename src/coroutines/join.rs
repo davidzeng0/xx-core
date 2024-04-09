@@ -68,7 +68,7 @@ where
 /// The executor and the created runtime outlive the worker
 #[asynchronous]
 pub async unsafe fn join<E, T1, T2>(
-	runtime: Ptr<E>, task_1: T1, task_2: T2
+	runtime: &E, task_1: T1, task_2: T2
 ) -> Join<T1::Output, T2::Output>
 where
 	E: Environment,
