@@ -8,19 +8,19 @@ use crate::{runtime::MaybePanic, trace, warn};
 #[allow(clippy::module_name_repetitions)]
 pub type SpawnResult<T> = MaybePanic<T>;
 
-enum SpawnData<E, T: Task> {
+enum SpawnData<E, T: for<'a> Task<Output<'a> = Output>, Output> {
 	Uninit,
-	Start(E, T, Worker, ReqPtr<SpawnResult<T::Output>>),
+	Start(E, T, Worker, ReqPtr<SpawnResult<Output>>),
 	Pending(Ptr<Context>, Ptr<Cell<bool>>),
-	Done(SpawnResult<T::Output>)
+	Done(SpawnResult<Output>)
 }
 
-struct SpawnWorker<E, T: Task> {
-	data: SpawnData<E, T>
+struct SpawnWorker<E, T: for<'a> Task<Output<'a> = Output>, Output> {
+	data: SpawnData<E, T, Output>
 }
 
 #[future]
-impl<E: Environment, T: Task> SpawnWorker<E, T> {
+impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E, T, Output> {
 	/// # Safety
 	/// `arg` must be dereferenceable as a &mut Self.
 	/// Self::data must be a `SpawnData::Start`
@@ -58,9 +58,9 @@ impl<E: Environment, T: Task> SpawnWorker<E, T> {
 	#[inline(always)]
 	fn execute(
 		this: MutPtr<Self>, mut env: E, worker: Ptr<Worker>, task: T,
-		request: ReqPtr<SpawnResult<T::Output>>
-	) -> SpawnResult<Option<T::Output>> {
-		let context = call_non_panicking(|| env.context_mut());
+		request: ReqPtr<SpawnResult<Output>>
+	) -> SpawnResult<Option<Output>> {
+		let context = runtime::call_non_panicking(|| env.context_mut());
 
 		/* Safety: guaranteed by caller */
 		unsafe { context.set_worker(worker) };
@@ -95,9 +95,9 @@ impl<E: Environment, T: Task> SpawnWorker<E, T> {
 	}
 
 	/// # Safety
-	/// The `env` and `task` are valid and outlive the worker.
+	/// The `env` and `task` must outlive the spawned fiber
 	#[future]
-	unsafe fn spawn(env: E, task: T) -> SpawnResult<T::Output> {
+	unsafe fn spawn(env: E, task: T) -> SpawnResult<Output> {
 		#[cancel]
 		fn cancel(context: Ptr<Context>) -> Result<()> {
 			/* Safety: guaranteed by Future's contract */
@@ -109,7 +109,7 @@ impl<E: Environment, T: Task> SpawnWorker<E, T> {
 		/* Safety: worker_start never panics */
 		let start = unsafe { Start::new(Self::worker_start, ptr!(&mut spawn).cast_const().cast()) };
 
-		let executor = call_non_panicking(|| env.executor());
+		let executor = runtime::call_non_panicking(|| env.executor());
 
 		/* Safety: guaranteed by caller */
 		let worker = unsafe { ptr!(executor=>new_worker(start)) };
@@ -146,14 +146,14 @@ impl<E: Environment, T: Task> SpawnWorker<E, T> {
 /// [`Future`]
 ///
 /// # Safety
-/// The `env` and `task` are valid and outlive the worker.
+/// The `env` and `task` must outlive the spawned fiber
 ///
 /// [`Future`]: crate::future::Future
 #[future]
-pub unsafe fn spawn_task<E, T>(env: E, task: T) -> SpawnResult<T::Output>
+pub unsafe fn spawn_task<E, T, Output>(env: E, task: T) -> SpawnResult<Output>
 where
 	E: Environment,
-	T: Task
+	T: for<'a> Task<Output<'a> = Output>
 {
 	#[cancel]
 	fn cancel(_context: Ptr<Context>) -> Result<()> {
@@ -166,16 +166,15 @@ where
 }
 
 /// Utility function that calls the above with the
-/// executor and runtime passed to this function
+/// executor and env passed to this function
 ///
 /// # Safety
-/// see above
-/// the created env must outlife the task and the worker
+/// The cloned `env` and `task` must outlive the spawned fiber
 #[future]
-pub unsafe fn spawn_task_with_env<E, T>(runtime: &E, task: T) -> SpawnResult<T::Output>
+pub unsafe fn spawn_task_with_env<E, T, Output>(env: &E, task: T) -> SpawnResult<Output>
 where
 	E: Environment,
-	T: Task
+	T: for<'a> Task<Output<'a> = Output>
 {
 	#[cancel]
 	fn cancel(_context: Ptr<Context>) -> Result<()> {
@@ -183,7 +182,7 @@ where
 	}
 
 	/* Safety: guaranteed by caller */
-	unsafe { spawn_task(runtime.clone(), task).run(request) }
+	unsafe { spawn_task(env.clone(), task).run(request) }
 }
 
 struct SpawnHandle<Output> {
@@ -243,13 +242,11 @@ impl<Output> Spawn<Output> {
 	}
 
 	/// # Safety
-	/// `runtime` is a valid pointer to an env that returns a valid executor
-	/// task must outlive its execution time
-	/// the executor must outlive the task execution time
-	unsafe fn run<E, T>(runtime: &E, task: T) -> JoinHandle<Output>
+	/// The cloned `env` and `task` must outlive the spawned fiber
+	unsafe fn run<E, T>(env: &E, task: T) -> JoinHandle<Output>
 	where
 		E: Environment,
-		T: Task<Output = Output>
+		T: for<'a> Task<Output<'a> = Output>
 	{
 		/* Safety: we are never unpinned */
 		let this = unsafe { Self::new().pin_rc().into_inner() };
@@ -258,7 +255,7 @@ impl<Output> Spawn<Output> {
 		let handle = unsafe { this.handle.as_mut() };
 
 		/* Safety: guaranteed by caller */
-		match unsafe { spawn_task_with_env(runtime, task).run(ptr!(&this.request)) } {
+		match unsafe { spawn_task_with_env(env, task).run(ptr!(&this.request)) } {
 			Progress::Done(result) => handle.output = Some(result),
 			Progress::Pending(cancel) => {
 				handle.cancel = Some(cancel);
@@ -358,7 +355,7 @@ impl<Output> JoinHandle<Output> {
 
 #[asynchronous(task)]
 impl<Output> Task for JoinHandle<Output> {
-	type Output = Output;
+	type Output<'a> = Output;
 
 	async fn run(self) -> Output {
 		let result = self.try_join().await;
@@ -372,12 +369,12 @@ impl<Output> Task for JoinHandle<Output> {
 /// Returns a join handle which may be used to get the result from the task
 ///
 /// # Safety
-/// See `spawn_task_with_env`
-pub unsafe fn spawn<E, T>(runtime: &E, task: T) -> JoinHandle<T::Output>
+/// The cloned `env` and `task` must outlive the spawned fiber
+pub unsafe fn spawn<E, T, Output>(env: &E, task: T) -> JoinHandle<Output>
 where
 	E: Environment,
-	T: Task
+	T: for<'a> Task<Output<'a> = Output>
 {
 	/* Safety: guaranteed by caller */
-	unsafe { Spawn::<T::Output>::run(runtime, task) }
+	unsafe { Spawn::run(env, task) }
 }

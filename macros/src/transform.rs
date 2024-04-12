@@ -204,13 +204,7 @@ pub fn transform_fn(
 	item: TokenStream, callback: impl Fn(&mut Function<'_>) -> Result<()>,
 	allowed: impl FnOnce(&Functions) -> bool
 ) -> TokenStream {
-	let parsed = match parse2::<Functions>(item) {
-		Ok(parsed) => parsed,
-		Err(err) => return err.to_compile_error()
-	};
-
-	match parsed.transform_all(callback, allowed) {
-		Ok(ts) => ts,
-		Err(err) => err.to_compile_error()
-	}
+	try_expand(|| {
+		parse2::<Functions>(item).and_then(|parsed| parsed.transform_all(callback, allowed))
+	})
 }

@@ -24,7 +24,7 @@ fn remove_bounds(mut generics: Generics) -> Generics {
 	generics
 }
 
-fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
+fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream> {
 	let name = ext.ident.clone();
 
 	ext.ident = format_trait_ident(&name);
@@ -33,6 +33,7 @@ fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
 	let super_trait: TypeParamBound = parse_quote_spanned! { name.span() => #name #generics };
 
 	ext.supertraits.push(super_trait.clone());
+	attrs.async_kind.0 = AsyncKind::TraitExt;
 
 	for trait_item in take(&mut ext.items) {
 		let TraitItem::Fn(mut func) = trait_item else {
@@ -50,10 +51,11 @@ fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
 		}
 
 		let mut args = get_args(&func.sig.inputs, true);
+		let ident = Context::new().0;
 
 		if func.sig.asyncness.is_some() {
 			args.push(parse_quote_spanned! { func.sig.inputs.span() =>
-				::xx_core::coroutines::get_context().await
+				#ident
 			});
 		}
 
@@ -64,8 +66,8 @@ fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
 
 		if func.sig.asyncness.is_some() {
 			transform_async(
-				&mut Function::from_trait_fn(false, Some(&ext.generics), &mut func),
-				ClosureType::OpaqueTrait
+				attrs.clone(),
+				&mut Function::from_trait_fn(false, Some(&ext.generics), &mut func)
 			)?;
 		}
 
@@ -89,19 +91,18 @@ fn trait_ext(mut ext: ItemTrait) -> Result<TokenStream> {
 	})
 }
 
-pub fn async_trait(item: ItemTrait) -> Result<TokenStream> {
-	let ext = trait_ext(item.clone())?;
+pub fn async_trait(mut attrs: AttributeArgs, item: ItemTrait) -> Result<TokenStream> {
+	let ext = trait_ext(attrs.clone(), item.clone())?;
+
+	attrs.async_kind.0 = AsyncKind::TraitFn;
 
 	let functions = Functions::Trait(item);
 	let item = functions.transform_all(
 		|func| {
+			func.is_root = false;
 			func.sig.ident = format_fn_ident(&func.sig.ident);
 
-			if func.sig.asyncness.is_some() {
-				transform_async(func, ClosureType::None)
-			} else {
-				Ok(())
-			}
+			transform_async(attrs.clone(), func)
 		},
 		|_| true
 	)?;
@@ -109,13 +110,15 @@ pub fn async_trait(item: ItemTrait) -> Result<TokenStream> {
 	Ok(quote! { #item #ext })
 }
 
-pub fn async_impl(item: Functions) -> Result<TokenStream> {
+pub fn async_impl(mut attrs: AttributeArgs, item: Functions) -> Result<TokenStream> {
+	attrs.async_kind.0 = AsyncKind::TraitFn;
+
 	item.transform_all(
 		|func| {
 			func.is_root = false;
 			func.sig.ident = format_fn_ident(&func.sig.ident);
 
-			transform_async(func, ClosureType::None)
+			transform_async(attrs.clone(), func)
 		},
 		|item| matches!(item, Functions::Fn(_) | Functions::Impl(_))
 	)

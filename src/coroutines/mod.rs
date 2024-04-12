@@ -6,13 +6,11 @@ use crate::{
 	error::*,
 	fiber::*,
 	future::{self, closure::*, future, Cancel, Complete, Future, Progress, ReqPtr, Request},
-	impls::AsyncFnOnce,
+	impls::{AsyncFn, AsyncFnMut, AsyncFnOnce},
 	macros::{panic_nounwind, unreachable_unchecked},
 	opt::hint::*,
 	pointer::*,
-	runtime,
-	runtime::call_non_panicking,
-	warn
+	runtime, warn
 };
 
 mod lang {}
@@ -35,22 +33,29 @@ pub use select::*;
 pub use spawn::*;
 pub use worker::*;
 
-/// An async task
-#[asynchronous(task)]
-pub trait Task {
-	type Output;
-
-	async fn run(self) -> Self::Output;
-}
-
 /* The budget for async tasks */
 pub const DEFAULT_BUDGET: u32 = 128;
 
+/// An async task
+///
+/// # Safety
+/// Exposes the context for the current async worker
+/// Must not use the context to suspend in a sync function
+///
+/// See [`get_context`] for more information
+#[asynchronous(task)]
+pub unsafe trait Task {
+	type Output<'a>;
+
+	async fn run(self) -> Self::Output<'_>;
+}
+
 #[asynchronous]
 pub trait TaskExtensions: Task + Sized {
-	async fn map<F>(self, map: F) -> F::Output
+	async fn map<F, Output>(self, map: F) -> F::Output
 	where
-		F: AsyncFnOnce<Self::Output>
+		F: AsyncFnOnce<Output>,
+		Self: for<'a> Task<Output<'a> = Output>
 	{
 		map.call_once(self.await).await
 	}
@@ -58,49 +63,45 @@ pub trait TaskExtensions: Task + Sized {
 
 impl<T: Task> TaskExtensions for T {}
 
-/// Get a pointer to the current context
+/// # Safety
+/// This function is marked as unsafe because getting
+/// a handle to the `Context` would let users suspend in
+/// sync functions or closures, which is unsafe
 ///
-/// Always returns a valid, dereferenceable pointer if the calling function is
-/// an async function. Otherwise, the context must be valid until it has
-/// finished executing.
+/// See also [`scoped`]
 #[asynchronous]
 #[lang = "get_context"]
-pub async fn get_context() -> Ptr<Context> {
+pub async unsafe fn get_context() -> &'current Context {
 	/* compiler builtin */
 }
 
 /// # Safety
-/// `context` and `task` must live across suspends, and any lifetimes
-/// captured by `task` must remain valid until this function returns
-pub unsafe fn scoped<T>(context: Ptr<Context>, task: T) -> T::Output
+/// The current routine must be allowed to suspend
+/// This must be allowed in any async function
+///
+/// In synchronous functions, it is allowed to suspend
+/// if all references are allowed to cross an await barrier
+pub unsafe fn scoped<T, Output>(context: &Context, task: T) -> Output
 where
-	T: Task
+	T: for<'a> Task<Output<'a> = Output>
 {
-	/* Safety: guaranteed by caller */
-	unsafe { ptr!(context=>run(task)) }
+	context.run(task)
 }
 
-#[asynchronous]
-pub async fn with_context<F, Output>(func: F) -> Output
-where
-	F: for<'a> AsyncFnOnce<&'a Context, Output = Output>
-{
-	/* Safety: we are in an async function */
-	func.call_once(unsafe { get_context().await.as_ref() })
-		.await
-}
-
+/// Block on a `Future`, suspending until it completes
 #[asynchronous]
 pub async fn block_on<F>(future: F) -> F::Output
 where
 	F: Future
 {
-	with_context(|context: &Context| async move { context.block_on(future) }).await
+	/* Safety: we are in an async function */
+	unsafe { get_context().await.block_on(future) }
 }
 
 #[asynchronous]
 pub async fn current_budget() -> u32 {
-	with_context(|context: &Context| async move { context.current_budget() as u32 }).await
+	/* Safety: we are in an async function */
+	unsafe { get_context().await }.current_budget() as u32
 }
 
 #[asynchronous]
@@ -110,12 +111,16 @@ pub async fn acquire_budget(amount: Option<u32>) -> bool {
 		Err(_) => return false
 	};
 
-	with_context(|context: &Context| async move { context.decrease_budget(amount).is_some() }).await
+	/* Safety: we are in an async function */
+	unsafe { get_context().await }
+		.decrease_budget(amount)
+		.is_some()
 }
 
 #[asynchronous]
 pub async fn is_interrupted() -> bool {
-	with_context(|context: &Context| async move { context.interrupted() }).await
+	/* Safety: we are in an async function */
+	unsafe { get_context().await }.interrupted()
 }
 
 #[asynchronous]
@@ -129,10 +134,8 @@ pub async fn check_interrupt() -> Result<()> {
 
 #[asynchronous]
 pub async fn clear_interrupt() {
-	with_context(|context: &Context| async move {
-		context.clear_interrupt();
-	})
-	.await;
+	/* Safety: we are in an async function */
+	unsafe { get_context().await }.clear_interrupt();
 }
 
 #[asynchronous]
@@ -159,15 +162,9 @@ pub async fn check_interrupt_take() -> Result<()> {
 ///
 /// While this guard is held, any attempt to interrupt
 /// the current context will be ignored
-///
-/// # Safety
-/// the async context must outlive InterruptGuard. Since InterruptGuard
-/// does not have a lifetime generic, care should be taken to ensure that it
-/// doesn't get dropped after the async context gets dropped
-///
-/// This usually never happens unless InterruptGuard is moved into a struct
 #[asynchronous]
-pub async unsafe fn interrupt_guard() -> InterruptGuard {
-	/* Safety: guaranteed by caller */
-	unsafe { InterruptGuard::new(get_context().await) }
+#[context('current)]
+pub async fn interrupt_guard() -> InterruptGuard<'current> {
+	/* Safety: we are in an async function */
+	InterruptGuard::new(unsafe { get_context().await })
 }

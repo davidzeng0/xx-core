@@ -131,10 +131,5 @@ impl WrapperFunctions {
 }
 
 pub fn wrapper_functions(item: TokenStream) -> TokenStream {
-	let functions = match parse2::<WrapperFunctions>(item) {
-		Ok(functions) => functions,
-		Err(err) => return err.to_compile_error()
-	};
-
-	functions.expand()
+	try_expand(|| parse2::<WrapperFunctions>(item).map(|functions| functions.expand()))
 }

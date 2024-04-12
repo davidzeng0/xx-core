@@ -115,7 +115,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				quote! { ::xx_core::future::closure::FutureClosure }
 			)
 		}),
-		false
+		LifetimeAnnotations::Auto
 	)?;
 
 	Ok(())

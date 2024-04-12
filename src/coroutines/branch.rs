@@ -275,8 +275,9 @@ impl<
 		/* Safety: the future has completed */
 		let result = unsafe { ptr!(this=>handles.0.complete(Ok(value))) };
 
-		/* Safety: guaranteed by Future's contract */
-		let should_cancel = call_non_panicking(|| unsafe { ptr!(this=>should_cancel.0(result)) });
+		let should_cancel =
+			/* Safety: guaranteed by Future's contract */
+			runtime::call_non_panicking(|| unsafe { ptr!(this=>should_cancel.0(result)) });
 
 		/* Safety: the future has completed */
 		unsafe { Self::complete_single(this, true, should_cancel) };
@@ -288,8 +289,9 @@ impl<
 		/* Safety: the future has completed */
 		let result = unsafe { ptr!(this=>handles.1.complete(Ok(value))) };
 
-		/* Safety: guaranteed by Future's contract */
-		let should_cancel = call_non_panicking(|| unsafe { ptr!(this=>should_cancel.1(result)) });
+		let should_cancel =
+			/* Safety: guaranteed by Future's contract */
+			runtime::call_non_panicking(|| unsafe { ptr!(this=>should_cancel.1(result)) });
 
 		/* Safety: the future has completed */
 		unsafe { Self::complete_single(this, false, should_cancel) };

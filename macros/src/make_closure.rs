@@ -11,7 +11,7 @@ where
 	parse2(closure_lifetime()).unwrap()
 }
 
-const SELF_IDENT: &str = "__xx_internal_self";
+const SELF_IDENT: &str = "__self";
 
 pub struct ReplaceSelf;
 
@@ -22,7 +22,7 @@ impl VisitMut for ReplaceSelf {
 		let FnArg::Receiver(rec) = arg else { return };
 
 		let (attrs, mut mutability, ty) = (&rec.attrs, rec.mutability, &rec.ty);
-		let ident = format_ident!("{}", SELF_IDENT);
+		let ident = format_ident!("{}", SELF_IDENT, span = Span::mixed_site());
 
 		if rec.reference.is_some() {
 			mutability = None;
@@ -38,7 +38,7 @@ impl VisitMut for ReplaceSelf {
 		visit_ident_mut(self, ident);
 
 		if ident == "self" {
-			*ident = format_ident!("{}", SELF_IDENT, span = ident.span());
+			*ident = format_ident!("{}", SELF_IDENT, span = Span::mixed_site());
 		}
 	}
 
@@ -145,13 +145,7 @@ impl VisitMut for AddLifetime {
 		));
 	}
 
-	fn visit_return_type_mut(&mut self, ret: &mut ReturnType) {
-		if let ReturnType::Type(_, ty) = ret {
-			if let Type::Reference(reference) = ty.as_mut() {
-				self.visit_type_reference_mut(reference);
-			}
-		}
-	}
+	fn visit_return_type_mut(&mut self, _: &mut ReturnType) {}
 
 	fn visit_signature_mut(&mut self, sig: &mut Signature) {
 		for arg in &mut sig.inputs {
@@ -187,7 +181,7 @@ fn capture_lifetimes(sig: &Signature, env_generics: Option<&Generics>) -> TokenS
 	quote! { #addl_bounds }
 }
 
-fn add_lifetime(
+fn add_lifetimes(
 	sig: &mut Signature, env_generics: Option<&Generics>, annotations: LifetimeAnnotations
 ) -> TokenStream {
 	if annotations == LifetimeAnnotations::None {
@@ -304,7 +298,7 @@ pub fn make_explicit_closure(
 	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream,
 	annotations: LifetimeAnnotations
 ) -> Result<TokenStream> {
-	add_lifetime(func.sig, func.env_generics, annotations);
+	add_lifetimes(func.sig, func.env_generics, annotations);
 
 	let (types, construct, destruct) = build_tuples(&mut func.sig.inputs, |arg| match arg {
 		FnArg::Typed(pat) => {
@@ -316,33 +310,39 @@ pub fn make_explicit_closure(
 		}
 
 		FnArg::Receiver(rec) => {
-			let make_pat_ident = |ident: &str, copy_mut: bool| {
+			let make_pat_ident = |ident: &str, copy_mut: bool, mixed_site: bool| {
 				let mutability = if copy_mut && rec.reference.is_none() {
 					rec.mutability
 				} else {
 					None
 				};
 
+				let span = if mixed_site {
+					Span::mixed_site()
+				} else {
+					rec.span()
+				};
+
 				Pat::Ident(PatIdent {
 					attrs: rec.attrs.clone(),
 					by_ref: None,
 					mutability,
-					ident: format_ident!("{}", ident, span = rec.span()),
+					ident: format_ident!("{}", ident, span = span),
 					subpat: None
 				})
 			};
 
 			(
 				rec.ty.as_ref().clone(),
-				make_pat_ident("self", false),
-				make_pat_ident(SELF_IDENT, true)
+				make_pat_ident("self", false, false),
+				make_pat_ident(SELF_IDENT, true, true)
 			)
 		}
 	});
 
 	let (args, _) = make_args(args);
 	let return_type = get_return_type(&func.sig.output);
-	let closure_return_type = transform_return(types.clone(), return_type.clone());
+	let closure_return_type = transform_return(types.clone(), return_type.to_token_stream());
 
 	func.attrs.push(parse_quote! { #[inline(always)] });
 	func.sig.output = parse_quote! { -> #closure_return_type };
@@ -369,24 +369,17 @@ pub enum OpaqueClosureType<T> {
 
 pub fn make_opaque_closure(
 	func: &mut Function<'_>, args: &[(TokenStream, TokenStream)],
-	transform_return: impl Fn(TokenStream) -> TokenStream,
+	transform_return: impl Fn(&mut Type) -> TokenStream,
 	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>,
-	is_trait: bool
+	annotations: LifetimeAnnotations
 ) -> Result<TokenStream> {
-	let addl_lifetimes = add_lifetime(
-		func.sig,
-		func.env_generics,
-		if is_trait {
-			LifetimeAnnotations::None
-		} else {
-			LifetimeAnnotations::Auto
-		}
-	);
+	let addl_lifetimes = add_lifetimes(func.sig, func.env_generics, annotations);
 
 	let (args, args_types) = make_args(args);
 
-	let return_type = &mut func.sig.output;
-	let closure_return_type = transform_return(get_return_type(return_type));
+	let mut return_type = get_return_type(&func.sig.output);
+	let closure_return_type = transform_return(&mut return_type);
+
 	let (closure_return_type, trait_impl_wrap) = match closure_type {
 		OpaqueClosureType::Custom(transform) => {
 			let (trait_type, trait_impl) = transform(closure_return_type);
@@ -406,7 +399,7 @@ pub fn make_opaque_closure(
 	};
 
 	if let Some(block) = &mut func.block {
-		let mut closure = quote! { move | #args | #return_type #block };
+		let mut closure = quote! { move | #args | -> #return_type #block };
 
 		if let Some(wrap) = trait_impl_wrap {
 			closure = quote! { #wrap::new(#closure) }

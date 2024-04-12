@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::VecDeque;
 
 use super::*;
@@ -250,7 +252,7 @@ struct Select {
 }
 
 impl Select {
-	fn expand(&self) -> TokenStream {
+	fn expand(&self) -> Result<TokenStream> {
 		let (env, branches) = (&self.env, &self.branches);
 
 		let tasks: Vec<_> = branches
@@ -258,11 +260,13 @@ impl Select {
 			.flat_map(|branch| branch.task.as_ref())
 			.collect();
 		if tasks.len() < 2 {
-			return Error::new(Span::call_site(), "Select takes a minimum of two branches")
-				.to_compile_error();
+			return Err(Error::new(
+				Span::call_site(),
+				"Select takes a minimum of two branches"
+			));
 		}
 
-		branch(env, &tasks, Mode::Select(branches))
+		Ok(branch(env, &tasks, Mode::Select(branches)))
 	}
 }
 
@@ -302,12 +306,7 @@ impl Parse for Select {
 }
 
 pub fn select(item: TokenStream) -> TokenStream {
-	let select = match parse2::<Select>(item) {
-		Ok(select) => select,
-		Err(err) => return err.to_compile_error()
-	};
-
-	select.expand()
+	try_expand(|| parse2::<Select>(item).and_then(|select| select.expand()))
 }
 
 struct Join {
@@ -316,17 +315,19 @@ struct Join {
 }
 
 impl Join {
-	fn expand(&self) -> TokenStream {
+	fn expand(&self) -> Result<TokenStream> {
 		let (env, tasks) = (&self.env, &self.tasks);
 
 		if tasks.len() < 2 {
-			return Error::new(Span::call_site(), "Join takes a minimum of two branches")
-				.to_compile_error();
+			return Err(Error::new(
+				Span::call_site(),
+				"Join takes a minimum of two branches"
+			));
 		}
 
 		let tasks: Vec<_> = tasks.iter().collect();
 
-		branch(env, &tasks, Mode::Join)
+		Ok(branch(env, &tasks, Mode::Join))
 	}
 }
 
@@ -342,11 +343,12 @@ impl Parse for Join {
 	}
 }
 
-pub fn join(item: TokenStream) -> TokenStream {
-	let join = match parse2::<Join>(item) {
-		Ok(join) => join,
-		Err(err) => return err.to_compile_error()
-	};
+pub fn join(_: TokenStream) -> TokenStream {
+	// let join = match parse2::<Join>(item) {
+	// 	Ok(join) => join,
+	// 	Err(err) => return err.to_compile_error()
+	// };
 
-	join.expand()
+	// join.expand()
+	Error::new(Span::call_site(), "This macro currently does not work").to_compile_error()
 }

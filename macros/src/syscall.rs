@@ -116,12 +116,7 @@ impl SyscallImpl {
 }
 
 pub fn syscall_impl(item: TokenStream) -> TokenStream {
-	let syscall_impl = match parse2::<SyscallImpl>(item) {
-		Ok(functions) => functions,
-		Err(err) => return err.to_compile_error()
-	};
-
-	syscall_impl.expand()
+	try_expand(|| parse2::<SyscallImpl>(item).map(|syscall| syscall.expand()))
 }
 
 struct ArrayOptions {

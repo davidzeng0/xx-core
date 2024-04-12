@@ -1,7 +1,7 @@
 use std::mem::replace;
 
 use super::*;
-use crate::{macros::unreachable_unchecked, runtime::call_non_panicking};
+use crate::macros::unreachable_unchecked;
 
 enum BlockState<Resume, Output> {
 	Pending(Resume),

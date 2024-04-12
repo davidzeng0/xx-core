@@ -7,7 +7,7 @@ use syn::{
 	visit_mut::*,
 	*
 };
-use xx_macro_support::{attribute::*, function::*, visit_macro::*};
+use xx_macro_support::{attribute::*, fallible::*, function::*, visit_macro::*};
 
 mod asynchronous;
 mod duration;

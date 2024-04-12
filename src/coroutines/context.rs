@@ -10,16 +10,18 @@ use super::*;
 /// The environment for an async worker
 ///
 /// # Safety
-/// implementations must obey the contracts for the functions
+/// implementations must obey the contracts for implementing the functions
 pub unsafe trait Environment: 'static {
 	/// Gets the context associated with the worker
 	///
-	/// This function must never panic
+	/// This function must never panic, and must return the same context every
+	/// time
 	fn context(&self) -> &Context;
 
 	/// Gets the context associated with the worker
 	///
-	/// This function must never panic
+	/// This function must never panic, and must return the same context as
+	/// `Environment::context`
 	fn context_mut(&mut self) -> &mut Context;
 
 	/// Returns the Environment that owns the Context
@@ -33,8 +35,8 @@ pub unsafe trait Environment: 'static {
 	/// Creates a new environment for a new worker
 	///
 	/// # Safety
-	/// the runtime and the contained context must be alive while it's executing
-	/// this function is unsafe so that Context::run may be safe
+	/// the environment and the contained context must be alive while it's
+	/// executing this function is unsafe so that Context::run may be safe
 	unsafe fn clone(&self) -> Self;
 
 	/// Returns the executor
@@ -72,7 +74,7 @@ where
 
 	/* comparing `TypeId`s is generally slower than u32
 	 *
-	 * u32 is enough to ensure that two different runtimes
+	 * u32 is enough to ensure that two different environments
 	 * are in fact different
 	 */
 	#[allow(clippy::cast_possible_truncation)]
@@ -159,11 +161,11 @@ impl Context {
 
 	/// Runs async task `T`
 	#[inline(always)]
-	pub fn run<T>(&self, task: T) -> T::Output
+	pub fn run<T>(&self, task: T) -> T::Output<'_>
 	where
 		T: Task
 	{
-		task.run(ptr!(self))
+		task.run(self)
 	}
 
 	/// Safety: same as Worker::suspend
@@ -184,7 +186,8 @@ impl Context {
 		F: Future
 	{
 		let worker = self.worker;
-		let block = |cancel| {
+
+		let block = move |cancel| {
 			/* avoid allocations by storing on the stack */
 			let mut cancel = Some(cancel);
 			let canceller = Canceller::new(ptr!(&mut cancel));
@@ -205,9 +208,9 @@ impl Context {
 			}
 		};
 
-		let resume = || {
+		let resume = move || {
 			/* Safety: context is valid while executing */
-			unsafe { ptr!(worker=>resume()) }
+			unsafe { ptr!(worker=>resume()) };
 		};
 
 		/* Safety: we are blocked until the future completes */
@@ -298,22 +301,23 @@ impl Context {
 	{
 		if self.environment == type_for::<E>() {
 			/* Safety: type is checked */
-			Some(call_non_panicking(|| unsafe { E::from_context(self) }))
+			Some(runtime::call_non_panicking(|| unsafe {
+				E::from_context(self)
+			}))
 		} else {
 			None
 		}
 	}
 }
 
-pub struct InterruptGuard {
-	context: Ptr<Context>
+pub struct InterruptGuard<'a> {
+	context: &'a Context
 }
 
-impl InterruptGuard {
-	/// Safety: self.context must be valid
-	unsafe fn update_guard_count(&self, rel: i32) {
-		/* Safety: context must be valid. get exclusive mutable access to the inner */
-		let inner = unsafe { ptr!(self.context=>inner.as_mut()) };
+impl<'a> InterruptGuard<'a> {
+	fn update_guard_count(&self, rel: i32) {
+		/* Safety: exclusive unsafe cell access */
+		let inner = unsafe { self.context.inner.as_mut() };
 
 		inner.guards = match inner.guards.checked_add_signed(rel) {
 			Some(guards) => guards,
@@ -324,21 +328,16 @@ impl InterruptGuard {
 		};
 	}
 
-	/// # Safety
-	/// context must be valid and outlive Self
-	pub(super) unsafe fn new(context: Ptr<Context>) -> Self {
+	pub(super) fn new(context: &'a Context) -> Self {
 		let this = Self { context };
 
-		/* Safety: contract upheld by caller */
-		unsafe { this.update_guard_count(1) };
-
+		this.update_guard_count(1);
 		this
 	}
 }
 
-impl Drop for InterruptGuard {
+impl Drop for InterruptGuard<'_> {
 	fn drop(&mut self) {
-		/* Safety: guaranteed by creator of interrupt guard */
-		unsafe { self.update_guard_count(-1) };
+		self.update_guard_count(-1);
 	}
 }

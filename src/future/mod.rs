@@ -1,5 +1,5 @@
 pub use crate::macros::future;
-use crate::{error::*, pointer::*};
+use crate::{error::*, pointer::*, runtime::call_non_panicking};
 
 mod block_on;
 pub mod closure;
@@ -68,7 +68,7 @@ impl<T> Request<T> {
 		let Self { arg, callback } = unsafe { ptr!(*request) };
 
 		/* Safety: guaranteed by caller */
-		unsafe { (callback)(request, arg, value) };
+		call_non_panicking(|| unsafe { (callback)(request, arg, value) });
 	}
 }
 

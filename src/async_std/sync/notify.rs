@@ -70,8 +70,9 @@ impl<T: Clone> Notify<T> {
 
 		/* Safety: guaranteed by caller
 		 *
-		 * note: even though we have &mut to Waiter, modifications to the node's
-		 * pointers is not actually UB (according to miri tree borrows)
+		 * note: even though we have &mut to the Waiter, and &mut Cell<T> by
+		 * extension, it's not actually UB if the node's pointers get changed
+		 * as long as we don't call `Cell::get_mut`
 		 */
 		unsafe { self.waiters.append(&waiter.node) };
 

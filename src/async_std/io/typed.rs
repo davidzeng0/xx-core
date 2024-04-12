@@ -11,8 +11,7 @@ use paste::paste;
 use super::*;
 use crate::{
 	impls::{FromBytes, ToBytes},
-	macros::macro_each,
-	pointer::*
+	macros::macro_each
 };
 
 macro_rules! impl_primitive_bytes_encoding_endian {
@@ -423,20 +422,21 @@ impl<T: BufRead> BufReadTyped for T {}
 
 struct FmtAdapter<'a, W: Write> {
 	writer: &'a mut W,
-	context: Ptr<Context>,
+	context: &'a Context,
 	wrote: usize,
 	error: Option<Error>
 }
 
 #[asynchronous]
 impl<'a, W: Write> FmtAdapter<'a, W> {
-	fn new(writer: &'a mut W, context: Ptr<Context>) -> Self {
+	fn new(writer: &'a mut W, context: &'a Context) -> Self {
 		Self { writer, context, wrote: 0, error: None }
 	}
 
 	/// # Safety
-	/// the context and function args must be valid for the suspending function
-	/// call
+	/// See [`scoped`]
+	///
+	/// [`scoped`]: crate::coroutines::scoped
 	async unsafe fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
 		match fmt::write(self, args) {
 			Ok(()) => Ok(self.wrote),
@@ -514,11 +514,11 @@ pub trait WriteTyped: WriteSealed {
 	where
 		Self: Sized
 	{
-		let mut adapter = FmtAdapter::new(self, get_context().await);
-
 		/* Safety: we are in an async function */
-		#[allow(unsafe_code)]
+		#[allow(unsafe_code, clippy::multiple_unsafe_ops_per_block)]
 		unsafe {
+			let mut adapter = FmtAdapter::new(self, get_context().await);
+
 			adapter.write_args(args).await
 		}
 	}

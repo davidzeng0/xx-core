@@ -65,21 +65,19 @@ where
 /// then the panic resumes on the caller
 ///
 /// # Safety
-/// The executor and the created runtime outlive the worker
+/// The cloned `env` and the tasks must outlive their spawned fiber
 #[asynchronous]
-pub async unsafe fn join<E, T1, T2>(
-	runtime: &E, task_1: T1, task_2: T2
-) -> Join<T1::Output, T2::Output>
+pub async unsafe fn join<E, T1, T2, O1, O2>(env: &E, task_1: T1, task_2: T2) -> Join<O1, O2>
 where
 	E: Environment,
-	T1: Task,
-	T2: Task
+	T1: for<'a> Task<Output<'a> = O1>,
+	T2: for<'a> Task<Output<'a> = O2>
 {
 	/* Safety: guaranteed by caller */
 	let branch = unsafe {
 		branch(
-			spawn_task_with_env(runtime, task_1),
-			spawn_task_with_env(runtime, task_2),
+			spawn_task_with_env(env, task_1),
+			spawn_task_with_env(env, task_2),
 			(
 				|result| !matches!(result, Ok(Ok(_))),
 				|result| !matches!(result, Ok(Ok(_)))
