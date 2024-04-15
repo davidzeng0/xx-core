@@ -20,7 +20,7 @@ define_enum! {
 		RingDisabled            = 1 << 6,
 		SubmitAll               = 1 << 7,
 		CoopTaskrun             = 1 << 8,
-		TaskRun                 = 1 << 9,
+		TaskrunFlag             = 1 << 9,
 		SubmissionEntryWide     = 1 << 10,
 		CompletionEntryWide     = 1 << 11,
 		SingleIssuer            = 1 << 12,
@@ -630,8 +630,8 @@ define_enum! {
 pub const SIGSET_SIZE: usize = SIGRTMAX as usize / 8;
 
 /// # Safety
-/// `submit` must be correct. inputting a higher number than sqes queued will
-/// result in bogus operations
+/// the entries to be submitted indicated by `submit` and the sqring's `head`
+/// and `tail` pointers must be valid
 pub unsafe fn io_uring_enter(
 	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: BitFlags<EnterFlag>,
 	sigset: SignalMask<'_>
@@ -641,8 +641,7 @@ pub unsafe fn io_uring_enter(
 }
 
 /// # Safety
-/// `submit` must be correct. inputting a higher number than sqes queued will
-/// result in bogus operations
+/// See [`io_uring_enter`]
 #[syscall_define(IoUringEnter)]
 pub unsafe fn io_uring_enter2(
 	fd: BorrowedFd<'_>, submit: u32, min_complete: u32, flags: BitFlags<EnterFlag>,
@@ -650,8 +649,7 @@ pub unsafe fn io_uring_enter2(
 ) -> OsResult<i32>;
 
 /// # Safety
-/// `submit` must be correct. inputting a higher number than sqes queued will
-/// result in bogus operations
+/// See [`io_uring_enter`]
 ///
 /// # Panics
 /// if `timeout` does not fit in a i64
@@ -834,7 +832,7 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 		(SetupFlag::RingDisabled, 510),
 		(SetupFlag::SubmitAll, 518),
 		(SetupFlag::CoopTaskrun, 519),
-		(SetupFlag::TaskRun, 519),
+		(SetupFlag::TaskrunFlag, 519),
 		(SetupFlag::SubmissionEntryWide, 519),
 		(SetupFlag::CompletionEntryWide, 519),
 		(SetupFlag::SingleIssuer, 600),

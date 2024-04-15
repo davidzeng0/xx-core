@@ -270,7 +270,7 @@ impl Context {
 		if !already_interrupted {
 			Ok(())
 		} else {
-			Err(Core::Pending("Interrupt pending").into())
+			Err(Core::Pending("Interrupt pending".into()).into())
 		}
 	}
 

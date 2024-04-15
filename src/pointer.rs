@@ -5,7 +5,7 @@ use std::{
 	cmp::Ordering,
 	fmt::{self, Debug, Formatter, Result},
 	ops::{Add, Deref, DerefMut, Sub},
-	ptr::null_mut,
+	ptr::{null_mut, slice_from_raw_parts_mut},
 	rc::Rc
 };
 
@@ -27,6 +27,30 @@ pub mod internal {
 		type Target;
 
 		fn as_pointer(&self) -> Self::Target;
+	}
+
+	impl<T: ?Sized> AsPointer for Ptr<T> {
+		type Target = *const T;
+
+		fn as_pointer(&self) -> *const T {
+			self.ptr
+		}
+	}
+
+	impl<T: ?Sized> AsPointer for MutPtr<T> {
+		type Target = *mut T;
+
+		fn as_pointer(&self) -> *mut T {
+			self.ptr
+		}
+	}
+
+	impl<T: ?Sized> AsPointer for UnsafeCell<T> {
+		type Target = *mut T;
+
+		fn as_pointer(&self) -> *mut T {
+			self.get().as_pointer()
+		}
 	}
 
 	pub trait PointerOffset {
@@ -120,14 +144,6 @@ impl<T: ?Sized> Ptr<T> {
 	}
 }
 
-impl<T: ?Sized> internal::AsPointer for Ptr<T> {
-	type Target = *const T;
-
-	fn as_pointer(&self) -> *const T {
-		self.ptr
-	}
-}
-
 impl<T: ?Sized> MutPtr<T> {
 	wrapper_functions! {
 		inner = self.ptr;
@@ -154,20 +170,29 @@ impl<T: ?Sized> MutPtr<T> {
 	}
 }
 
-impl<T: ?Sized> internal::AsPointer for MutPtr<T> {
-	type Target = *mut T;
-
-	fn as_pointer(&self) -> *mut T {
-		self.ptr
-	}
-}
-
 impl<T> MutPtr<T> {
 	wrapper_functions! {
 		inner = self.ptr;
 
 		pub unsafe fn write_bytes(self, val: u8, count: usize);
 		pub unsafe fn write(self, value: T);
+	}
+}
+
+impl<T, const MUT: bool> Pointer<[T], MUT> {
+	wrapper_functions! {
+		inner = self.ptr;
+
+		#[must_use]
+		pub fn len(self) -> usize;
+
+		#[must_use]
+		pub fn is_empty(self) -> bool;
+	}
+
+	#[must_use]
+	pub fn slice_from_raw_parts(data: Pointer<T, MUT>, len: usize) -> Self {
+		Self { ptr: slice_from_raw_parts_mut(data.ptr, len) }
 	}
 }
 
@@ -397,13 +422,5 @@ impl<T: Pin + ?Sized> Pin for UnsafeCell<T> {
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
 		unsafe { self.get_mut().pin() };
-	}
-}
-
-impl<T: ?Sized> internal::AsPointer for UnsafeCell<T> {
-	type Target = *mut T;
-
-	fn as_pointer(&self) -> *mut T {
-		self.get().as_pointer()
 	}
 }

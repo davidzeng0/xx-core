@@ -19,7 +19,7 @@ mod private {
 
 pub use io::ErrorKind;
 
-pub use crate::macros::errors;
+pub use crate::macros::{errors, wrapper_functions};
 
 pub type Result<T> = result::Result<T, Error>;
 pub type OsResult<T> = result::Result<T, OsError>;
@@ -66,9 +66,16 @@ pub trait IntoError: error::Error + Send + Sync + Sized + 'static {
 pub struct Error(anyhow::Error);
 
 impl Error {
+	wrapper_functions! {
+		inner = self.0;
+
+		pub fn downcast_ref<E>(&self) -> Option<&E> where E: Display + Debug + Send + Sync + 'static;
+		pub fn downcast_mut<E>(&mut self) -> Option<&mut E> where E: Display + Debug + Send + Sync + 'static;
+	}
+
 	#[must_use]
 	pub fn os_error(&self) -> Option<OsError> {
-		self.0.downcast_ref::<Os>().map(|os| os.0)
+		self.downcast_ref::<Os>().map(|os| os.0)
 	}
 
 	#[must_use]
@@ -77,7 +84,7 @@ impl Error {
 			return os.kind();
 		}
 
-		if let Some(core) = self.0.downcast_ref::<Core>() {
+		if let Some(core) = self.downcast_ref::<Core>() {
 			return core.kind();
 		}
 
@@ -107,8 +114,7 @@ impl Error {
 
 impl<T: PartialEq + IntoError> PartialEq<T> for Error {
 	fn eq(&self, other: &T) -> bool {
-		self.0
-			.downcast_ref::<T>()
+		self.downcast_ref::<T>()
 			.is_some_and(|inner| inner.eq(other))
 	}
 }
@@ -194,6 +200,36 @@ impl IntoError for Os {}
 impl error::Error for Os {}
 
 #[errors]
+pub enum SimpleMessage {
+	#[error("{0}")]
+	Static(&'static str),
+
+	#[error("{0}")]
+	Owned(String)
+}
+
+impl From<&'static str> for SimpleMessage {
+	fn from(value: &'static str) -> Self {
+		Self::Static(value)
+	}
+}
+
+impl From<String> for SimpleMessage {
+	fn from(value: String) -> Self {
+		Self::Owned(value)
+	}
+}
+
+impl From<fmt::Arguments<'_>> for SimpleMessage {
+	fn from(value: fmt::Arguments<'_>) -> Self {
+		match value.as_str() {
+			Some(str) => Self::from(str),
+			None => Self::from(fmt::format(value))
+		}
+	}
+}
+
+#[errors]
 pub enum Core {
 	#[error("Entity not found")]
 	NotFound,
@@ -201,8 +237,8 @@ pub enum Core {
 	#[error("Permission denied")]
 	PermissionDenied,
 
-	#[error("{0}")]
-	Interrupted(&'static str),
+	#[error(transparent)]
+	Interrupted(SimpleMessage),
 
 	#[error("Write EOF")]
 	WriteZero,
@@ -234,8 +270,11 @@ pub enum Core {
 	#[error("Formatter error")]
 	FormatterError,
 
-	#[error("{0}")]
-	Pending(&'static str)
+	#[error(transparent)]
+	Unimplemented(SimpleMessage),
+
+	#[error(transparent)]
+	Pending(SimpleMessage)
 }
 
 impl Core {
@@ -255,13 +294,24 @@ impl Core {
 			Self::ConnectTimeout => ErrorKind::TimedOut,
 			Self::Shutdown => ErrorKind::NotConnected,
 			Self::FormatterError => ErrorKind::Other,
+			Self::Unimplemented(_) => ErrorKind::Other,
 			Self::Pending(_) => ErrorKind::Other
 		}
 	}
 
 	#[must_use]
-	pub const fn interrupted() -> Self {
-		Self::Interrupted("Interrupted")
+	pub fn interrupted() -> Self {
+		Self::Interrupted("Interrupted".into())
+	}
+
+	#[must_use]
+	pub fn unimplemented() -> Self {
+		Self::Unimplemented("Unimplemented".into())
+	}
+
+	#[must_use]
+	pub fn pending() -> Self {
+		Self::Pending("Operation pending".into())
 	}
 }
 
@@ -269,8 +319,12 @@ impl Core {
 macro_rules! fmt_error {
 	($($arg:tt)*) => {
 		<$crate::error::Error as ::std::convert::From<
-			$crate::error::re_exports::anyhow::Error
-		>>::from($crate::error::re_exports::anyhow::anyhow!($($arg)*))
+			$crate::error::SimpleMessage
+		>>::from(
+			$crate::error::SimpleMessage::from(
+				::std::format_args!($($arg)*)
+			)
+		)
 	}
 }
 

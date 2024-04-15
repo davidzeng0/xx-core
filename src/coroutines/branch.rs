@@ -89,7 +89,8 @@ impl<F: Future> FutureHandle<F> {
 	/// Must call `FutureHandle::complete` when the future finishes
 	/// Request arg must be set
 	unsafe fn run(&mut self) -> Option<&mut MaybePanic<F::Output>> {
-		assert_unsafe_precondition!(!self.request.arg.is_null());
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(!self.request.arg.is_null()) };
 
 		let future = match self.state.take() {
 			State::Ready(future) => future,

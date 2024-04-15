@@ -182,7 +182,8 @@ impl Fiber {
 	/// # Safety
 	/// `self` must be currently running
 	pub unsafe fn switch(this: MutPtr<Self>, to: MutPtr<Self>) {
-		assert_unsafe_precondition!(!this.is_null() && !to.is_null());
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(!this.is_null() && !to.is_null()) };
 
 		/* note for arch specific implementation:
 		 * all registers must be declared clobbered
@@ -211,7 +212,8 @@ impl Fiber {
 	/// # Safety
 	/// same as switch
 	pub unsafe fn exit(self, to: MutPtr<Self>) -> ! {
-		assert_unsafe_precondition!(!to.is_null());
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(!to.is_null()) };
 
 		let mut fiber = ManuallyDrop::new(self);
 		let ptr = ptr!(&mut fiber);
@@ -238,7 +240,8 @@ impl Fiber {
 	/// # Safety
 	/// same as above
 	pub unsafe fn exit_to_pool(self, to: MutPtr<Self>, pool: Ptr<Pool>) -> ! {
-		assert_unsafe_precondition!(!to.is_null());
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(!to.is_null()) };
 
 		let mut arg = (ManuallyDrop::new(self), pool);
 		let ptr = ptr!(&mut arg);

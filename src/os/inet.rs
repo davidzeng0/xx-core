@@ -164,7 +164,7 @@ impl TryFrom<AddressStorage> for Address {
 				Ok(Self::V6(unsafe { ptr!(*ptr!(&value).cast()) }))
 			}
 
-			_ => Err(fmt_error!("Unknown address family"))
+			_ => Err(Core::unimplemented().into())
 		}
 	}
 }

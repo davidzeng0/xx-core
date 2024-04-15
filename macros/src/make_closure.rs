@@ -11,7 +11,7 @@ where
 	parse2(closure_lifetime()).unwrap()
 }
 
-const SELF_IDENT: &str = "__self";
+const SELF_IDENT: &str = "this";
 
 pub struct ReplaceSelf;
 

@@ -249,7 +249,8 @@ impl<R: Read> BufRead for BufReader<R> {
 	/// See [`BufRead::consume_unchecked`]
 	#[allow(unsafe_code)]
 	unsafe fn consume_unchecked(&mut self, count: usize) {
-		assert_unsafe_precondition!(count <= self.buffer().len());
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(count <= self.buffer().len()) };
 
 		#[allow(clippy::arithmetic_side_effects)]
 		(self.buffered.start += count);
@@ -269,7 +270,8 @@ impl<R: Read> BufRead for BufReader<R> {
 	/// See [`BufRead::unconsume_unchecked`]
 	#[allow(unsafe_code)]
 	unsafe fn unconsume_unchecked(&mut self, count: usize) {
-		assert_unsafe_precondition!(count <= self.buffered.start);
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(count <= self.buffered.start) };
 
 		#[allow(clippy::arithmetic_side_effects)]
 		(self.buffered.start -= count);

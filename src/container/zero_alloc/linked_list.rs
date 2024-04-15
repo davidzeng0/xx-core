@@ -66,7 +66,8 @@ impl Node {
 	/// # Safety
 	/// This node must be valid and linked
 	pub unsafe fn unlink_unchecked(&self) {
-		assert_unsafe_precondition!(self.linked());
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(self.linked()) };
 
 		let (prev, next) = (
 			self.prev.replace(Ptr::null()),
@@ -192,7 +193,8 @@ impl LinkedList {
 			return;
 		}
 
-		assert_unsafe_precondition!(other.empty());
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(other.empty()) };
 
 		let (prev, next) = (self.base.prev.get(), self.base.next.get());
 

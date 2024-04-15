@@ -31,18 +31,23 @@ macro_rules! assert_unsafe_precondition {
 		$crate::macros::assert_unsafe_precondition!(
 			$condition,
 			::std::stringify!($condition)
-		);
+		)
 	};
 
-	($condition:expr, $($arg: tt)*) => {
+	($condition:expr, $($arg: tt)*) => {{
 		#[cfg(debug_assertions)]
 		if !$condition {
+			$crate::macros::require_unsafe!();
+
 			$crate::macros::panic_nounwind!(
 				"Unsafe precondition(s) violated: {}",
 				::std::format_args!($($arg)*)
 			);
 		}
-	}
+
+		#[cfg(not(debug_assertions))]
+		$crate::opt::hint::assume($condition);
+	}}
 }
 
 pub use assert_unsafe_precondition;
