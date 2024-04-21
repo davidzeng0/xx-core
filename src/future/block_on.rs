@@ -1,11 +1,67 @@
 use std::mem::replace;
+#[cfg(not(debug_assertions))]
+use std::mem::ManuallyDrop;
 
 use super::*;
+#[cfg(debug_assertions)]
 use crate::macros::unreachable_unchecked;
 
+#[cfg(debug_assertions)]
 enum BlockState<Resume, Output> {
 	Pending(Resume),
 	Done(Output)
+}
+
+#[cfg(debug_assertions)]
+impl<Resume, Output> BlockState<Resume, Output> {
+	const fn pending(resume: Resume) -> Self {
+		Self::Pending(resume)
+	}
+
+	unsafe fn complete(&mut self, value: Output) -> Resume {
+		let resume = replace(self, Self::Done(value));
+
+		let Self::Pending(resume) = resume else {
+			/* Safety: future cannot complete twice */
+			unsafe { unreachable_unchecked!("Double complete detected") };
+		};
+
+		resume
+	}
+
+	unsafe fn output(self) -> Output {
+		let Self::Done(output) = self else {
+			/* Safety: guaranteed by caller */
+			unsafe { unreachable_unchecked!("Blocking function ended before producing a result") };
+		};
+
+		output
+	}
+}
+
+#[cfg(not(debug_assertions))]
+union BlockState<Resume, Output> {
+	pending: ManuallyDrop<Resume>,
+	done: ManuallyDrop<Output>
+}
+
+#[cfg(not(debug_assertions))]
+impl<Resume, Output> BlockState<Resume, Output> {
+	const fn pending(resume: Resume) -> Self {
+		Self { pending: ManuallyDrop::new(resume) }
+	}
+
+	unsafe fn complete(&mut self, value: Output) -> Resume {
+		let resume = replace(self, Self { done: ManuallyDrop::new(value) });
+
+		/* Safety: guaranteed by caller */
+		ManuallyDrop::into_inner(unsafe { resume.pending })
+	}
+
+	unsafe fn output(self) -> Output {
+		/* Safety: guaranteed by caller */
+		ManuallyDrop::into_inner(unsafe { self.done })
+	}
 }
 
 unsafe fn block_resume<Resume, Output>(_: ReqPtr<Output>, arg: Ptr<()>, value: Output)
@@ -14,14 +70,37 @@ where
 {
 	/* Safety: arg is valid until resume is called */
 	let arg = unsafe { arg.cast::<BlockState<Resume, Output>>().cast_mut().as_mut() };
-	let resume = replace(arg, BlockState::Done(value));
 
-	let BlockState::Pending(resume) = resume else {
-		/* Safety: future cannot complete twice */
-		unsafe { unreachable_unchecked!("Double complete detected") };
-	};
+	/* Safety: guaranteed by caller */
+	let resume = unsafe { arg.complete(value) };
 
 	call_non_panicking(resume);
+}
+
+struct Waiter<Resume, Output> {
+	request: Request<Output>,
+	state: BlockState<Resume, Output>
+}
+
+impl<Resume: FnOnce(), Output> Waiter<Resume, Output> {
+	const fn new(resume: Resume) -> Self {
+		/* Safety: block_resume does not panic */
+		let request = unsafe { Request::new(Ptr::null(), block_resume::<Resume, Output>) };
+
+		Self { request, state: BlockState::pending(resume) }
+	}
+
+	unsafe fn output(self) -> Output {
+		/* Safety: guaranteed by caller */
+		unsafe { self.state.output() }
+	}
+}
+
+impl<Resume, Output> Pin for Waiter<Resume, Output> {
+	unsafe fn pin(&mut self) {
+		self.request
+			.set_arg(ptr!(&mut self.state).cast_const().cast());
+	}
 }
 
 /// Block on a future
@@ -41,28 +120,20 @@ where
 	Resume: FnOnce(),
 	F: Future
 {
-	let mut state: BlockState<Resume, F::Output> = BlockState::Pending(resume);
+	let mut waiter = Waiter::new(resume);
 
-	/* Safety: block_resume does not panic */
-	let request = unsafe {
-		Request::new(
-			ptr!(&mut state).cast_const().cast(),
-			block_resume::<Resume, F::Output>
-		)
-	};
+	{
+		let waiter = waiter.pin_local();
+
+		/* Safety: contract upheld by caller */
+		unsafe {
+			match future.run(ptr!(&waiter.request)) {
+				Progress::Pending(cancel) => block(cancel),
+				Progress::Done(value) => return value
+			};
+		};
+	}
 
 	/* Safety: contract upheld by caller */
-	unsafe {
-		match future.run(ptr!(&request)) {
-			Progress::Pending(cancel) => block(cancel),
-			Progress::Done(value) => return value
-		};
-	};
-
-	let BlockState::Done(output) = state else {
-		/* Safety: guaranteed by caller */
-		unsafe { unreachable_unchecked!("Blocking function ended before producing a result") };
-	};
-
-	output
+	unsafe { waiter.output() }
 }

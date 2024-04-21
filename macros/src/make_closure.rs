@@ -16,6 +16,8 @@ const SELF_IDENT: &str = "this";
 pub struct ReplaceSelf;
 
 impl VisitMut for ReplaceSelf {
+	fn visit_item_mut(&mut self, _: &mut Item) {}
+
 	fn visit_fn_arg_mut(&mut self, arg: &mut FnArg) {
 		visit_fn_arg_mut(self, arg);
 
@@ -88,6 +90,8 @@ impl AddLifetime {
 }
 
 impl VisitMut for AddLifetime {
+	fn visit_item_mut(&mut self, _: &mut Item) {}
+
 	fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
 		if let Some(lifetime) = &reference.lifetime {
 			self.explicit_lifetimes.push(lifetime.clone());

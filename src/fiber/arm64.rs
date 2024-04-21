@@ -1,3 +1,5 @@
+use std::arch::asm;
+
 use super::*;
 
 define_context! {
@@ -14,7 +16,7 @@ global_asm!(include_str!("arm64.s"));
 extern "C" {
 	fn xx_core_fiber_arm64_start();
 	fn xx_core_fiber_arm64_intercept();
-	fn xx_core_fiber_arm64_switch(from: &mut Context, to: &mut Context);
+	fn xx_core_fiber_arm64_switch(from: MutPtr<Context>, to: MutPtr<Context>);
 }
 
 impl Context {
@@ -32,9 +34,7 @@ impl Context {
 
 		/* Safety: guaranteed by caller */
 		#[allow(clippy::arithmetic_side_effects)]
-		unsafe {
-			(stack - 1).write(start);
-		}
+		(unsafe { (stack - 1).write(start) });
 
 		self.link = xx_core_fiber_arm64_start as usize;
 	}
@@ -44,9 +44,7 @@ impl Context {
 
 		/* Safety: guaranteed by caller */
 		#[allow(clippy::arithmetic_side_effects)]
-		unsafe {
-			(stack - 1).write(intercept);
-		}
+		(unsafe { (stack - 1).write(intercept) });
 
 		self.link = xx_core_fiber_arm64_intercept as usize;
 	}

@@ -19,7 +19,6 @@ struct SpawnWorker<E, T: for<'a> Task<Output<'a> = Output>, Output> {
 	data: SpawnData<E, T, Output>
 }
 
-#[future]
 impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E, T, Output> {
 	/// # Safety
 	/// `arg` must be dereferenceable as a &mut Self.
@@ -280,7 +279,6 @@ pub struct JoinHandle<Output> {
 	task: Rc<Spawn<Output>>
 }
 
-#[future]
 #[asynchronous]
 impl<Output> JoinHandle<Output> {
 	/// # Safety

@@ -1,7 +1,7 @@
 #![allow(unreachable_pub, clippy::multiple_unsafe_ops_per_block)]
 
 use std::{
-	arch::{asm, global_asm},
+	arch::global_asm,
 	mem::{zeroed, ManuallyDrop}
 };
 
@@ -113,6 +113,7 @@ unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
 	}
 }
 
+#[repr(C)]
 pub struct Fiber {
 	context: Context,
 	stack: Map<'static>

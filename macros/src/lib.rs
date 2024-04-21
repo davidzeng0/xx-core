@@ -28,6 +28,16 @@ pub fn asynchronous(
 	asynchronous::asynchronous(attr.into(), item.into()).into()
 }
 
+#[proc_macro]
+pub fn select(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+	asynchronous::branch::select(item.into()).into()
+}
+
+#[proc_macro]
+pub fn join(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+	asynchronous::branch::join(item.into()).into()
+}
+
 #[proc_macro_attribute]
 pub fn future(
 	attr: proc_macro::TokenStream, item: proc_macro::TokenStream
@@ -62,14 +72,4 @@ pub fn errors(
 	attr: proc_macro::TokenStream, item: proc_macro::TokenStream
 ) -> proc_macro::TokenStream {
 	error::error(attr.into(), item.into()).into()
-}
-
-#[proc_macro]
-pub fn select(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-	asynchronous::branch::select(item.into()).into()
-}
-
-#[proc_macro]
-pub fn join(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-	asynchronous::branch::join(item.into()).into()
 }

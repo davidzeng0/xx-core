@@ -123,9 +123,10 @@ struct ContextInner {
 	cancel: Option<Canceller>
 }
 
+#[repr(C)]
 pub struct Context {
-	worker: Ptr<Worker>,
 	environment: u32,
+	worker: Ptr<Worker>,
 	inner: UnsafeCell<ContextInner>
 }
 

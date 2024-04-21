@@ -136,6 +136,9 @@ pub trait Read {
 			if len == capacity {
 				buf.reserve(32);
 				capacity = buf.capacity();
+			}
+
+			if len < capacity {
 				buf.resize(capacity, 0);
 			}
 
@@ -163,7 +166,6 @@ pub trait Read {
 					(len += length_check(&probe, n));
 
 					buf.extend_from_slice(&probe[0..n]);
-					buf.resize(buf.capacity(), 0);
 				}
 
 				Err(err) if err.is_interrupted() => break,

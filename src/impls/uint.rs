@@ -13,6 +13,7 @@ macro_rules! uint_impl {
 			type Signed = $signed;
 
 			fn overflowing_signed_difference(self, rhs: Self) -> ($signed, bool) {
+				#[allow(clippy::cast_possible_wrap)]
 				let res = self.wrapping_sub(rhs) as $signed;
 				let overflow = (self >= rhs) == (res < 0);
 

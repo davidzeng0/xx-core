@@ -1,9 +1,10 @@
 use std::{fmt::Arguments, panic::*};
 
-use crate::{log::*, macros::panic_nounwind};
+use crate::log::*;
 
 pub type MaybePanic<T> = std::thread::Result<T>;
 
+#[track_caller]
 pub fn panic_nounwind(fmt: Arguments<'_>) -> ! {
 	print_panic(None, fmt);
 	print_fatal(format_args!("Non unwinding panic, aborting"));
@@ -28,7 +29,7 @@ where
 	#[cfg(debug_assertions)]
 	match catch_unwind(AssertUnwindSafe(func)) {
 		Ok(ok) => ok,
-		Err(_) => panic_nounwind!("Function that must never panic panicked")
+		Err(_) => crate::macros::panic_nounwind!("Function that must never panic panicked")
 	}
 
 	#[cfg(not(debug_assertions))]

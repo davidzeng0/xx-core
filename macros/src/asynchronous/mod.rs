@@ -153,7 +153,7 @@ impl TransformAsync {
 		let (attrs, base) = (&inner.attrs, inner.base.as_ref());
 		let ident = Context::new().0;
 
-		parse_quote_spanned! { inner.span() =>
+		parse_quote_spanned! { inner.await_token.span() =>
 			#(#attrs)*
 			::xx_core::coroutines::Context::run(#ident, #base)
 		}
@@ -202,12 +202,14 @@ impl TransformAsync {
 		self.visit_expr_mut(body);
 
 		parse_quote_spanned! { closure.span() =>
-			::xx_core::coroutines::closure::OpaqueAsyncFn(#closure)
+			::xx_core::coroutines::closure::OpaqueAsyncFn::new(#closure)
 		}
 	}
 }
 
 impl VisitMut for TransformAsync {
+	fn visit_item_mut(&mut self, _: &mut Item) {}
+
 	fn visit_expr_mut(&mut self, expr: &mut Expr) {
 		*expr = match expr {
 			Expr::Async(inner) => self.transform_async(inner),
@@ -304,7 +306,14 @@ fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> 
 	removed
 }
 
-fn task_impl(attrs: &[Attribute]) -> TokenStream {
+fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
+	let run = quote_spanned! { ident.span() =>
+		#(#attrs)*
+		fn run(self, context: &::xx_core::coroutines::Context) -> Output {
+			self.0(context)
+		}
+	};
+
 	quote! {
 		#[allow(non_camel_case_types)]
 		struct __xx_internal_async_support_wrap<F, Output>(F, std::marker::PhantomData<Output>);
@@ -321,10 +330,7 @@ fn task_impl(attrs: &[Attribute]) -> TokenStream {
 			::xx_core::coroutines::Task for __xx_internal_async_support_wrap<F, Output> {
 			type Output<'a> = Output;
 
-			#(#attrs)*
-			fn run(self, context: &::xx_core::coroutines::Context) -> Output {
-				self.0(context)
-			}
+			#run
 		}
 	}
 }
@@ -373,7 +379,7 @@ fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Result<
 
 	attrs.parse(func.attrs)?;
 
-	let func_attrs = remove_attrs(func.attrs, &["inline", "must_use"]);
+	let func_attrs = remove_attrs(func.attrs, &["inline", "must_use", "hot", "cold"]);
 
 	if closure_type != ClosureType::None {
 		func.attrs.push(parse_quote! {
@@ -502,7 +508,7 @@ fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Result<
 		let task_impl = if let Some(lt) = &attrs.context_lifetime {
 			lending_task_impl(lt, &return_type)
 		} else {
-			task_impl(&func_attrs)
+			task_impl(&func_attrs, &func.sig.ident)
 		};
 
 		let stmts = &block.stmts;
@@ -572,6 +578,15 @@ fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStream {
 
 	quote! {
 		#item
+
+		impl<F, const T: usize> #ident<F, T> {
+			#[inline(always)]
+			pub const fn new(func: F) -> Self {
+				#use_lang
+
+				Self(func)
+			}
+		}
 
 		impl<F: FnOnce(Args, &Context) -> Output, Args, Output> AsyncFnOnce<Args> for #ident<F, 0> {
 			type Output = Output;

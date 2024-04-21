@@ -105,8 +105,9 @@ pub async fn current_budget() -> u32 {
 }
 
 #[asynchronous]
-pub async fn acquire_budget(amount: Option<u32>) -> bool {
-	let amount: u16 = match amount.unwrap_or(1).try_into() {
+#[allow(clippy::impl_trait_in_params)]
+pub async fn acquire_budget(amount: impl Into<Option<u32>>) -> bool {
+	let amount: u16 = match amount.into().unwrap_or(1).try_into() {
 		Ok(ok) => ok,
 		Err(_) => return false
 	};

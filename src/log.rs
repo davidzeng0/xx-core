@@ -62,6 +62,7 @@ pub mod internal {
 	}
 
 	#[inline(never)]
+	#[cold]
 	pub fn log_target<T, const MUT: bool>(
 		level: Level, target: Pointer<T, MUT>, args: Arguments<'_>
 	) where
@@ -232,6 +233,7 @@ pub fn print_fatal(fmt: Arguments<'_>) {
 	internal::print_fatal(thread_name, fmt);
 }
 
+#[track_caller]
 pub fn print_panic(location: Option<&Location<'_>>, fmt: Arguments<'_>) {
 	get_thread_name!(thread_name);
 
@@ -260,6 +262,7 @@ pub fn print_panic(location: Option<&Location<'_>>, fmt: Arguments<'_>) {
 	}
 }
 
+#[track_caller]
 fn panic_hook(info: &PanicInfo<'_>) {
 	let msg = match info.payload().downcast_ref::<&'static str>() {
 		Some(s) => *s,

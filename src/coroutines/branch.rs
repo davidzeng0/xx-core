@@ -210,7 +210,6 @@ pub struct Branch<F1: Future, F2: Future, Cancel> {
 	interrupt_callback: Cell<bool>
 }
 
-#[future]
 impl<
 		F1: Future,
 		F2: Future,

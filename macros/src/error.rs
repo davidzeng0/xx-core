@@ -19,9 +19,23 @@ pub fn error(_: TokenStream, item: TokenStream) -> TokenStream {
 		#[allow(missing_copy_implementations)]
 	});
 
+	let eq = if matches!(input.data, Data::Enum(_)) {
+		Some(quote! {
+			impl ::std::cmp::PartialEq for #name {
+				fn eq(&self, other: &Self) -> bool {
+					::std::mem::discriminant(self) == ::std::mem::discriminant(other)
+				}
+			}
+		})
+	} else {
+		None
+	};
+
 	quote! {
 		#input
 
 		impl ::xx_core::error::IntoError for #name {}
+
+		#eq
 	}
 }

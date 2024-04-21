@@ -5,10 +5,11 @@ use std::cell::Cell;
 use super::*;
 
 /// A worker thread capable of running async operations via fibers
+#[repr(C)]
 pub struct Worker {
+	fiber: UnsafeCell<Fiber>,
 	executor: Ptr<Executor>,
-	caller: Cell<Ptr<Worker>>,
-	fiber: UnsafeCell<Fiber>
+	caller: Cell<Ptr<Worker>>
 }
 
 impl Worker {

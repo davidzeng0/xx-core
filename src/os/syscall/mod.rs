@@ -25,6 +25,11 @@ macro_rules! impl_from_primitive {
 	($type:ty) => {
 		impl From<$type> for SyscallParameter {
 			fn from(value: $type) -> Self {
+				#[allow(
+					clippy::cast_possible_wrap,
+					clippy::cast_sign_loss,
+					clippy::cast_possible_truncation
+				)]
 				SyscallParameter(value as usize)
 			}
 		}
@@ -35,8 +40,6 @@ macro_each!(
 	impl_from_primitive,
 	usize,
 	isize,
-	u64,
-	i64,
 	u32,
 	i32,
 	u16,
@@ -44,6 +47,9 @@ macro_each!(
 	u8,
 	i8
 );
+
+#[cfg(target_pointer_width = "64")]
+macro_each!(impl_from_primitive, u64, i64);
 
 impl<T, const MUT: bool> From<Pointer<T, MUT>> for SyscallParameter {
 	fn from(value: Pointer<T, MUT>) -> Self {
@@ -88,9 +94,7 @@ impl From<SyscallResult> for OsResult<OwnedFd> {
 		result_from_int(val.0).map(|raw_fd| {
 			/* Safety: guaranteed by syscall declaration */
 			#[allow(clippy::cast_possible_truncation)]
-			unsafe {
-				OwnedFd::from_raw_fd(raw_fd as i32)
-			}
+			(unsafe { OwnedFd::from_raw_fd(raw_fd as i32) })
 		})
 	}
 }

@@ -97,6 +97,7 @@ where
 
 #[asynchronous]
 #[inline(never)]
+#[cold]
 async fn read_bytes_cold<R>(reader: &mut R, bytes: &mut [u8]) -> Result<usize>
 where
 	R: Read + ?Sized

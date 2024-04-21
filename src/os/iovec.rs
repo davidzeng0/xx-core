@@ -48,9 +48,7 @@ impl<'a> IoVec<'a> {
 	pub fn from_io_slices<'b>(slices: &'b [IoSlice<'a>]) -> &'b [Self] {
 		/* Safety: they are the same */
 		#[allow(clippy::transmute_ptr_to_ptr)]
-		unsafe {
-			transmute(slices)
-		}
+		(unsafe { transmute(slices) })
 	}
 }
 
@@ -59,9 +57,7 @@ impl<'a> IoVecMut<'a> {
 	pub fn from_io_slices_mut<'b>(slices: &'b mut [IoSliceMut<'a>]) -> &'b mut [Self] {
 		/* Safety: they are the same */
 		#[allow(clippy::transmute_ptr_to_ptr)]
-		unsafe {
-			transmute(slices)
-		}
+		(unsafe { transmute(slices) })
 	}
 }
 

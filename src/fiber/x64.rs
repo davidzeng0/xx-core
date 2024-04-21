@@ -2,10 +2,14 @@ use super::*;
 
 define_context! {
 	pub struct Context {
+		r12: usize,
+		r13: usize,
+		r14: usize,
+		r15: usize,
 		rip: usize,
 		rsp: usize,
 		rbx: usize,
-		rbp: usize
+		rbp: usize,
 	}
 }
 
@@ -14,7 +18,7 @@ global_asm!(include_str!("x64.s"));
 extern "C" {
 	fn xx_core_fiber_x64_start();
 	fn xx_core_fiber_x64_intercept();
-	fn xx_core_fiber_x64_switch(from: &mut Context, to: &mut Context);
+	fn xx_core_fiber_x64_switch(from: MutPtr<Context>, to: MutPtr<Context>);
 }
 
 impl Context {
@@ -32,9 +36,7 @@ impl Context {
 
 		/* Safety: guaranteed by caller */
 		#[allow(clippy::arithmetic_side_effects)]
-		unsafe {
-			(stack - 1).write(start);
-		}
+		(unsafe { (stack - 1).write(start) });
 
 		self.rip = xx_core_fiber_x64_start as usize;
 	}
@@ -44,9 +46,7 @@ impl Context {
 
 		/* Safety: guaranteed by caller */
 		#[allow(clippy::arithmetic_side_effects)]
-		unsafe {
-			(stack - 1).write(intercept);
-		}
+		(unsafe { (stack - 1).write(intercept) });
 
 		self.rip = xx_core_fiber_x64_intercept as usize;
 	}
@@ -54,17 +54,5 @@ impl Context {
 
 pub unsafe fn switch(from: MutPtr<Context>, to: MutPtr<Context>) {
 	/* Safety: guaranteed by caller */
-	unsafe {
-		asm!(
-			"call {}",
-			sym xx_core_fiber_x64_switch,
-			in("rdi") from.as_mut_ptr(),
-			in("rsi") to.as_mut_ptr(),
-			lateout("r12") _,
-			lateout("r13") _,
-			lateout("r14") _,
-			lateout("r15") _,
-			clobber_abi("C")
-		);
-	}
+	unsafe { xx_core_fiber_x64_switch(from, to) };
 }

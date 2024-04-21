@@ -63,6 +63,9 @@ impl<T> Request<T> {
 	/// # Safety
 	/// must not call after future already completed, and must not call within
 	/// `Future::run`
+	///
+	/// Whether or not it is safe to complete a `Future` from a different
+	/// thread is defined by the `Future` implementation
 	pub unsafe fn complete(request: Ptr<Self>, value: T) {
 		/* Safety: guaranteed by caller and Future's contract */
 		let Self { arg, callback } = unsafe { ptr!(*request) };

@@ -5,10 +5,11 @@ use std::cell::Cell;
 use super::*;
 
 /// Per thread executor, responsible for running worker threads
+#[repr(C)]
 pub struct Executor {
-	pool: Ptr<Pool>,
+	current: Cell<Ptr<Worker>>,
 	main: Worker,
-	current: Cell<Ptr<Worker>>
+	pool: Ptr<Pool>
 }
 
 impl Executor {

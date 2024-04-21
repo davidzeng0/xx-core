@@ -10,4 +10,4 @@ pub struct OpaqueClosure<F, Output>(F, PhantomData<Output>);
 
 #[asynchronous]
 #[lang = "async_closure"]
-pub struct OpaqueAsyncFn<F, const T: usize>(pub F);
+pub struct OpaqueAsyncFn<F, const T: usize>(F);

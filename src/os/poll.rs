@@ -114,7 +114,5 @@ pub unsafe fn poll_timeout(fds: &mut [PollFd], timeout: Duration) -> OsResult<u3
 pub fn poll(fds: &mut [BorrowedPollFd<'_>], timeout: Duration) -> OsResult<u32> {
 	/* Safety: fds are borrowed for this function call */
 	#[allow(clippy::multiple_unsafe_ops_per_block, clippy::transmute_ptr_to_ptr)]
-	unsafe {
-		poll_timeout(transmute(fds), timeout)
-	}
+	(unsafe { poll_timeout(transmute(fds), timeout) })
 }
