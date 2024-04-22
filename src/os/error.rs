@@ -568,13 +568,31 @@ impl OsError {
 	}
 }
 
+extern "C" {
+	#[link_name = "__errno_location"]
+	fn errno_location() -> MutPtr<i32>;
+}
+
+#[must_use]
+#[allow(clippy::multiple_unsafe_ops_per_block)]
+pub fn errno() -> i32 {
+	/* Safety: this is always valid */
+	unsafe { ptr!(*errno_location()) }
+}
+
+#[allow(clippy::multiple_unsafe_ops_per_block)]
+pub fn set_errno(code: i32) {
+	/* Safety: this is always valid */
+	unsafe { ptr!(*errno_location()) = code };
+}
+
 #[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
 pub fn result_from_libc(result: isize) -> OsResult<isize> {
 	if result >= 0 {
 		return Ok(result);
 	}
 
-	let code = io::Error::last_os_error().raw_os_error().unwrap();
+	let code = errno();
 
 	Err(OsError::from_raw(code))
 }

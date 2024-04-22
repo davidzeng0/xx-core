@@ -6,11 +6,11 @@ use std::{
 };
 
 use super::{
-	macros::import_sysdeps,
-	os::{mman::*, resource::*},
+	macros::{assert_unsafe_precondition, import_sysdeps, panic_nounwind},
+	opt::hint::unreachable_unchecked,
+	os::{mman::*, resource::*, unistd::*, RawBuf},
 	pointer::*
 };
-use crate::{assert_unsafe_precondition, macros::panic_nounwind, opt::hint::unreachable_unchecked};
 
 import_sysdeps!();
 
@@ -41,14 +41,14 @@ pub use pool::*;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Start {
-	start: unsafe fn(Ptr<()>),
+	start: unsafe extern "C" fn(Ptr<()>),
 	arg: Ptr<()>
 }
 
 impl Start {
 	/// # Safety
 	/// See `set_start`
-	pub unsafe fn new(start: unsafe fn(Ptr<()>), arg: Ptr<()>) -> Self {
+	pub unsafe fn new(start: unsafe extern "C" fn(Ptr<()>), arg: Ptr<()>) -> Self {
 		Self { start, arg }
 	}
 
@@ -58,7 +58,7 @@ impl Start {
 	///
 	/// `start`'s safety contract is
 	/// - called once when worker is started
-	pub unsafe fn set_start(&mut self, start: unsafe fn(Ptr<()>)) {
+	pub unsafe fn set_start(&mut self, start: unsafe extern "C" fn(Ptr<()>)) {
 		self.start = start;
 	}
 
@@ -77,12 +77,12 @@ impl Start {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Intercept {
-	intercept: unsafe fn(Ptr<()>),
+	intercept: unsafe extern "C" fn(Ptr<()>),
 	arg: Ptr<()>,
 	ret: Ptr<()>
 }
 
-unsafe fn exit_fiber(arg: Ptr<()>) {
+unsafe extern "C" fn exit_fiber(arg: Ptr<()>) {
 	/* Safety: guaranteed by caller */
 	let fiber = unsafe { arg.cast::<ManuallyDrop<Fiber>>().cast_mut().as_mut() };
 
@@ -94,7 +94,7 @@ unsafe fn exit_fiber(arg: Ptr<()>) {
 	drop(unsafe { ManuallyDrop::take(fiber) });
 }
 
-unsafe fn exit_fiber_to_pool(arg: Ptr<()>) {
+unsafe extern "C" fn exit_fiber_to_pool(arg: Ptr<()>) {
 	/* Safety: guaranteed by caller */
 	let arg = unsafe {
 		arg.cast::<(ManuallyDrop<Fiber>, Ptr<Pool>)>()
@@ -134,8 +134,13 @@ impl Fiber {
 			.expect("Failed to get stack size")
 			.try_into()
 			.unwrap();
+		let page_size = get_system_configuration(SystemConfiguration::Pagesize)
+			.expect("Failed to get page size")
+			.unwrap_or(0)
+			.try_into()
+			.unwrap();
 
-		assert!(stack_size > 0);
+		assert!(page_size > 0 && stack_size > 0 && stack_size > page_size);
 
 		let stack = Builder::new(Type::Private, stack_size)
 			.protect(Protection::Read | Protection::Write)
@@ -143,9 +148,18 @@ impl Fiber {
 			.map()
 			.expect("Failed to allocate stack for fiber");
 
+		/* Safety: map the bottom `page_size` bytes as a guard page */
+		unsafe {
+			mprotect(
+				RawBuf::from_parts(stack.addr().cast_const(), page_size),
+				Default::default()
+			)
+			.expect("Failed to set permissions for guard page");
+		}
+
 		Self {
-			/* fiber context. stores to-be-preserved registers,
-			 * including any that cannot be corrupted by inline asm
+			/* fiber context. stores the current stack and instruction pointer registers,
+			 * and any that cannot be corrupted by inline asm
 			 */
 			context: Context::default(),
 			stack

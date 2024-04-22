@@ -3,7 +3,7 @@ use xx_core::{
 	pointer::*
 };
 
-unsafe fn start(arg: Ptr<()>) {
+unsafe extern "C" fn start(arg: Ptr<()>) {
 	let mut val = 0;
 	let data = arg.cast::<(Fiber, Fiber, i32)>().cast_mut();
 

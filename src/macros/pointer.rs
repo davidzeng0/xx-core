@@ -1,7 +1,8 @@
 #[macro_export]
 macro_rules! container_of {
 	($ptr:expr, $type:ty => $field:ident) => {
-		($crate::pointer::Pointer::cast::<u8>($ptr) - ::std::mem::offset_of!($type, $field))
+		$crate::pointer::Pointer::cast::<u8>($ptr)
+			.sub(::std::mem::offset_of!($type, $field))
 			.cast::<$type>()
 	};
 }

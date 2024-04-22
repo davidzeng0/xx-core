@@ -4,7 +4,7 @@ use std::{
 	cell,
 	cmp::Ordering,
 	fmt::{self, Debug, Formatter, Result},
-	ops::{Add, Deref, DerefMut, Sub},
+	ops::{Deref, DerefMut},
 	ptr::{null_mut, slice_from_raw_parts_mut},
 	rc::Rc
 };
@@ -54,19 +54,27 @@ pub mod internal {
 	}
 
 	pub trait PointerOffset {
-		fn offset<T, const MUT: bool>(self, pointer: Pointer<T, MUT>) -> Pointer<T, MUT>;
+		/// # Safety
+		/// See [`std::ptr::offset`]
+		unsafe fn offset<T, const MUT: bool>(self, pointer: Pointer<T, MUT>) -> Pointer<T, MUT>;
 	}
 
 	impl PointerOffset for usize {
-		fn offset<T, const MUT: bool>(self, mut pointer: Pointer<T, MUT>) -> Pointer<T, MUT> {
-			pointer.ptr = pointer.ptr.wrapping_add(self);
+		unsafe fn offset<T, const MUT: bool>(
+			self, mut pointer: Pointer<T, MUT>
+		) -> Pointer<T, MUT> {
+			/* Safety: guaranteed by caller */
+			pointer.ptr = unsafe { pointer.ptr.add(self) };
 			pointer
 		}
 	}
 
 	impl PointerOffset for isize {
-		fn offset<T, const MUT: bool>(self, mut pointer: Pointer<T, MUT>) -> Pointer<T, MUT> {
-			pointer.ptr = pointer.ptr.wrapping_offset(self);
+		unsafe fn offset<T, const MUT: bool>(
+			self, mut pointer: Pointer<T, MUT>
+		) -> Pointer<T, MUT> {
+			/* Safety: guaranteed by caller */
+			pointer.ptr = unsafe { pointer.ptr.offset(self) };
 			pointer
 		}
 	}
@@ -102,13 +110,16 @@ impl<T: ?Sized, const MUT: bool> Pointer<T, MUT> {
 		Self { ptr: value as *mut _ }
 	}
 
+	/// # Safety
+	/// See [`std::ptr::offset`]
 	#[must_use]
 	#[allow(clippy::impl_trait_in_params)]
-	pub fn offset(self, offset: impl internal::PointerOffset) -> Self
+	pub unsafe fn offset(self, offset: impl internal::PointerOffset) -> Self
 	where
 		T: Sized
 	{
-		offset.offset(self)
+		/* Safety: guaranteed by caller */
+		unsafe { offset.offset(self) }
 	}
 
 	#[must_use]
@@ -134,6 +145,25 @@ impl<T, const MUT: bool> Pointer<T, MUT> {
 		inner = self.ptr;
 
 		pub fn align_offset(self, align: usize) -> usize;
+		pub unsafe fn read(self) -> T;
+	}
+
+	/// # Safety
+	/// See [`std::ptr::add`]
+	#[must_use]
+	pub const unsafe fn add(mut self, count: usize) -> Self {
+		/* Safety: guaranteed by caller */
+		self.ptr = unsafe { self.ptr.add(count) };
+		self
+	}
+
+	/// # Safety
+	/// See [`std::ptr::sub`]
+	#[must_use]
+	pub const unsafe fn sub(mut self, count: usize) -> Self {
+		/* Safety: guaranteed by caller */
+		self.ptr = unsafe { self.ptr.sub(count) };
+		self
 	}
 }
 
@@ -248,22 +278,6 @@ impl<T: ?Sized, const MUT: bool> Ord for Pointer<T, MUT> {
 	#[allow(ambiguous_wide_pointer_comparisons)]
 	fn cmp(&self, other: &Self) -> Ordering {
 		self.ptr.cmp(&other.ptr)
-	}
-}
-
-impl<T: Sized, const MUT: bool> Add<usize> for Pointer<T, MUT> {
-	type Output = Self;
-
-	fn add(self, count: usize) -> Self {
-		Self { ptr: self.ptr.wrapping_add(count) }
-	}
-}
-
-impl<T: Sized, const MUT: bool> Sub<usize> for Pointer<T, MUT> {
-	type Output = Self;
-
-	fn sub(self, count: usize) -> Self {
-		Self { ptr: self.ptr.wrapping_sub(count) }
 	}
 }
 

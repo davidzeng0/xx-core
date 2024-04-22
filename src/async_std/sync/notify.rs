@@ -111,9 +111,10 @@ impl<T: Clone> Notify<T> {
 		unsafe { self.waiters.move_elements(&list) };
 
 		while let Some(node) = list.pop_front() {
-			let waiter = container_of!(node, Waiter<T> => node);
-
 			/* Safety: all nodes are wrapped in Waiter */
+			let waiter = unsafe { container_of!(node, Waiter<T> => node) };
+
+			/* Safety: the waiter must be valid */
 			let request = unsafe { ptr!(waiter=>request) };
 
 			/*

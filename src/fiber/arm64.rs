@@ -33,8 +33,7 @@ impl Context {
 		let stack = MutPtr::<Start>::from_int_addr(self.stack);
 
 		/* Safety: guaranteed by caller */
-		#[allow(clippy::arithmetic_side_effects)]
-		(unsafe { (stack - 1).write(start) });
+		unsafe { stack.sub(1).write(start) };
 
 		self.link = xx_core_fiber_arm64_start as usize;
 	}
@@ -43,8 +42,7 @@ impl Context {
 		let stack = MutPtr::<Intercept>::from_int_addr(self.stack);
 
 		/* Safety: guaranteed by caller */
-		#[allow(clippy::arithmetic_side_effects)]
-		(unsafe { (stack - 1).write(intercept) });
+		unsafe { stack.sub(1).write(intercept) };
 
 		self.link = xx_core_fiber_arm64_intercept as usize;
 	}

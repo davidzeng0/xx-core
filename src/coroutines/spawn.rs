@@ -24,7 +24,7 @@ impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E
 	/// `arg` must be dereferenceable as a &mut Self.
 	/// Self::data must be a `SpawnData::Start`
 	/// this function must be the entry point of a worker
-	unsafe fn worker_start(arg: Ptr<()>) {
+	unsafe extern "C" fn worker_start(arg: Ptr<()>) {
 		let this = arg.cast::<Self>().cast_mut();
 
 		let SpawnData::Start(env, task, mut worker, request) =
