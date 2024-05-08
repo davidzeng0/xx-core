@@ -42,7 +42,7 @@ pub fn check_utf8(buf: &[u8]) -> Result<()> {
 /// If `len` is zero, checks if the current async task is interrupted
 #[asynchronous]
 pub async fn check_interrupt_if_zero(len: usize) -> Result<usize> {
-	if unlikely(len == 0) {
+	if len == 0 {
 		check_interrupt().await?;
 	}
 

@@ -201,7 +201,10 @@ impl TransformAsync {
 
 		self.visit_expr_mut(body);
 
+		let attrs = &closure.attrs;
+
 		parse_quote_spanned! { closure.span() =>
+			#(#attrs)*
 			::xx_core::coroutines::closure::OpaqueAsyncFn::new(#closure)
 		}
 	}
@@ -276,12 +279,12 @@ fn tuple_args(args: &mut Punctuated<Pat, Token![,]>) {
 	for input in take(args) {
 		match input {
 			Pat::Type(ty) => {
-				pats.push(ty.pat.as_ref().clone());
-				tys.push(ty.ty.as_ref().clone());
+				pats.push(*ty.pat);
+				tys.push(*ty.ty);
 			}
 
 			_ => {
-				pats.push(input.clone());
+				pats.push(input);
 				tys.push(Type::Infer(TypeInfer {
 					underscore_token: Default::default()
 				}));
@@ -307,30 +310,28 @@ fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> 
 }
 
 fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
-	let run = quote_spanned! { ident.span() =>
-		#(#attrs)*
-		fn run(self, context: &::xx_core::coroutines::Context) -> Output {
-			self.0(context)
-		}
-	};
+	let new = format_ident!("new", span = ident.span());
+	let run = format_ident!("run", span = ident.span());
 
 	quote! {
-		#[allow(non_camel_case_types)]
-		struct __xx_internal_async_support_wrap<F, Output>(F, std::marker::PhantomData<Output>);
+		struct XXInternalAsyncSupportWrap<F, Output>(F, std::marker::PhantomData<Output>);
 
 		impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> Output, Output>
-			__xx_internal_async_support_wrap<F, Output> {
+			XXInternalAsyncSupportWrap<F, Output> {
 			#[inline(always)]
-			pub const fn new(func: F) -> Self {
+			pub const fn #new(func: F) -> Self {
 				Self(func, std::marker::PhantomData)
 			}
 		}
 
 		unsafe impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> Output, Output>
-			::xx_core::coroutines::Task for __xx_internal_async_support_wrap<F, Output> {
+			::xx_core::coroutines::Task for XXInternalAsyncSupportWrap<F, Output> {
 			type Output<'a> = Output;
 
-			#run
+			#(#attrs)*
+			fn #run(self, context: &::xx_core::coroutines::Context) -> Output {
+				self.0(context)
+			}
 		}
 	}
 }
@@ -341,11 +342,10 @@ fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 	ReplaceLifetime(lt).visit_type_mut(&mut ret);
 
 	quote! {
-		#[allow(non_camel_case_types)]
-		struct __xx_internal_async_support_wrap<F>(F);
+		struct XXInternalAsyncSupportWrap<F>(F);
 
 		impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> #ret>
-			__xx_internal_async_support_wrap<F> {
+			XXInternalAsyncSupportWrap<F> {
 			#[inline(always)]
 			pub const fn new(func: F) -> Self {
 				Self(func)
@@ -353,7 +353,7 @@ fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 		}
 
 		unsafe impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> #ret>
-			::xx_core::coroutines::Task for __xx_internal_async_support_wrap<F> {
+			::xx_core::coroutines::Task for XXInternalAsyncSupportWrap<F> {
 			type Output<#lt> = #output;
 
 			#[inline(always)]
@@ -492,7 +492,7 @@ fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Result<
 								Output<#lifetime> = #rt
 							>
 						},
-						quote! { __xx_internal_async_support_wrap }
+						quote! { XXInternalAsyncSupportWrap }
 					)
 				}),
 				if closure_type != ClosureType::Trait && lang.is_none() {
@@ -565,8 +565,6 @@ fn task_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStream {
 
 			#[inline(always)]
 			fn run(self, #context) -> Output {
-				#use_lang
-
 				self.0(#context_ident)
 			}
 		}
@@ -594,8 +592,6 @@ fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStream {
 			#[asynchronous(traitext)]
 			#[inline(always)]
 			async fn call_once(self, args: Args) -> Output {
-				#use_lang
-
 				self.0(args, unsafe { get_context().await })
 			}
 		}
@@ -606,8 +602,6 @@ fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStream {
 			#[asynchronous(traitext)]
 			#[inline(always)]
 			async fn call_mut(&mut self, args: Args) -> Output {
-				#use_lang
-
 				self.0(args, unsafe { get_context().await })
 			}
 		}
@@ -618,8 +612,6 @@ fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStream {
 			#[asynchronous(traitext)]
 			#[inline(always)]
 			async fn call(&self, args: Args) -> Output {
-				#use_lang
-
 				self.0(args, unsafe { get_context().await })
 			}
 		}

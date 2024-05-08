@@ -2,6 +2,14 @@ use super::*;
 
 #[macro_export]
 macro_rules! seal_trait {
+	() => {
+		mod private {
+			pub trait Sealed {}
+		}
+
+		use private::Sealed;
+	};
+
 	($trait:ident) => {
 		$crate::paste::paste! {
 			#[allow(non_snake_case)]

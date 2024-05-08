@@ -71,7 +71,11 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				},
 				&[(quote! { () }, quote! { () })],
 				quote! { ::xx_core::future::closure::CancelClosure },
-				|capture, ret| quote_spanned! { ret.span() => ::xx_core::future::closure::CancelClosure<#capture> },
+				|capture, ret| {
+					quote_spanned! { ret.span() =>
+						::xx_core::future::closure::CancelClosure<#capture>
+					}
+				},
 				LifetimeAnnotations::Closure
 			)?;
 
@@ -108,10 +112,16 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 			quote! { request },
 			quote! { ::xx_core::future::ReqPtr<#return_type> }
 		)],
-		|_| quote_spanned! { return_type.span() => ::xx_core::future::Progress<#return_type, #cancel_closure_type> },
+		|_| {
+			quote_spanned! { return_type.span() =>
+				::xx_core::future::Progress<#return_type, #cancel_closure_type>
+			}
+		},
 		OpaqueClosureType::Custom(|ret: TokenStream| {
 			(
-				quote_spanned! { ret.span() => ::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type> },
+				quote_spanned! { ret.span() =>
+					::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type>
+				},
 				quote! { ::xx_core::future::closure::FutureClosure }
 			)
 		}),

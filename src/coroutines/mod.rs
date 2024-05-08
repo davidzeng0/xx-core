@@ -143,7 +143,7 @@ pub async fn clear_interrupt() {
 pub async fn take_interrupt() -> bool {
 	let interrupted = is_interrupted().await;
 
-	if unlikely(interrupted) {
+	if interrupted {
 		clear_interrupt().await;
 	}
 

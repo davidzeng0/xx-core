@@ -57,6 +57,33 @@ where
 	Ok(read)
 }
 
+#[asynchronous]
+async fn default_read_vectored<R>(
+	reader: &mut R, mut bufs: &mut [IoSliceMut<'_>]
+) -> Result<(usize, bool)>
+where
+	R: Read + ?Sized
+{
+	let mut total = 0;
+
+	while !bufs.is_empty() {
+		let read = match reader.read_vectored(bufs).await {
+			Ok(0) => break,
+			Ok(n) => n,
+			Err(err) if err.is_interrupted() => break,
+			Err(err) => return Err(err)
+		};
+
+		advance_slices_mut(&mut bufs, read);
+
+		/* checked by `advance_slices_mut` */
+		#[allow(clippy::arithmetic_side_effects)]
+		(total += read);
+	}
+
+	Ok((total, bufs.is_empty()))
+}
+
 /// The async equivalent of [`std::io::Read`]
 ///
 /// This trait is object safe
@@ -73,8 +100,8 @@ pub trait Read {
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
 	///
-	/// See also [`std::io::Read::read_exact`]
-	async fn read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
+	/// See also [`std::io::Read::read_fully`]
+	async fn try_read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
 		let mut read = 0;
@@ -94,18 +121,20 @@ pub trait Read {
 		check_interrupt_if_zero(read).await
 	}
 
-	/// Same as [`read_fully`], except returns an [`UnexpectedEof`] error
-	/// on partial reads Returns the number of bytes read, which is the same as
+	/// Same as [`try_read_fully`], except returns an [`UnexpectedEof`] error
+	/// on partial reads
+	///
+	/// Returns the number of bytes read, which is the same as
 	/// `buf.len()`
 	///
-	/// See also [`std::io::Read::read_exact`]
+	/// See also [`std::io::Read::read_fully`]
 	///
-	/// [`read_fully`]: Read::read_fully
+	/// [`try_read_fully`]: Read::try_read_fully
 	/// [`UnexpectedEof`]: Core::UnexpectedEof
-	async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+	async fn read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
-		let read = self.read_fully(buf).await?;
+		let read = self.try_read_fully(buf).await?;
 
 		length_check(buf, read);
 
@@ -222,26 +251,29 @@ pub trait Read {
 	/// Like [`read_vectored`], except that it keeps reading until all the
 	/// buffers are filled
 	///
+	/// Returns on EOF
+	///
 	/// [`read_vectored`]: Read::read_vectored
-	async fn read_all_vectored(&mut self, mut bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
-		let mut total = 0;
+	async fn try_read_fully_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+		Ok(default_read_vectored(self, bufs).await?.0)
+	}
 
-		while !bufs.is_empty() {
-			let read = match self.read_vectored(bufs).await {
-				Ok(0) => break,
-				Ok(n) => n,
-				Err(err) if err.is_interrupted() => break,
-				Err(err) => return Err(err)
-			};
+	/// Same as [`try_read_fully_vectored`], except returns an [`UnexpectedEof`]
+	/// error on partial reads
+	///
+	/// Returns the number of bytes read, which is the same as
+	/// the length of all the buffers
+	///
+	/// [`try_read_fully_vectored`]: Read::try_read_fully_vectored
+	/// [`UnexpectedEof`]: Core::UnexpectedEof
+	async fn read_fully_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+		let (read, exhausted) = default_read_vectored(self, bufs).await?;
 
-			advance_slices_mut(&mut bufs, read);
-
-			/* checked by `advance_slices_mut` */
-			#[allow(clippy::arithmetic_side_effects)]
-			(total += read);
+		if unlikely(!exhausted) {
+			return Err(short_io_error_unless_interrupt().await);
 		}
 
-		Ok(total)
+		Ok(read)
 	}
 }
 
@@ -259,10 +291,10 @@ macro_rules! read_wrapper {
 			async fn read(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_fully(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
+			async fn try_read_fully(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn read_exact(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
+			async fn read_fully(&mut self, buf: &mut [u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
 			async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> $crate::error::Result<usize>;
@@ -275,6 +307,12 @@ macro_rules! read_wrapper {
 
 			#[asynchronous(traitfn)]
 			async fn read_vectored(&mut self, bufs: &mut [::std::io::IoSliceMut<'_>]) -> $crate::error::Result<usize>;
+
+			#[asynchronous(traitfn)]
+			async fn try_read_fully_vectored(&mut self, bufs: &mut [::std::io::IoSliceMut<'_>]) -> $crate::error::Result<usize>;
+
+			#[asynchronous(traitfn)]
+			async fn read_fully_vectored(&mut self, bufs: &mut [::std::io::IoSliceMut<'_>]) -> $crate::error::Result<usize>;
 		}
 	}
 }

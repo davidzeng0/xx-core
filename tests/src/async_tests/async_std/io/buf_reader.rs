@@ -130,12 +130,15 @@ pub async fn test_buf_reader() -> Result<()> {
 				reader.capacity()
 			);
 			assert_eq!(wait!(reader.stream_position())?, stream_pos);
-			assert_eq!(wait!(reader.inner().stream_position())?, inner_pos);
+			assert_eq!(wait!(reader.inner_mut().stream_position())?, inner_pos);
 			assert_eq!(reader.spare_capacity(), reader.capacity() - filled);
-			assert_eq!(reader.stream_len_fast(), reader.inner().stream_len_fast());
+			assert_eq!(
+				reader.stream_len_fast(),
+				reader.inner_mut().stream_len_fast()
+			);
 			assert_eq!(
 				reader.stream_position_fast(),
-				reader.inner().stream_position_fast()
+				reader.inner_mut().stream_position_fast()
 			);
 		};
 	}

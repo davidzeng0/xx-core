@@ -30,12 +30,13 @@ impl<W: Write> BufWriter<W> {
 
 	/// Flushes the buffer without flushing downstream
 	#[inline(never)]
+	#[cold]
 	async fn flush_buf(&mut self) -> Result<()> {
 		while self.pos < self.buf.len() {
 			let buf = &self.buf[self.pos..];
 			let wrote = self.writer.write(buf).await?;
 
-			if unlikely(wrote == 0) {
+			if wrote == 0 {
 				return Err(Core::WriteZero.into());
 			}
 
@@ -84,6 +85,50 @@ impl<W: Write> BufWriter<W> {
 	/// and the `usize` is the position to start flushing
 	pub fn into_parts(self) -> (W, Vec<u8>, usize) {
 		(self.writer, self.buf, self.pos)
+	}
+
+	pub async fn write_from_once<R>(&mut self, reader: &mut R) -> Result<usize>
+	where
+		R: Read + ?Sized
+	{
+		if self.buf.spare_capacity_mut().is_empty() {
+			self.flush().await?;
+		}
+
+		let mut amount = self.buf.len();
+
+		self.buf.resize(self.buf.capacity(), 0);
+
+		let buf = &mut self.buf[amount..];
+		let result = reader.read(buf).await;
+
+		if let Ok(read) = &result {
+			#[allow(clippy::arithmetic_side_effects)]
+			(amount += length_check(buf, *read));
+		}
+
+		self.buf.truncate(amount);
+
+		result
+	}
+
+	pub async fn write_from<R>(&mut self, reader: &mut R) -> Result<usize>
+	where
+		R: Read + ?Sized
+	{
+		let mut total = 0;
+
+		loop {
+			#[allow(clippy::arithmetic_side_effects)]
+			match self.write_from_once(reader).await {
+				Ok(0) => break,
+				Ok(n) => total += n,
+				Err(err) if err.is_interrupted() => break,
+				Err(err) => return Err(err)
+			}
+		}
+
+		Ok(total)
 	}
 }
 

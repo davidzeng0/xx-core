@@ -23,7 +23,11 @@ pub type MutPtr<T> = Pointer<T, true>;
 pub mod internal {
 	use super::*;
 
-	pub trait AsPointer {
+	seal_trait!();
+
+	impl<T: ?Sized, const MUT: bool> Sealed for Pointer<T, MUT> {}
+
+	pub trait AsPointer: Sealed {
 		type Target;
 
 		fn as_pointer(&self) -> Self::Target;
@@ -44,6 +48,8 @@ pub mod internal {
 			self.ptr
 		}
 	}
+
+	impl<T: ?Sized> Sealed for UnsafeCell<T> {}
 
 	impl<T: ?Sized> AsPointer for UnsafeCell<T> {
 		type Target = *mut T;

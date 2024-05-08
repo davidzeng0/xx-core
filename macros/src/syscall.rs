@@ -179,7 +179,7 @@ fn get_raw_args(
 			};
 
 			into_raw.push(parse_quote_spanned! { pat.span() =>
-				::xx_core::os::syscall::IntoRaw::into_raw(#pat)
+				IntoRaw::into_raw(#pat)
 			});
 
 			raw_args.push(FnArg::Typed(pat_ty));
@@ -198,7 +198,7 @@ fn get_raw_args(
 		});
 
 		vars.push(parse_quote_spanned! { pat_ident.span() =>
-			let #pat_ident = ::xx_core::os::syscall::IntoRawArray::into_raw_array(#pat_ident);
+			let #pat_ident = IntoRawArray::into_raw_array(#pat_ident);
 		});
 
 		into_raw.push(parse_quote! { (#pat_ident).0 });
@@ -249,24 +249,27 @@ fn expand_syscall_define(attrs: TokenStream, item: TokenStream) -> Result<TokenS
 
 	Ok(quote! {
 		#(#attrs)* #vis #raw_sig {
-			let result = unsafe {
-				::xx_core::os::syscall::syscall_raw!(
-					(#number) as i32
-					#(
-						,
-						::xx_core::os::syscall::SyscallParameter::from(#args).0
-					)*
-				)
-			};
+			let number = (#number) as i32;
 
-			::std::convert::From::<
-				::xx_core::os::syscall::SyscallResult
-			>::from(
-				::xx_core::os::syscall::SyscallResult(result)
-			)
+			{
+				use ::std::convert::Into;
+				use ::xx_core::os::syscall::{IntoRaw, IntoRawArray, SyscallParameter, syscall_raw};
+
+				let result = unsafe {
+					syscall_raw!(
+						number
+						#(, SyscallParameter::from(#args).0)*
+					)
+				};
+
+				Into::into(SyscallResult(result))
+			}
 		}
 
 		#(#attrs)* #vis #sig {
+			use ::std::convert::TryInto;
+			use ::xx_core::os::syscall::{IntoRaw, IntoRawArray};
+
 			#(#vars)*
 
 			unsafe { #raw_ident(#into_raw) }

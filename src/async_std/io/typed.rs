@@ -66,11 +66,11 @@ async fn read_bytes<R>(reader: &mut R, bytes: &mut [u8]) -> Result<usize>
 where
 	R: Read + ?Sized
 {
-	let read = reader.read_fully(bytes).await?;
+	let read = reader.try_read_fully(bytes).await?;
 
 	length_check(bytes, read);
 
-	if unlikely(read != bytes.len()) {
+	if read < bytes.len() {
 		check_interrupt().await?;
 
 		if read != 0 {
@@ -245,25 +245,25 @@ macro_rules! read_vint_type {
 		paste! {
 			#[inline(always)]
 			#[asynchronous(traitext)]
-			async fn [< read_vint_ $type _le >](&mut self, size: usize) -> Result<Option<$type>> {
+			async fn [< try_read_vint_ $type _le >](&mut self, size: usize) -> Result<Option<$type>> {
 				[< $func >](self, size, true).await
 			}
 
 			#[inline(always)]
 			#[asynchronous(traitext)]
-			async fn [< read_vint_ $type _be >](&mut self, size: usize) -> Result<Option<$type>> {
+			async fn [< try_read_vint_ $type _be >](&mut self, size: usize) -> Result<Option<$type>> {
 				[< $func >](self, size, false).await
 			}
 
 			#[inline(always)]
 			#[asynchronous(traitext)]
-			async fn [< read_vint_ $type _le_or_err >](&mut self, size: usize) -> Result<$type> {
+			async fn [< read_vint_ $type _le >](&mut self, size: usize) -> Result<$type> {
 				[< $func >](self, size, true).await?.ok_or_else(|| Core::UnexpectedEof.into())
 			}
 
 			#[inline(always)]
 			#[asynchronous(traitext)]
-			async fn [< read_vint_ $type _be_or_err >](&mut self, size: usize) -> Result<$type> {
+			async fn [< read_vint_ $type _be >](&mut self, size: usize) -> Result<$type> {
 				[< $func >](self, size, false).await?.ok_or_else(|| Core::UnexpectedEof.into())
 			}
 		}
@@ -282,11 +282,11 @@ macro_rules! read_vfloat_impl {
 	() => {
 		#[inline(always)]
 		#[asynchronous(traitext)]
-		async fn read_vfloat_le(&mut self, size: usize) -> Result<Option<f64>> {
+		async fn try_read_vfloat_le(&mut self, size: usize) -> Result<Option<f64>> {
 			if size == size_of::<f32>() {
-				self.read_f32_le().await.map(|c| c.map(|v| v as f64))
+				self.try_read_f32_le().await.map(|c| c.map(|v| v as f64))
 			} else if size == size_of::<f64>() {
-				self.read_f64_le().await
+				self.try_read_f64_le().await
 			} else {
 				panic!("Invalid size ({}) for variably sized type", size);
 			}
@@ -294,11 +294,11 @@ macro_rules! read_vfloat_impl {
 
 		#[inline(always)]
 		#[asynchronous(traitext)]
-		async fn read_vfloat_be(&mut self, size: usize) -> Result<Option<f64>> {
+		async fn try_read_vfloat_be(&mut self, size: usize) -> Result<Option<f64>> {
 			if size == size_of::<f32>() {
-				self.read_f32_be().await.map(|c| c.map(|v| v as f64))
+				self.try_read_f32_be().await.map(|c| c.map(|v| v as f64))
 			} else if size == size_of::<f64>() {
-				self.read_f64_be().await
+				self.try_read_f64_be().await
 			} else {
 				panic!("Invalid size ({}) for variably sized type", size);
 			}
@@ -306,16 +306,16 @@ macro_rules! read_vfloat_impl {
 
 		#[inline(always)]
 		#[asynchronous(traitext)]
-		async fn read_vfloat_le_or_err(&mut self, size: usize) -> Result<f64> {
-			self.read_vfloat_le(size)
+		async fn read_vfloat_le(&mut self, size: usize) -> Result<f64> {
+			self.try_read_vfloat_le(size)
 				.await?
 				.ok_or_else(|| Core::UnexpectedEof.into())
 		}
 
 		#[inline(always)]
 		#[asynchronous(traitext)]
-		async fn read_vfloat_be_or_err(&mut self, size: usize) -> Result<f64> {
-			self.read_vfloat_be(size)
+		async fn read_vfloat_be(&mut self, size: usize) -> Result<f64> {
+			self.try_read_vfloat_be(size)
 				.await?
 				.ok_or_else(|| Core::UnexpectedEof.into())
 		}
@@ -327,14 +327,14 @@ macro_rules! read_num_type_endian {
 		paste! {
 			#[asynchronous(traitext)]
 			#[inline(always)]
-			async fn [<read_ $endian_type>](&mut self) -> Result<Option<$type>> {
-				self.read_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>().await.map(|c| c.map(|t| t.0))
+			async fn [<try_read_ $endian_type>](&mut self) -> Result<Option<$type>> {
+				self.try_read_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>().await.map(|c| c.map(|t| t.0))
 			}
 
 			#[asynchronous(traitext)]
 			#[inline(always)]
-			async fn [<read_ $endian_type _or_err>](&mut self) -> Result<$type> {
-				self.[<read_ $endian_type>]().await?.ok_or_else(|| Core::UnexpectedEof.into())
+			async fn [<read_ $endian_type>](&mut self) -> Result<$type> {
+				self.[<try_read_ $endian_type>]().await?.ok_or_else(|| Core::UnexpectedEof.into())
 			}
 		}
 	};
@@ -374,7 +374,7 @@ pub trait ReadTyped: ReadSealed {
 
 	/// Read a type, returning None if EOF and no bytes were read
 	#[asynchronous(traitext)]
-	async fn read_type<T, const N: usize>(&mut self) -> Result<Option<T>>
+	async fn try_read_type<T, const N: usize>(&mut self) -> Result<Option<T>>
 	where
 		T: FromBytes<N>
 	{
@@ -383,11 +383,11 @@ pub trait ReadTyped: ReadSealed {
 
 	/// Read a type, returning an error on EOF
 	#[asynchronous(traitext)]
-	async fn read_type_or_err<T, const N: usize>(&mut self) -> Result<T>
+	async fn read_type<T, const N: usize>(&mut self) -> Result<T>
 	where
 		T: FromBytes<N>
 	{
-		self.read_type()
+		self.try_read_type()
 			.await?
 			.ok_or_else(|| Core::UnexpectedEof.into())
 	}
@@ -400,7 +400,7 @@ pub trait BufReadTyped: BufReadSealed {
 
 	/// Read a type, returning None if EOF and no bytes were read
 	#[asynchronous(traitext)]
-	async fn read_type<T, const N: usize>(&mut self) -> Result<Option<T>>
+	async fn try_read_type<T, const N: usize>(&mut self) -> Result<Option<T>>
 	where
 		T: FromBytes<N>
 	{
@@ -409,11 +409,11 @@ pub trait BufReadTyped: BufReadSealed {
 
 	/// Read a type, returning an error on EOF
 	#[asynchronous(traitext)]
-	async fn read_type_or_err<T, const N: usize>(&mut self) -> Result<T>
+	async fn read_type<T, const N: usize>(&mut self) -> Result<T>
 	where
 		T: FromBytes<N>
 	{
-		self.read_type()
+		self.try_read_type()
 			.await?
 			.ok_or_else(|| Core::UnexpectedEof.into())
 	}
@@ -453,7 +453,7 @@ impl<W: Write> fmt::Write for FmtAdapter<'_, W> {
 	fn write_str(&mut self, s: &str) -> fmt::Result {
 		/* Safety: guaranteed by caller of `write_args` */
 		#[allow(unsafe_code)]
-		let result = unsafe { scoped(self.context, self.writer.write_string_all_or_err(s)) };
+		let result = unsafe { scoped(self.context, self.writer.write_string(s)) };
 
 		match result {
 			Ok(n) => {
@@ -527,14 +527,14 @@ pub trait WriteTyped: WriteSealed {
 	/// Attempts to write the entire string, returning the number of bytes
 	/// written which may be short if interrupted or eof
 	#[asynchronous(traitext)]
-	async fn write_string(&mut self, buf: &str) -> Result<usize> {
-		self.write_all(buf.as_bytes()).await
+	async fn try_write_string(&mut self, buf: &str) -> Result<usize> {
+		self.try_write_all(buf.as_bytes()).await
 	}
 
 	/// Same as above but returns error on partial writes
 	#[asynchronous(traitext)]
-	async fn write_string_all_or_err(&mut self, buf: &str) -> Result<usize> {
-		self.write_exact(buf.as_bytes()).await
+	async fn write_string(&mut self, buf: &str) -> Result<usize> {
+		self.write_all(buf.as_bytes()).await
 	}
 
 	/// Attemps to write an entire char, returning error on partial writes
@@ -542,7 +542,7 @@ pub trait WriteTyped: WriteSealed {
 	async fn write_char(&mut self, ch: char) -> Result<usize> {
 		let mut buf = [0u8; 4];
 
-		self.write_string_all_or_err(ch.encode_utf8(&mut buf)).await
+		self.write_string(ch.encode_utf8(&mut buf)).await
 	}
 
 	/// Attempts to write an entire type, returning the number of bytes written
@@ -552,7 +552,7 @@ pub trait WriteTyped: WriteSealed {
 	where
 		T: ToBytes<N>
 	{
-		self.write_all(&val.to_bytes()).await
+		self.try_write_all(&val.to_bytes()).await
 	}
 }
 

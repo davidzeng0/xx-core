@@ -51,12 +51,11 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 		}
 
 		let mut args = get_args(&func.sig.inputs, true);
-		let ident = Context::new().0;
 
 		if func.sig.asyncness.is_some() {
-			args.push(parse_quote_spanned! { func.sig.inputs.span() =>
-				#ident
-			});
+			let context = Context::new().0;
+
+			args.push(parse_quote! { #context });
 		}
 
 		call.push(quote_spanned! { args.span() => (#args) });
@@ -71,17 +70,20 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 			)?;
 		}
 
-		func.attrs
-			.push(parse_quote! { #[allow(unsafe_op_in_unsafe_fn)] });
+		func.attrs.push(parse_quote! {
+			#[allow(unsafe_op_in_unsafe_fn, clippy::used_underscore_binding)]
+		});
+
 		ext.items.push(TraitItem::Fn(func));
 	}
 
 	let ident = &ext.ident;
 	let mut new_generics = ext.generics.clone();
 
-	new_generics
-		.params
-		.push(parse_quote! { XXInternalTraitImplementer: #super_trait + ?Sized });
+	new_generics.params.push(parse_quote! {
+		XXInternalTraitImplementer: #super_trait + ?Sized
+	});
+
 	Ok(quote! {
 		#[cfg(not(doc))]
 		#ext

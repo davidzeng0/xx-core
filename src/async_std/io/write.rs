@@ -2,6 +2,33 @@
 
 use super::*;
 
+#[asynchronous]
+async fn default_write_vectored<W>(
+	writer: &mut W, mut bufs: &mut [IoSlice<'_>]
+) -> Result<(usize, bool)>
+where
+	W: Write + ?Sized
+{
+	let mut total = 0;
+
+	while !bufs.is_empty() {
+		let wrote = match writer.write_vectored(bufs).await {
+			Ok(0) => break,
+			Ok(n) => n,
+			Err(err) if err.is_interrupted() => break,
+			Err(err) => return Err(err)
+		};
+
+		advance_slices(&mut bufs, wrote);
+
+		/* checked by `advance_slices` */
+		#[allow(clippy::arithmetic_side_effects)]
+		(total += wrote);
+	}
+
+	Ok((total, bufs.is_empty()))
+}
+
 /// The async equivalent of [`std::io::Write`]
 ///
 /// This trait is object safe
@@ -22,11 +49,10 @@ pub trait Write {
 	/// Try to write the entire buffer, returning on I/O error, interrupt, or
 	/// EOF
 	///
-	/// On interrupted, returns the number of bytes read if it is not zero
+	/// On interrupted, returns the number of bytes written if it is not zero
 	///
-	/// See also [`std::io::Write::write_all`]
-	async fn write_all(&mut self, buf: &[u8]) -> Result<usize> {
-		/* see Read::read_exact */
+	/// See also [`std::io::Write::try_write_all`]
+	async fn try_write_all(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
 		let mut wrote = 0;
@@ -46,18 +72,18 @@ pub trait Write {
 		check_interrupt_if_zero(wrote).await
 	}
 
-	/// Same as [`Write::write_all`], except it returns an [`UnexpectedEof`] on
-	/// partial writes
+	/// Same as [`Write::try_write_all`], except it returns an [`UnexpectedEof`]
+	/// on partial writes
 	///
 	/// [`UnexpectedEof`]: Core::UnexpectedEof
-	async fn write_exact(&mut self, buf: &[u8]) -> Result<usize> {
+	async fn write_all(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
-		let wrote = self.write_all(buf).await?;
+		let wrote = self.try_write_all(buf).await?;
 
 		length_check(buf, wrote);
 
-		if unlikely(wrote != buf.len()) {
+		if wrote < buf.len() {
 			return Err(short_io_error_unless_interrupt().await);
 		}
 
@@ -74,7 +100,7 @@ pub trait Write {
 
 	/// Like [`Write::write`], except that it writes from a slice of buffers
 	///
-	/// See also [`std::io::Read::read_vectored`]
+	/// See also [`std::io::Write::write_vectored`]
 	async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
 		match bufs.iter().find(|b| !b.is_empty()) {
 			Some(buf) => self.write(&buf[..]).await,
@@ -82,25 +108,32 @@ pub trait Write {
 		}
 	}
 
-	async fn write_all_vectored(&mut self, mut bufs: &mut [IoSlice<'_>]) -> Result<usize> {
-		let mut total = 0;
+	/// Like [`write_vectored`], except that it keeps writing until all the
+	/// buffers are exhausted
+	///
+	/// Returns on EOF
+	///
+	/// [`write_vectored`]: Write::write_vectored
+	async fn try_write_all_vectored(&mut self, bufs: &mut [IoSlice<'_>]) -> Result<usize> {
+		Ok(default_write_vectored(self, bufs).await?.0)
+	}
 
-		while !bufs.is_empty() {
-			let wrote = match self.write_vectored(bufs).await {
-				Ok(0) => break,
-				Ok(n) => n,
-				Err(err) if err.is_interrupted() => break,
-				Err(err) => return Err(err)
-			};
+	/// Same as [`try_write_all_vectored`], except returns an [`UnexpectedEof`]
+	/// error on partial writes
+	///
+	/// Returns the number of bytes written, which is the same as
+	/// the length of all the buffers
+	///
+	/// [`try_write_all_vectored`]: Write::try_write_all_vectored
+	/// [`UnexpectedEof`]: Core::UnexpectedEof
+	async fn write_all_vectored(&mut self, bufs: &mut [IoSlice<'_>]) -> Result<usize> {
+		let (wrote, exhausted) = default_write_vectored(self, bufs).await?;
 
-			advance_slices(&mut bufs, wrote);
-
-			/* checked by `advance_slices` */
-			#[allow(clippy::arithmetic_side_effects)]
-			(total += wrote);
+		if unlikely(!exhausted) {
+			return Err(short_io_error_unless_interrupt().await);
 		}
 
-		Ok(total)
+		Ok(wrote)
 	}
 }
 
@@ -121,16 +154,22 @@ macro_rules! write_wrapper {
 			async fn flush(&mut self) -> $crate::error::Result<()>;
 
 			#[asynchronous(traitfn)]
-			async fn write_all(&mut self, buf: &[u8]) -> $crate::error::Result<usize>;
+			async fn try_write_all(&mut self, buf: &[u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
-			async fn write_exact(&mut self, buf: &[u8]) -> $crate::error::Result<usize>;
+			async fn write_all(&mut self, buf: &[u8]) -> $crate::error::Result<usize>;
 
 			#[asynchronous(traitfn)]
 			fn is_write_vectored(&self) -> bool;
 
 			#[asynchronous(traitfn)]
 			async fn write_vectored(&mut self, bufs: &[::std::io::IoSlice<'_>]) -> $crate::error::Result<usize>;
+
+			#[asynchronous(traitfn)]
+			async fn try_write_all_vectored(&mut self, bufs: &mut [::std::io::IoSlice<'_>]) -> $crate::error::Result<usize>;
+
+			#[asynchronous(traitfn)]
+			async fn write_all_vectored(&mut self, bufs: &mut [::std::io::IoSlice<'_>]) -> $crate::error::Result<usize>;
 		}
 	}
 }

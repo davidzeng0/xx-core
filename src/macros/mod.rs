@@ -1,8 +1,8 @@
 pub use xx_core_macros::*;
 
-mod pointer;
-mod runtime;
-mod traits;
+pub mod pointer;
+pub mod runtime;
+pub mod traits;
 pub use pointer::*;
 pub use runtime::*;
 pub use traits::*;

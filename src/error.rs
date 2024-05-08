@@ -9,24 +9,21 @@ use std::{
 use crate::os::error::OsError;
 
 pub mod re_exports {
-	pub use anyhow;
 	pub use thiserror;
-}
-
-mod private {
-	pub trait Sealed {}
 }
 
 pub use io::ErrorKind;
 
-pub use crate::macros::{errors, wrapper_functions};
+pub use crate::macros::{errors, seal_trait, wrapper_functions};
 
 pub type Result<T> = result::Result<T, Error>;
 pub type OsResult<T> = result::Result<T, OsError>;
 
-impl<T> private::Sealed for Result<T> {}
+seal_trait!();
 
-pub trait ErrorContext<T>: private::Sealed {
+impl<T> Sealed for Result<T> {}
+
+pub trait ErrorContext<T>: Sealed {
 	fn context<C>(self, context: C) -> Result<T>
 	where
 		C: Display + Send + Sync + 'static;

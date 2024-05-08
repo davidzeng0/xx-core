@@ -26,7 +26,7 @@ impl<R: Read> BufReader<R> {
 		let buf = &mut self.data[range.clone()];
 		let read = self.reader.read(buf).await?;
 
-		if likely(read != 0) {
+		if read != 0 {
 			#[allow(clippy::arithmetic_side_effects)]
 			(self.buffered.end = range.start + length_check(buf, read));
 		}
@@ -38,10 +38,11 @@ impl<R: Read> BufReader<R> {
 	}
 
 	#[inline(never)]
+	#[cold]
 	async fn fill_buf(&mut self) -> Result<usize> {
 		let read = self.fill_buf_range(0..self.data.len()).await?;
 
-		if likely(read != 0) {
+		if read != 0 {
 			self.buffered.start = 0;
 		}
 
@@ -85,7 +86,12 @@ impl<R: Read> BufReader<R> {
 	}
 
 	/// Get a reference to the underlying reader
-	pub fn inner(&mut self) -> &mut R {
+	pub const fn inner(&self) -> &R {
+		&self.reader
+	}
+
+	/// Get a reference to the underlying reader
+	pub fn inner_mut(&mut self) -> &mut R {
 		&mut self.reader
 	}
 
@@ -129,7 +135,7 @@ impl<R: Read> BufReader<R> {
 #[asynchronous]
 impl<R: Read> Read for BufReader<R> {
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-		if likely(!self.buffer().is_empty()) {
+		if !self.buffer().is_empty() {
 			let read = self.read_into(buf);
 
 			#[cfg(feature = "tracing")]
@@ -156,25 +162,25 @@ impl<R: Read> Read for BufReader<R> {
 			return Ok(read);
 		}
 
-		if unlikely(self.fill_buf().await? == 0) {
-			return Ok(0);
+		if self.fill_buf().await? != 0 {
+			let read = self.read_into(buf);
+
+			#[cfg(feature = "tracing")]
+			crate::trace!(
+				target: &*self,
+				"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
+				buf.len(),
+				read,
+				{
+					#[allow(clippy::arithmetic_side_effects)]
+					(self.buffer().len() + read)
+				}
+			);
+
+			Ok(read)
+		} else {
+			Ok(0)
 		}
-
-		let read = self.read_into(buf);
-
-		#[cfg(feature = "tracing")]
-		crate::trace!(
-			target: &*self,
-			"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
-			buf.len(),
-			read,
-			{
-				#[allow(clippy::arithmetic_side_effects)]
-				(self.buffer().len() + read)
-			}
-		);
-
-		Ok(read)
 	}
 }
 
@@ -189,11 +195,11 @@ impl<R: Read> BufRead for BufReader<R> {
 		#[allow(clippy::arithmetic_side_effects)]
 		let mut end = self.buffered.start + amount;
 
-		if unlikely(end <= start) {
+		if end <= start {
 			return Ok(0);
 		}
 
-		if unlikely(end > self.capacity()) {
+		if end > self.capacity() {
 			end = amount;
 
 			if self.buffer().is_empty() {
@@ -213,7 +219,7 @@ impl<R: Read> BufRead for BufReader<R> {
 
 		let read = self.fill_buf_range(start..end).await?;
 
-		if unlikely(start == 0 && read != 0) {
+		if start == 0 && read != 0 {
 			/* read new data at beginning, reset pos */
 			self.buffered.start = 0;
 		}
