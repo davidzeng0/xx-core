@@ -12,7 +12,7 @@ pub use container_of;
 #[macro_export]
 macro_rules! ptr {
 	(*$ptr:expr) => {
-		(*$crate::pointer::internal::AsPointer::as_pointer(&$ptr))
+		*$crate::pointer::internal::AsPointer::as_pointer(&$ptr)
 	};
 
 	(&$value:expr) => {

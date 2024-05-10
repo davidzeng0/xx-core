@@ -2,10 +2,10 @@
 
 use crate::coroutines::*;
 
-pub trait AsyncFn<Args> {
+pub trait AsyncFnOnce<Args> {
 	type Output;
 
-	fn call(&self, args: Args) -> impl for<'a> Task<Output<'a> = Self::Output>;
+	fn call_once(self, args: Args) -> impl for<'a> Task<Output<'a> = Self::Output>;
 }
 
 pub trait AsyncFnMut<Args> {
@@ -14,8 +14,8 @@ pub trait AsyncFnMut<Args> {
 	fn call_mut(&mut self, args: Args) -> impl for<'a> Task<Output<'a> = Self::Output>;
 }
 
-pub trait AsyncFnOnce<Args> {
+pub trait AsyncFn<Args> {
 	type Output;
 
-	fn call_once(self, args: Args) -> impl for<'a> Task<Output<'a> = Self::Output>;
+	fn call(&self, args: Args) -> impl for<'a> Task<Output<'a> = Self::Output>;
 }

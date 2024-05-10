@@ -323,8 +323,8 @@ impl<'a> InterruptGuard<'a> {
 		inner.guards = match inner.guards.checked_add_signed(rel) {
 			Some(guards) => guards,
 			/* this can never happen unless memory corruption. useful to check anyway as it
-			 * doesn't have to be fast. since this is unsafe and relies on raw pointers, we abort
-			 * instead of panic */
+			 * doesn't have to be fast
+			 */
 			None => panic_nounwind!("Interrupt guards count overflowed")
 		};
 	}
