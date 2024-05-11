@@ -43,7 +43,7 @@ enum AsyncKind {
 	TraitFn,
 	TraitExt,
 	Task,
-	Block
+	Sync
 }
 
 impl AsyncKind {
@@ -54,7 +54,7 @@ impl AsyncKind {
 			Self::TraitFn => ClosureType::None,
 			Self::TraitExt => ClosureType::Trait,
 			Self::Task => ClosureType::None,
-			Self::Block => ClosureType::None
+			Self::Sync => ClosureType::None
 		}
 	}
 
@@ -63,7 +63,7 @@ impl AsyncKind {
 			"traitfn" => Self::TraitFn,
 			"traitext" => Self::TraitExt,
 			"task" => Self::Task,
-			"block" => Self::Block,
+			"sync" => Self::Sync,
 			_ => return None
 		})
 	}
@@ -218,6 +218,24 @@ impl VisitMut for TransformAsync {
 			Expr::Async(inner) => self.transform_async(inner),
 			Expr::Await(inner) => self.transform_await(inner),
 			Expr::Closure(inner) => self.transform_closure(inner),
+			_ => return visit_expr_mut(self, expr)
+		};
+	}
+
+	fn visit_macro_mut(&mut self, mac: &mut Macro) {
+		visit_macro_body(self, mac);
+	}
+}
+
+struct TransformItems;
+
+impl VisitMut for TransformItems {
+	fn visit_item_mut(&mut self, _: &mut Item) {}
+
+	fn visit_expr_mut(&mut self, expr: &mut Expr) {
+		*expr = match expr {
+			Expr::Async(inner) => TransformAsync {}.transform_async(inner),
+			Expr::Closure(inner) => TransformAsync {}.transform_closure(inner),
 			_ => return visit_expr_mut(self, expr)
 		};
 	}
@@ -632,17 +650,17 @@ fn language_impl(attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStream> {
 	}
 }
 
-fn async_block(item: Functions) -> Result<TokenStream> {
-	let Functions::Fn(func) = item else {
-		return Err(Error::new_spanned(item, "Expected a function"));
-	};
+fn async_items(item: Functions) -> Result<TokenStream> {
+	item.transform_all(
+		|func| {
+			if let Some(block) = &mut func.block {
+				TransformItems.visit_block_mut(block);
+			}
 
-	let block = func.block;
-	let mut expr = Expr::Async(parse_quote! { async move #block });
-
-	TransformAsync {}.visit_expr_mut(&mut expr);
-
-	Ok(expr.to_token_stream())
+			Ok(())
+		},
+		|_| true
+	)
 }
 
 fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStream> {
@@ -700,7 +718,7 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 	match attrs.async_kind.0 {
 		AsyncKind::Default => (),
 		AsyncKind::TraitFn => return async_impl(attrs, item),
-		AsyncKind::Block => return async_block(item),
+		AsyncKind::Sync => return async_items(item),
 		_ => return transform_functions(attrs)
 	}
 
