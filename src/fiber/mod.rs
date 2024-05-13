@@ -133,12 +133,12 @@ impl Fiber {
 		let stack_size = get_limit(Resource::Stack)
 			.expect("Failed to get stack size")
 			.try_into()
-			.unwrap();
+			.expect("Valid stack size");
 		let page_size = get_system_configuration(SystemConfiguration::Pagesize)
 			.expect("Failed to get page size")
 			.unwrap_or(0)
 			.try_into()
-			.unwrap();
+			.expect("Valid page size");
 
 		assert!(page_size > 0 && stack_size > 0 && stack_size > page_size);
 

@@ -343,8 +343,8 @@ impl<Output> JoinHandle<Output> {
 	pub async fn cancel(self) -> Output {
 		let result = self.request_cancel();
 
-		if result.is_err() {
-			warn!(target: &self, ">> Cancel returned an {:?}", result);
+		if let Err(err) = &result {
+			warn!(target: &self, ">> Cancel failed: {:?}", err);
 		}
 
 		self.await

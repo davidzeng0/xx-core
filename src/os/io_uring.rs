@@ -659,10 +659,10 @@ pub unsafe fn io_uring_enter_timeout(
 ) -> OsResult<i32> {
 	let mut args = GetEventsArg::default();
 
-	#[allow(clippy::unwrap_used)]
+	#[allow(clippy::expect_used)]
 	let ts = TimeSpec {
 		/* io_uring does not enforce nanos < 1e9 */
-		nanos: timeout.try_into().unwrap(),
+		nanos: timeout.try_into().expect("Valid timeout"),
 		sec: 0
 	};
 
