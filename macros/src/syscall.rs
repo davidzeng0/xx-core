@@ -29,29 +29,21 @@ impl Parse for SyscallImpl {
 
 			input.parse::<Token![;]>()?;
 
+			let kind_str = kind.to_string();
+
+			match kind_str.as_ref() {
+				kind @ ("out" | "num") if regs.len() != 1 => {
+					let msg = format!("There can only be one `{}` register", kind);
+
+					return Err(Error::new_spanned(kind, msg));
+				}
+
+				_ => ()
+			}
+
 			match kind.to_string().as_ref() {
-				"out" => {
-					if regs.len() != 1 {
-						return Err(Error::new_spanned(
-							kind,
-							"There can only be one output register"
-						));
-					}
-
-					out = Some(regs[0].clone());
-				}
-
-				"num" => {
-					if regs.len() != 1 {
-						return Err(Error::new_spanned(
-							kind,
-							"There can only be one number register"
-						));
-					}
-
-					num = Some(regs[0].clone());
-				}
-
+				"out" => out = Some(regs[0].clone()),
+				"num" => num = Some(regs[0].clone()),
 				"arg" => args = Some(regs),
 				"clobber" => clobber = Some(regs),
 
@@ -150,6 +142,18 @@ fn parse_options(meta: &Meta) -> Result<ArrayOptions> {
 	Ok(options)
 }
 
+fn make_pat_type(pat_ty: &PatType, new_ident: Ident, ty: impl FnOnce(Type) -> Type) -> PatType {
+	let mut result = pat_ty.clone();
+
+	let Pat::Ident(ident) = result.pat.as_mut() else {
+		unreachable!();
+	};
+
+	ident.ident = new_ident;
+	result.ty = Box::new(ty(*result.ty));
+	result
+}
+
 #[allow(clippy::type_complexity)]
 fn get_raw_args(
 	args: &mut Punctuated<FnArg, Token![,]>
@@ -174,22 +178,34 @@ fn get_raw_args(
 		let Some(array) = array else {
 			let (pat, ty) = (&pat_ty.pat, &pat_ty.ty);
 
-			pat_ty.ty = parse_quote_spanned! { ty.span() =>
-				<#ty as ::xx_core::os::syscall::IntoRaw>::Raw
-			};
-
 			into_raw.push(parse_quote_spanned! { pat.span() =>
 				IntoRaw::into_raw(#pat)
 			});
+
+			pat_ty.ty = parse_quote_spanned! { ty.span() =>
+				<#ty as ::xx_core::os::syscall::IntoRaw>::Raw
+			};
 
 			raw_args.push(FnArg::Typed(pat_ty));
 
 			continue;
 		};
 
-		let Pat::Ident(mut pat_ident) = *pat_ty.pat else {
+		let Pat::Ident(pat_ident) = pat_ty.pat.as_ref() else {
 			return Err(Error::new_spanned(pat_ty.pat, "Pattern not allowed here"));
 		};
+
+		let ptr = make_pat_type(&pat_ty, format_ident!("{}_ptr", pat_ident.ident), |ty| {
+			parse_quote_spanned! { ty.span() =>
+				<#ty as ::xx_core::os::syscall::IntoRawArray>::Pointer
+			}
+		});
+
+		let mut len = make_pat_type(&pat_ty, format_ident!("{}_len", pat_ident.ident), |ty| {
+			parse_quote_spanned! { ty.span() =>
+				<#ty as ::xx_core::os::syscall::IntoRawArray>::Length
+			}
+		});
 
 		let options = parse_options(&array.meta)?;
 		let length_type = options.len;
@@ -197,36 +213,19 @@ fn get_raw_args(
 			quote_spanned! { len.span() => .try_into().unwrap() }
 		});
 
+		into_raw.push(parse_quote! { (#pat_ident).0 });
+		into_raw.push(parse_quote! { (#pat_ident).1#into_length_type });
+
 		vars.push(parse_quote_spanned! { pat_ident.span() =>
 			let #pat_ident = IntoRawArray::into_raw_array(#pat_ident);
 		});
 
-		into_raw.push(parse_quote! { (#pat_ident).0 });
-		into_raw.push(parse_quote! { (#pat_ident).1#into_length_type });
-
-		let ty = pat_ty.ty.clone();
-		let ident = pat_ident.ident.clone();
-
-		pat_ident.ident = format_ident!("{}_ptr", ident);
-		pat_ty.pat = Box::new(Pat::Ident(pat_ident.clone()));
-		pat_ty.ty = Box::new(parse_quote_spanned! { ty.span() =>
-			<#ty as ::xx_core::os::syscall::IntoRawArray>::Pointer
-		});
-
-		raw_args.push(FnArg::Typed(pat_ty.clone()));
-
-		pat_ident.ident = format_ident!("{}_len", ident);
-		pat_ty.pat = Box::new(Pat::Ident(pat_ident));
-
 		if let Some(expr) = &length_type {
-			pat_ty.ty = Box::new(parse_quote! { #expr });
-		} else {
-			pat_ty.ty = Box::new(parse_quote_spanned! { ty.span() =>
-				<#ty as ::xx_core::os::syscall::IntoRawArray>::Length
-			});
+			len.ty = Box::new(parse_quote! { #expr });
 		}
 
-		raw_args.push(FnArg::Typed(pat_ty));
+		raw_args.push(FnArg::Typed(ptr));
+		raw_args.push(FnArg::Typed(len));
 	}
 
 	Ok((raw_args, vars, into_raw))

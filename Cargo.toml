@@ -6,14 +6,15 @@ edition = "2021"
 [dependencies]
 log = { version = "0.4", features = ["std"] }
 ctor = "0.2"
-enumflags2 = "0.7.9"
+enumflags2 = { git = "https://github.com/davidzeng0/enumflags2.git" }
 memchr = "2.7.2"
 num-derive = "0.4.2"
-num-traits = "0.2.18"
-paste = "1.0.14"
+num-traits = "0.2.19"
+paste = "1.0.15"
 lazy_static = "1.4.0"
-anyhow = "1.0.82"
-thiserror = "1.0.59"
+anyhow = "1.0.86"
+thiserror = "1.0.61"
+static_assertions = "1.1.0"
 xx-core-macros = { path = "macros" }
 
 [features]
@@ -39,6 +40,7 @@ unused_qualifications = "warn"
 variant_size_differences = "warn"
 
 [lints.clippy]
+field_reassign_with_default = "allow"
 missing_transmute_annotations = "allow"
 arithmetic_side_effects = "warn"
 cast_possible_truncation = "warn"

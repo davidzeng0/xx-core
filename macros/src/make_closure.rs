@@ -24,7 +24,7 @@ impl VisitMut for ReplaceSelf {
 		let FnArg::Receiver(rec) = arg else { return };
 
 		let (attrs, mut mutability, ty) = (&rec.attrs, rec.mutability, &rec.ty);
-		let ident = format_ident!("{}", SELF_IDENT, span = Span::mixed_site());
+		let ident = Ident::new(SELF_IDENT, Span::mixed_site());
 
 		if rec.reference.is_some() {
 			mutability = None;
@@ -40,7 +40,7 @@ impl VisitMut for ReplaceSelf {
 		visit_ident_mut(self, ident);
 
 		if ident == "self" {
-			*ident = format_ident!("{}", SELF_IDENT, span = Span::mixed_site());
+			*ident = Ident::new(SELF_IDENT, Span::mixed_site());
 		}
 	}
 
@@ -136,11 +136,7 @@ impl VisitMut for AddLifetime {
 			return;
 		}
 
-		if let Type::Reference(reference) = rec.ty.as_mut() {
-			self.visit_type_reference_mut(reference);
-		} else {
-			visit_type_mut(self, rec.ty.as_mut());
-		}
+		visit_type_mut(self, rec.ty.as_mut());
 	}
 
 	fn visit_type_impl_trait_mut(&mut self, impl_trait: &mut TypeImplTrait) {
@@ -149,14 +145,10 @@ impl VisitMut for AddLifetime {
 		));
 	}
 
-	fn visit_return_type_mut(&mut self, _: &mut ReturnType) {}
-
 	fn visit_signature_mut(&mut self, sig: &mut Signature) {
 		for arg in &mut sig.inputs {
 			self.visit_fn_arg_mut(arg);
 		}
-
-		self.visit_return_type_mut(&mut sig.output);
 	}
 }
 
@@ -264,12 +256,12 @@ pub fn make_tuple_of_types<T>(data: Vec<T>) -> TokenStream
 where
 	T: ToTokens
 {
-	let data: Punctuated<T, Token![,]> = data.into_iter().collect();
+	let types = quote! { #(#data),* };
 
 	if data.len() == 1 {
-		data.to_token_stream()
+		types
 	} else {
-		quote_spanned! { data.span() => (#data) }
+		quote! { (#types) }
 	}
 }
 
@@ -291,7 +283,7 @@ fn make_args(args_pat_type: &[(TokenStream, TokenStream)]) -> (TokenStream, Toke
 
 	for (pat, ty) in args_pat_type {
 		args.push(quote! { #pat: #ty });
-		types.push(ty.clone());
+		types.push(ty);
 	}
 
 	(quote! { #(#args),* }, quote! { #(#types),* })
@@ -314,32 +306,32 @@ pub fn make_explicit_closure(
 		}
 
 		FnArg::Receiver(rec) => {
-			let make_pat_ident = |ident: &str, copy_mut: bool, mixed_site: bool| {
+			let make_pat_ident = |ident: Option<&str>, copy_mut: bool| {
 				let mutability = if copy_mut && rec.reference.is_none() {
 					rec.mutability
 				} else {
 					None
 				};
 
-				let span = if mixed_site {
-					Span::mixed_site()
+				let ident = if let Some(ident) = ident {
+					Ident::new(ident, Span::mixed_site())
 				} else {
-					rec.span()
+					Ident::new("self", rec.self_token.span())
 				};
 
 				Pat::Ident(PatIdent {
 					attrs: rec.attrs.clone(),
 					by_ref: None,
 					mutability,
-					ident: format_ident!("{}", ident, span = span),
+					ident,
 					subpat: None
 				})
 			};
 
 			(
 				rec.ty.as_ref().clone(),
-				make_pat_ident("self", false, false),
-				make_pat_ident(SELF_IDENT, true, true)
+				make_pat_ident(None, false),
+				make_pat_ident(Some(SELF_IDENT), true)
 			)
 		}
 	});
@@ -356,7 +348,8 @@ pub fn make_explicit_closure(
 
 		**block = parse_quote! {{
 			#closure_type::new(
-				#[allow(clippy::used_underscore_binding)] { #construct },
+				#[allow(clippy::used_underscore_binding)]
+				{ #construct },
 				| #destruct: #types, #args | -> #return_type #block
 			)
 		}};
@@ -413,8 +406,10 @@ pub fn make_opaque_closure(
 	}
 
 	func.attrs.push(parse_quote! { #[inline(always)] });
-	func.attrs
-		.push(parse_quote! { #[allow(clippy::type_complexity)] });
+	func.attrs.push(parse_quote! {
+		#[allow(clippy::type_complexity)]
+	});
+
 	func.sig.output = parse_quote! { -> #closure_return_type #addl_lifetimes };
 
 	Ok(closure_return_type)

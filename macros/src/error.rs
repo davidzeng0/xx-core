@@ -10,7 +10,7 @@ pub fn error(_: TokenStream, item: TokenStream) -> TokenStream {
 
 	input.attrs.push(parse_quote! {
 		#[derive(
-			::xx_core::error::re_exports::thiserror::Error,
+			::xx_core::error::internal::thiserror::Error,
 			::std::fmt::Debug
 		)]
 	});
@@ -34,7 +34,7 @@ pub fn error(_: TokenStream, item: TokenStream) -> TokenStream {
 	quote! {
 		#input
 
-		impl ::xx_core::error::IntoError for #name {}
+		impl ::xx_core::error::internal::IntoError for #name {}
 
 		#eq
 	}

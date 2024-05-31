@@ -10,7 +10,7 @@ use xx_core::{
 		mman::{Advice, Flag, Flags, Map, Protection, Type},
 		poll::{poll_timeout, PollFd, PollFlag},
 		resource::{get_rlimit, Resource},
-		time::{time, ClockId},
+		time::{nanotime, ClockId},
 		unistd::close
 	},
 	pointer::{MutPtr, Ptr}
@@ -26,7 +26,7 @@ fn test_close_inval() {
 
 #[test]
 fn test_time() {
-	assert!(time(ClockId::Monotonic).unwrap() > 0);
+	assert!(nanotime(ClockId::Monotonic).unwrap() > 0);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 pub use crate::macros::future;
-use crate::{error::*, pointer::*, runtime::call_non_panicking};
+use crate::{error::*, pointer::*, runtime::call_no_unwind};
 
 mod block_on;
 pub mod closure;
@@ -45,12 +45,12 @@ impl<T> Request<T> {
 	pub const fn no_op() -> Self {
 		fn no_op<T>(_: ReqPtr<T>, _: Ptr<()>, _: T) {}
 
-		/* Safety: no_op does not panic */
+		/* Safety: no_op does not unwind */
 		unsafe { Self::new(Ptr::null(), no_op) }
 	}
 
 	/// # Safety
-	/// `callback` must not panic, and its safety requirements must be
+	/// `callback` must not unwind, and its safety requirements must be
 	/// identical to `Request::complete`
 	pub const unsafe fn new(arg: Ptr<()>, callback: Complete<T>) -> Self {
 		Self { arg, callback }
@@ -71,7 +71,7 @@ impl<T> Request<T> {
 		let Self { arg, callback } = unsafe { ptr!(*request) };
 
 		/* Safety: guaranteed by caller */
-		call_non_panicking(|| unsafe { (callback)(request, arg, value) });
+		call_no_unwind(|| unsafe { (callback)(request, arg, value) });
 	}
 }
 
@@ -127,6 +127,7 @@ pub enum Progress<Output, C: Cancel> {
 /// Must not use any references once the callback is called
 /// If `run` panics, the future must not be in progress, and the callback must
 /// not be called
+#[must_use = "Future does nothing until `Future::run` is called"]
 pub unsafe trait Future {
 	type Output;
 	type Cancel: Cancel;

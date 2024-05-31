@@ -120,7 +120,7 @@ where
 	Ok(if available.len() >= N {
 		let mut bytes = [0u8; N];
 
-		/* this gets optimized to a single load instruction of size N, where N is a
+		/* this gets optimized to a single load instruction of size N, when N is a
 		 * power of two */
 		read_into_slice(&mut bytes, &available[0..N]);
 
@@ -211,12 +211,12 @@ where
 	if unlikely(size == 0 || size > N) {
 		assert!(size == 0, "Invalid size ({}) for variably sized type", size);
 
-		Ok(Some(T::ZERO))
-	} else {
-		buf_load_bytes(reader, size)
-			.await
-			.map(|c| c.map(|b| vint_from_bytes(b, size, le)))
+		return Ok(Some(T::ZERO));
 	}
+
+	buf_load_bytes(reader, size)
+		.await
+		.map(|c| c.map(|b| vint_from_bytes(b, size, le)))
 }
 
 #[asynchronous]

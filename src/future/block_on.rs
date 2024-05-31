@@ -21,21 +21,23 @@ impl<Resume, Output> BlockState<Resume, Output> {
 	unsafe fn complete(&mut self, value: Output) -> Resume {
 		let resume = replace(self, Self::Done(value));
 
-		let Self::Pending(resume) = resume else {
-			/* Safety: future cannot complete twice */
-			unsafe { unreachable_unchecked!("Double complete detected") };
-		};
+		match resume {
+			Self::Pending(resume) => resume,
 
-		resume
+			/* Safety: future cannot complete twice */
+			Self::Done(_) => unsafe { unreachable_unchecked!("Double complete detected") }
+		}
 	}
 
 	unsafe fn output(self) -> Output {
-		let Self::Done(output) = self else {
-			/* Safety: guaranteed by caller */
-			unsafe { unreachable_unchecked!("Blocking function ended before producing a result") };
-		};
+		match self {
+			Self::Done(output) => output,
 
-		output
+			/* Safety: guaranteed by caller */
+			Self::Pending(_) => unsafe {
+				unreachable_unchecked!("Blocking function ended before producing a result")
+			}
+		}
 	}
 }
 
@@ -74,7 +76,7 @@ where
 	/* Safety: guaranteed by caller */
 	let resume = unsafe { arg.complete(value) };
 
-	call_non_panicking(resume);
+	call_no_unwind(resume);
 }
 
 struct Waiter<Resume, Output> {
@@ -84,7 +86,7 @@ struct Waiter<Resume, Output> {
 
 impl<Resume: FnOnce(), Output> Waiter<Resume, Output> {
 	const fn new(resume: Resume) -> Self {
-		/* Safety: block_resume does not panic */
+		/* Safety: block_resume does not unwind */
 		let request = unsafe { Request::new(Ptr::null(), block_resume::<Resume, Output>) };
 
 		Self { request, state: BlockState::pending(resume) }
@@ -113,7 +115,7 @@ impl<Resume, Output> Pin for Waiter<Resume, Output> {
 ///
 /// # Safety
 /// `block` must block until the future finishes
-/// `resume` must never panic
+/// `resume` must never unwind
 pub unsafe fn block_on<Block, Resume, F>(block: Block, resume: Resume, future: F) -> F::Output
 where
 	Block: FnOnce(F::Cancel),

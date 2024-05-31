@@ -33,7 +33,7 @@ macro_rules! define_context {
 
 use define_context;
 
-mod pool;
+pub mod pool;
 pub use pool::*;
 
 /// Safety: the stack is not used before a fiber is started,
@@ -53,7 +53,7 @@ impl Start {
 	}
 
 	/// # Safety
-	/// `start` must never panic. must exit the worker before returning.
+	/// `start` must never unwind. must exit the worker before returning.
 	/// care must be taken to drop any values before a call to exit
 	///
 	/// `start`'s safety contract is
@@ -74,6 +74,8 @@ impl Start {
 /// A is not in use
 ///
 /// and A's intercept can be written on the stack
+///
+/// The `no_stack` option is not set for inline assembly
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Intercept {
@@ -125,7 +127,7 @@ impl Fiber {
 		Self { context: Context::default(), stack: Map::new() }
 	}
 
-	#[allow(clippy::new_without_default, clippy::expect_used, clippy::unwrap_used)]
+	#[allow(clippy::new_without_default, clippy::expect_used)]
 	#[must_use]
 	/// # Panics
 	/// If the stack allocation fails

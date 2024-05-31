@@ -14,12 +14,12 @@ struct WrapperFunctions {
 }
 
 impl Parse for WrapperFunctions {
+	#[allow(clippy::unwrap_in_result)]
 	fn parse(input: ParseStream<'_>) -> Result<Self> {
 		let mut inner = None;
 		let mut inner_mut = None;
 
 		for _ in 0..2 {
-			/* reason: readability */
 			#[allow(clippy::nonminimal_bool)]
 			if !input.peek(Ident) && !(input.peek(Token![mut]) && input.peek2(Ident)) {
 				break;
@@ -50,7 +50,7 @@ impl Parse for WrapperFunctions {
 			return Err(input.error("Expected an inner expression"));
 		}
 
-		let inner = inner.unwrap_or_else(|| inner_mut.clone().unwrap());
+		let inner = inner.or_else(|| inner_mut.clone()).unwrap();
 		let inner_mut = inner_mut.unwrap_or_else(|| inner.clone());
 
 		let mut functions = Vec::new();

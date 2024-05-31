@@ -3,6 +3,12 @@ use super::{error::*, *};
 #[syscall_define(Close)]
 pub fn close(fd: OwnedFd) -> OsResult<()>;
 
+#[syscall_define(Read)]
+pub fn read(fd: BorrowedFd<'_>, #[array] buf: MutRawBuf<'_>) -> OsResult<()>;
+
+#[syscall_define(Write)]
+pub fn write(fd: BorrowedFd<'_>, #[array] buf: RawBuf<'_>) -> OsResult<()>;
+
 define_enum! {
 	#[repr(i32)]
 	pub enum SystemConfiguration {

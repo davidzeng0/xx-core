@@ -36,7 +36,9 @@ macro_rules! ptr {
 	};
 
 	($ptr:expr => [$index:expr] $($expr:tt)*) => {
-		$crate::macros::ptr!(*$ptr)[$index]$($expr)*
+		$crate::macros::ptr!(*
+			$crate::pointer::internal::PointerIndex::index($ptr, $index)
+		) $($expr)*
 	};
 
 	($ptr:expr => $($expr:tt)*) => {

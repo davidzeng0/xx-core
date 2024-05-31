@@ -13,8 +13,8 @@ pub struct Executor {
 }
 
 impl Executor {
-	#[allow(clippy::new_without_default)]
 	#[must_use]
+	#[allow(clippy::new_without_default)]
 	pub fn new() -> Self {
 		/* Safety: pool is null */
 		unsafe { Self::new_with_pool(Ptr::null()) }
@@ -75,18 +75,14 @@ impl Executor {
 		let worker = unsafe { worker.as_ref() };
 		let from = worker.caller();
 
+		/* Safety: a worker cannot be double suspended */
+		unsafe { assert_unsafe_precondition!(!from.is_null(), "Double suspend detected") }
+
 		self.current.set(from);
 
 		#[cfg(debug_assertions)]
-		{
-			if worker.caller().is_null() {
-				/* Safety: a worker is never double suspended */
-				panic_nounwind!("Double suspend detected");
-			}
-
-			/* Safety: clear the caller */
-			unsafe { worker.suspend_to(Ptr::null()) };
-		}
+		/* Safety: clear the caller */
+		(unsafe { worker.suspend_to(Ptr::null()) });
 
 		/* Safety: workers are alive as long as they're executing */
 		unsafe { Fiber::switch(worker.fiber(), ptr!(from=>fiber())) };
@@ -105,10 +101,8 @@ impl Executor {
 		/* Safety: worker is valid */
 		let worker = unsafe { worker.as_ref() };
 
-		#[cfg(debug_assertions)]
-		if !worker.caller().is_null() {
-			panic_nounwind!("Loop detected");
-		}
+		/* Safety: a worker cannot be double resumed */
+		unsafe { assert_unsafe_precondition!(worker.caller().is_null(), "Double resume detected") };
 
 		/* Safety: previous resumed worker */
 		unsafe { worker.suspend_to(previous) };
@@ -133,17 +127,21 @@ impl Executor {
 	/// same as suspend
 	/// the worker must be finished executing
 	pub(super) unsafe fn exit(&self, worker: Worker) {
-		let pool = self.pool;
 		let from = worker.caller();
+
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(!from.is_null(), "Double suspend detected") };
 
 		self.current.set(from);
 
 		/* Safety: guaranteed by caller */
 		unsafe {
-			if pool.is_null() {
+			if self.pool.is_null() {
 				worker.into_inner().exit(ptr!(from=>fiber()));
 			} else {
-				worker.into_inner().exit_to_pool(ptr!(from=>fiber()), pool);
+				worker
+					.into_inner()
+					.exit_to_pool(ptr!(from=>fiber()), self.pool);
 			}
 		}
 	}

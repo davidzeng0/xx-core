@@ -7,7 +7,6 @@
 use std::{cell::Cell, mem::replace};
 
 use super::*;
-use crate::{assert_unsafe_precondition, runtime::MaybePanic};
 
 /// # Safety
 /// the future must be in progress
@@ -15,10 +14,8 @@ unsafe fn run_cancel<C>(cancel: C) -> MaybePanic<Result<()>>
 where
 	C: Cancel
 {
-	let result = catch_unwind(AssertUnwindSafe(|| {
-		/* Safety: contract upheld by caller */
-		unsafe { cancel.run() }
-	}));
+	/* Safety: contract upheld by caller */
+	let result = catch_unwind_safe(|| unsafe { cancel.run() });
 
 	match &result {
 		Ok(Err(err)) => debug!("Cancel was not successful: {:?}", err),
@@ -99,10 +96,8 @@ impl<F: Future> FutureHandle<F> {
 			_ => unsafe { unreachable_unchecked!("`FutureHandle::run` called twice") }
 		};
 
-		let progress = catch_unwind(AssertUnwindSafe(|| {
-			/* Safety: guaranteed by caller */
-			unsafe { future.run(ptr!(&self.request)) }
-		}));
+		/* Safety: guaranteed by caller */
+		let progress = catch_unwind_safe(|| unsafe { future.run(ptr!(&self.request)) });
 
 		match progress {
 			Ok(Progress::Pending(cancel)) => {
@@ -126,9 +121,9 @@ impl<F: Future> FutureHandle<F> {
 	/// # Safety
 	/// must only call once, when the future is finished
 	unsafe fn complete(&mut self, result: MaybePanic<F::Output>) -> &mut MaybePanic<F::Output> {
-		if self.done() {
-			/* Safety: guaranteed by caller */
-			unsafe { unreachable_unchecked!("`FutureHandle::complete` called twice") };
+		/* Safety: guaranteed by caller */
+		unsafe {
+			assert_unsafe_precondition!(!self.done(), "`FutureHandle::complete` called twice");
 		}
 
 		self.state = State::Done(result);
@@ -144,7 +139,7 @@ impl<F: Future> FutureHandle<F> {
 	/// the future must have completed, and `FutureHandle::complete` was called
 	/// with the result
 	unsafe fn result(&mut self) -> MaybePanic<F::Output> {
-		match replace(&mut self.state, State::Empty) {
+		match self.state.take() {
 			State::Done(value) => value,
 
 			/* abort here (on debug) because this is most definitely fatal, and is usually called
@@ -241,9 +236,6 @@ impl<
 			/*
 			 * Safety: complete the future. we must not access `self` once a cancel or a
 			 * complete is called, as we may be freed by the callee
-			 *
-			 * `this` is transitioned to a Disabled state after this call
-			 * which is okay, because it's not a protected tag
 			 */
 			unsafe { Request::complete(this.request, result) };
 
@@ -254,11 +246,7 @@ impl<
 			return;
 		}
 
-		/* Safety: if both aren't complete, then the other must be running
-		 *
-		 * `this` is transitioned to a Disabled state after this call
-		 * which is okay, because it's not a protected tag
-		 */
+		/* Safety: if both aren't complete, then the other must be running */
 		unsafe {
 			/* we can't do much if the cancel panics */
 			let _ = if is_first {
@@ -275,9 +263,8 @@ impl<
 		/* Safety: the future has completed */
 		let result = unsafe { ptr!(this=>handles.0.complete(Ok(value))) };
 
-		let should_cancel =
-			/* Safety: guaranteed by Future's contract */
-			runtime::call_non_panicking(|| unsafe { ptr!(this=>should_cancel.0(result)) });
+		/* Safety: guaranteed by Future's contract */
+		let should_cancel = call_no_unwind(|| unsafe { ptr!(this=>should_cancel.0(result)) });
 
 		/* Safety: the future has completed */
 		unsafe { Self::complete_single(this, true, should_cancel) };
@@ -289,16 +276,15 @@ impl<
 		/* Safety: the future has completed */
 		let result = unsafe { ptr!(this=>handles.1.complete(Ok(value))) };
 
-		let should_cancel =
-			/* Safety: guaranteed by Future's contract */
-			runtime::call_non_panicking(|| unsafe { ptr!(this=>should_cancel.1(result)) });
+		/* Safety: guaranteed by Future's contract */
+		let should_cancel = call_no_unwind(|| unsafe { ptr!(this=>should_cancel.1(result)) });
 
 		/* Safety: the future has completed */
 		unsafe { Self::complete_single(this, false, should_cancel) };
 	}
 
 	pub fn new(future_1: F1, future_2: F2, should_cancel: (C1, C2)) -> Self {
-		/* Safety: complete does not panic */
+		/* Safety: complete does not unwind */
 		unsafe {
 			/* request args are assigned once pinned */
 			Self {
@@ -361,9 +347,9 @@ impl<
 	/// self must be pinned
 	/// `this` must be a valid pointer
 	#[future]
-	pub unsafe fn run(this_ptr: MutPtr<Self>) -> BranchOutput<F1::Output, F2::Output> {
+	pub unsafe fn run(this_ptr: MutPtr<Self>, request: _) -> BranchOutput<F1::Output, F2::Output> {
 		#[cancel]
-		fn cancel(self: MutPtr<Self>) -> Result<()> {
+		fn cancel(self: MutPtr<Self>, request: _) -> Result<()> {
 			/* Safety: caller must uphold Future's contract */
 			unsafe { Self::cancel_all(self) }
 		}
@@ -430,7 +416,7 @@ impl<F1: Future, F2: Future, Cancel> Pin for Branch<F1, F2, Cancel> {
 }
 
 /// # Safety
-/// `should_cancel` must not panic
+/// `should_cancel` must not unwind
 #[asynchronous]
 pub async unsafe fn branch<F1, F2, C1, C2>(
 	future_1: F1, future_2: F2, should_cancel: (C1, C2)

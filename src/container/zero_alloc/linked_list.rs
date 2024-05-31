@@ -44,7 +44,6 @@ impl Node {
 		unsafe { self.set_next(self) };
 	}
 
-	#[allow(clippy::new_without_default)]
 	#[must_use]
 	pub const fn new() -> Self {
 		Self {
@@ -94,6 +93,12 @@ impl Node {
 	}
 }
 
+impl Default for Node {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
 pub struct LinkedList {
 	base: Node
 }
@@ -103,13 +108,12 @@ impl LinkedList {
 		ptr!(&self.base)
 	}
 
-	#[allow(clippy::new_without_default)]
 	#[must_use]
 	pub const fn new() -> Self {
 		Self { base: Node::new() }
 	}
 
-	pub fn empty(&self) -> bool {
+	pub fn is_empty(&self) -> bool {
 		self.base() == self.head()
 	}
 
@@ -144,7 +148,7 @@ impl LinkedList {
 	/// # Safety
 	/// same as remove, and node must not be base if the list isn't empty
 	unsafe fn pop_edge(&self, node: Ptr<Node>) -> Option<Ptr<Node>> {
-		if !self.empty() {
+		if !self.is_empty() {
 			/* Safety: guaranteed by caller */
 			unsafe { self.remove(node.as_ref()) };
 
@@ -189,12 +193,12 @@ impl LinkedList {
 	/// # Safety
 	/// The new list must be pinned, empty, and live as long as it has nodes
 	pub unsafe fn move_elements(&self, other: &Self) {
-		if self.empty() {
+		if self.is_empty() {
 			return;
 		}
 
 		/* Safety: guaranteed by caller */
-		unsafe { assert_unsafe_precondition!(other.empty()) };
+		unsafe { assert_unsafe_precondition!(other.is_empty()) };
 
 		let (prev, next) = (self.base.prev.get(), self.base.next.get());
 
@@ -210,5 +214,11 @@ impl Pin for LinkedList {
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
 		unsafe { self.base.set_circular() };
+	}
+}
+
+impl Default for LinkedList {
+	fn default() -> Self {
+		Self::new()
 	}
 }

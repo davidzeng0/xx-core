@@ -100,10 +100,10 @@ define_enum! {
 	}
 }
 
-pub struct Map<'a> {
+pub struct Map<'mem> {
 	addr: MutPtr<()>,
 	length: usize,
-	phantom: PhantomData<&'a ()>
+	phantom: PhantomData<&'mem ()>
 }
 
 #[derive(Clone, Copy)]
@@ -136,16 +136,16 @@ impl IntoRaw for Flags {
 	}
 }
 
-pub struct Builder<'a> {
+pub struct Builder<'fd> {
 	addr: Ptr<()>,
 	len: usize,
 	prot: BitFlags<Protection>,
 	flags: Flags,
-	fd: Option<BorrowedFd<'a>>,
+	fd: Option<BorrowedFd<'fd>>,
 	off: isize
 }
 
-impl<'a> Builder<'a> {
+impl<'fd> Builder<'fd> {
 	#[must_use]
 	pub fn new(ty: Type, len: usize) -> Self {
 		Self {
@@ -177,7 +177,7 @@ impl<'a> Builder<'a> {
 	}
 
 	#[must_use]
-	pub const fn fd(mut self, fd: BorrowedFd<'a>) -> Self {
+	pub const fn fd(mut self, fd: BorrowedFd<'fd>) -> Self {
 		self.fd = Some(fd);
 		self
 	}
@@ -261,8 +261,13 @@ pub unsafe fn mremap(
 	new_address: Ptr<()>
 ) -> OsResult<MutPtr<()>>;
 
-impl<'a> Map<'a> {
-	#[allow(clippy::new_without_default)]
+impl Default for Map<'static> {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+impl<'mem> Map<'mem> {
 	#[must_use]
 	pub const fn new() -> Self {
 		Self {
@@ -293,7 +298,7 @@ impl<'a> Map<'a> {
 	}
 
 	#[must_use]
-	pub const fn section(&self) -> RawBuf<'a> {
+	pub const fn section(&self) -> RawBuf<'mem> {
 		RawBuf::from_parts(self.addr.cast_const(), self.length)
 	}
 
@@ -340,8 +345,7 @@ impl Drop for Map<'_> {
 		}
 
 		/* Safety: owner dropped us, so we own the range */
-		if let Err(err) = unsafe { munmap(self.section()) } {
-			panic_nounwind!("Failed to unmap memory: {:?}", err);
-		}
+		unsafe { munmap(self.section()) }
+			.unwrap_or_else(|err| panic_nounwind!("Failed to unmap memory: {:?}", err));
 	}
 }

@@ -1,25 +1,25 @@
 #![allow(clippy::multiple_unsafe_ops_per_block)]
 
-use std::{cell::Cell, mem::replace, rc::Rc};
+use std::{mem::replace, rc::Rc};
 
 use super::*;
-use crate::{runtime::MaybePanic, trace, warn};
+use crate::{trace, warn};
 
 #[allow(clippy::module_name_repetitions)]
 pub type SpawnResult<T> = MaybePanic<T>;
 
-enum SpawnData<E, T: for<'a> Task<Output<'a> = Output>, Output> {
+enum SpawnData<E, T: for<'ctx> Task<Output<'ctx> = Output>, Output> {
 	Uninit,
 	Start(E, T, Worker, ReqPtr<SpawnResult<Output>>),
-	Pending(Ptr<Context>, Ptr<Cell<bool>>),
+	Pending(Ptr<Context>, MutPtr<bool>),
 	Done(SpawnResult<Output>)
 }
 
-struct SpawnWorker<E, T: for<'a> Task<Output<'a> = Output>, Output> {
+struct SpawnWorker<E, T: for<'ctx> Task<Output<'ctx> = Output>, Output> {
 	data: SpawnData<E, T, Output>
 }
 
-impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E, T, Output> {
+impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWorker<E, T, Output> {
 	/// # Safety
 	/// `arg` must be dereferenceable as a &mut Self.
 	/// Self::data must be a `SpawnData::Start`
@@ -59,13 +59,13 @@ impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E
 		this: MutPtr<Self>, mut env: E, worker: Ptr<Worker>, task: T,
 		request: ReqPtr<SpawnResult<Output>>
 	) -> SpawnResult<Option<Output>> {
-		let context = runtime::call_non_panicking(|| env.context_mut());
+		let context = call_no_unwind(|| env.context_mut());
 
-		/* Safety: guaranteed by caller */
+		/* Safety: worker is valid for this context */
 		unsafe { context.set_worker(worker) };
 
-		let is_async = Cell::new(false);
-		let data = SpawnData::Pending(ptr!(&*context), ptr!(&is_async));
+		let mut is_async = false;
+		let data = SpawnData::Pending(ptr!(&*context), ptr!(&mut is_async));
 
 		/* pass back a pointer to is_async. the caller will tell us
 		 * if we've suspended from this function
@@ -78,11 +78,11 @@ impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E
 		 */
 		unsafe { ptr!(this=>data = data) };
 
-		let result = catch_unwind(AssertUnwindSafe(|| context.run(task)));
+		let result = catch_unwind_safe(|| context.run(task));
 
-		if is_async.get() {
+		if is_async {
 			/* Safety: only called once
-			 * Note: Request::complete does not panic
+			 * Note: Request::complete does not unwind
 			 * Note: `self` is now dangling
 			 */
 			unsafe { Request::complete(request, result) };
@@ -96,9 +96,9 @@ impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E
 	/// # Safety
 	/// The `env` and `task` must outlive the spawned fiber
 	#[future]
-	unsafe fn spawn(env: E, task: T) -> SpawnResult<Output> {
+	unsafe fn spawn(env: E, task: T, request: _) -> SpawnResult<Output> {
 		#[cancel]
-		fn cancel(context: Ptr<Context>) -> Result<()> {
+		fn cancel(context: Ptr<Context>, request: _) -> Result<()> {
 			/* Safety: guaranteed by Future's contract */
 			unsafe { Context::interrupt(context) }
 		}
@@ -107,8 +107,7 @@ impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E
 
 		/* Safety: worker_start never panics */
 		let start = unsafe { Start::new(Self::worker_start, ptr!(&mut spawn).cast_const().cast()) };
-
-		let executor = runtime::call_non_panicking(|| env.executor());
+		let executor = call_no_unwind(|| env.executor());
 
 		/* Safety: guaranteed by caller */
 		let worker = unsafe { ptr!(executor=>new_worker(start)) };
@@ -129,8 +128,8 @@ impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E
 			SpawnData::Pending(context, is_async) => {
 				/* worker suspended without completing */
 
-				/* Safety: pending task returns a valid pointer to a Cell */
-				unsafe { ptr!(is_async=>set(true)) };
+				/* Safety: pending task returns a valid pointer to a bool */
+				unsafe { ptr!(*is_async) = true };
 
 				Progress::Pending(cancel(context, request))
 			}
@@ -149,13 +148,13 @@ impl<E: Environment, T: for<'a> Task<Output<'a> = Output>, Output> SpawnWorker<E
 ///
 /// [`Future`]: crate::future::Future
 #[future]
-pub unsafe fn spawn_task<E, T, Output>(env: E, task: T) -> SpawnResult<Output>
+pub unsafe fn spawn_task<E, T, Output>(env: E, task: T, request: _) -> SpawnResult<Output>
 where
 	E: Environment,
-	T: for<'a> Task<Output<'a> = Output>
+	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	#[cancel]
-	fn cancel(_context: Ptr<Context>) -> Result<()> {
+	fn cancel(context: Ptr<Context>, request: _) -> Result<()> {
 		/* use this fn to generate the cancel closure type */
 		Ok(())
 	}
@@ -170,13 +169,13 @@ where
 /// # Safety
 /// The cloned `env` and `task` must outlive the spawned fiber
 #[future]
-pub unsafe fn spawn_task_with_env<E, T, Output>(env: &E, task: T) -> SpawnResult<Output>
+pub unsafe fn spawn_task_with_env<E, T, Output>(env: &E, task: T, request: _) -> SpawnResult<Output>
 where
 	E: Environment,
-	T: for<'a> Task<Output<'a> = Output>
+	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	#[cancel]
-	fn cancel(_context: Ptr<Context>) -> Result<()> {
+	fn cancel(context: Ptr<Context>, request: _) -> Result<()> {
 		Ok(())
 	}
 
@@ -195,10 +194,8 @@ impl<Output> SpawnHandle<Output> {
 	/// # Safety
 	/// the future must be running
 	unsafe fn try_cancel(&mut self) -> Option<Result<()>> {
-		self.cancel.take().map(|cancel| {
-			/* Safety: guaranteed by caller */
-			unsafe { cancel.run() }
-		})
+		/* Safety: guaranteed by caller */
+		self.cancel.take().map(|cancel| unsafe { cancel.run() })
 	}
 }
 
@@ -226,7 +223,7 @@ impl<Output> Spawn<Output> {
 	}
 
 	fn new() -> Self {
-		/* Safety: spawn_complete does not panic */
+		/* Safety: spawn_complete does not unwind */
 		unsafe {
 			/* request arg is assigned once pinned */
 			Self {
@@ -245,7 +242,7 @@ impl<Output> Spawn<Output> {
 	unsafe fn run<E, T>(env: &E, task: T) -> JoinHandle<Output>
 	where
 		E: Environment,
-		T: for<'a> Task<Output<'a> = Output>
+		T: for<'ctx> Task<Output<'ctx> = Output>
 	{
 		/* Safety: we are never unpinned */
 		let this = unsafe { Self::new().pin_rc().into_inner() };
@@ -297,9 +294,9 @@ impl<Output> JoinHandle<Output> {
 	}
 
 	#[future]
-	fn join(self) -> SpawnResult<Output> {
+	fn join(self, request: _) -> SpawnResult<Output> {
 		#[cancel]
-		fn cancel(self) -> Result<()> {
+		fn cancel(self, request: _) -> Result<()> {
 			/* Safety: guaranteed by Future's contract. we may already be cancelling */
 			unsafe { self.try_cancel() }
 		}
@@ -353,7 +350,7 @@ impl<Output> JoinHandle<Output> {
 
 #[asynchronous(task)]
 impl<Output> Task for JoinHandle<Output> {
-	type Output<'a> = Output;
+	type Output<'ctx> = Output;
 
 	async fn run(self) -> Output {
 		let result = self.try_join().await;
@@ -371,7 +368,7 @@ impl<Output> Task for JoinHandle<Output> {
 pub unsafe fn spawn<E, T, Output>(env: &E, task: T) -> JoinHandle<Output>
 where
 	E: Environment,
-	T: for<'a> Task<Output<'a> = Output>
+	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	/* Safety: guaranteed by caller */
 	unsafe { Spawn::run(env, task) }

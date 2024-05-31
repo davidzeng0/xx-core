@@ -18,14 +18,14 @@ pub mod raw {
 
 	#[repr(transparent)]
 	#[derive(Default, Debug)]
-	pub struct BorrowedIoVec<'a, const MUT: bool> {
+	pub struct BorrowedIoVec<'buf, const MUT: bool> {
 		pub vec: IoVec,
-		pub phantom: PhantomData<&'a ()>
+		pub phantom: PhantomData<&'buf ()>
 	}
 }
 
-pub type IoVec<'a> = raw::BorrowedIoVec<'a, false>;
-pub type IoVecMut<'a> = raw::BorrowedIoVec<'a, true>;
+pub type IoVec<'buf> = raw::BorrowedIoVec<'buf, false>;
+pub type IoVecMut<'buf> = raw::BorrowedIoVec<'buf, true>;
 
 impl<const MUT: bool> Deref for raw::BorrowedIoVec<'_, MUT> {
 	type Target = [u8];
@@ -43,32 +43,34 @@ impl DerefMut for IoVecMut<'_> {
 	}
 }
 
-impl<'a> IoVec<'a> {
+impl<'buf> IoVec<'buf> {
 	#[must_use]
-	pub fn from_io_slices<'b>(slices: &'b [IoSlice<'a>]) -> &'b [Self] {
+	pub fn from_io_slices<'slices>(slices: &'slices [IoSlice<'buf>]) -> &'slices [Self] {
 		/* Safety: they are the same */
 		#[allow(clippy::transmute_ptr_to_ptr)]
 		(unsafe { transmute(slices) })
 	}
 }
 
-impl<'a> IoVecMut<'a> {
+impl<'buf> IoVecMut<'buf> {
 	#[must_use]
-	pub fn from_io_slices_mut<'b>(slices: &'b mut [IoSliceMut<'a>]) -> &'b mut [Self] {
+	pub fn from_io_slices_mut<'slices>(
+		slices: &'slices mut [IoSliceMut<'buf>]
+	) -> &'slices mut [Self] {
 		/* Safety: they are the same */
 		#[allow(clippy::transmute_ptr_to_ptr)]
 		(unsafe { transmute(slices) })
 	}
 }
 
-impl<'a> From<IoVecMut<'a>> for IoVec<'a> {
-	fn from(value: IoVecMut<'a>) -> Self {
+impl<'buf> From<IoVecMut<'buf>> for IoVec<'buf> {
+	fn from(value: IoVecMut<'buf>) -> Self {
 		Self { vec: value.vec, phantom: PhantomData }
 	}
 }
 
-impl<'a> From<&'a [u8]> for IoVec<'a> {
-	fn from(value: &'a [u8]) -> Self {
+impl<'buf> From<&'buf [u8]> for IoVec<'buf> {
+	fn from(value: &'buf [u8]) -> Self {
 		Self {
 			vec: raw::IoVec {
 				base: ptr!(value.as_ptr()).cast_mut().cast(),
@@ -79,7 +81,7 @@ impl<'a> From<&'a [u8]> for IoVec<'a> {
 	}
 }
 
-impl<'a> From<&'a mut [u8]> for IoVecMut<'a> {
+impl<'buf> From<&'buf mut [u8]> for IoVecMut<'buf> {
 	fn from(value: &mut [u8]) -> Self {
 		Self {
 			vec: raw::IoVec {

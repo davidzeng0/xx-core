@@ -93,12 +93,7 @@ pub mod internal {
 	pub(super) fn print_backtrace(thread_name: &str) {
 		let backtrace = Backtrace::capture();
 
-		log!(
-			target: thread_name,
-			Level::Error,
-			"{:?}",
-			backtrace
-		);
+		log!(target: thread_name, Level::Error, "{:?}", backtrace);
 	}
 }
 

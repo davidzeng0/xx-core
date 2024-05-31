@@ -46,14 +46,24 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 		call.push(quote_spanned! { func.sig.span() => <Self as #super_trait>::#ident });
 
 		if !func.sig.generics.params.is_empty() {
-			call.push(quote! { :: });
-			call.push(remove_bounds(func.sig.generics.clone()).to_token_stream());
+			let mut generics = remove_bounds(func.sig.generics.clone());
+
+			generics.params = generics
+				.params
+				.into_iter()
+				.filter(|generic| !matches!(generic, GenericParam::Lifetime(_)))
+				.collect();
+
+			if !generics.params.is_empty() {
+				call.push(quote! { :: });
+				call.push(generics.to_token_stream());
+			}
 		}
 
 		let mut args = get_args(&func.sig.inputs, true);
 
 		if func.sig.asyncness.is_some() {
-			let context = Context::new().0;
+			let context = Context::ident();
 
 			args.push(parse_quote! { #context });
 		}

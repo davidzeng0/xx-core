@@ -26,7 +26,8 @@ define_enum! {
 		SingleIssuer            = 1 << 12,
 		DeferTaskrun            = 1 << 13,
 		NoMmap                  = 1 << 14,
-		RegisteredFdOnly        = 1 << 15
+		RegisteredFdOnly        = 1 << 15,
+		NoSubmissionArray       = 1 << 16
 	}
 }
 
@@ -148,7 +149,13 @@ define_enum! {
 		UringCmd,
 		SendZeroCopy,
 		SendMsgZeroCopy,
+		ReadMultishot,
 		WaitId,
+		FutexWait,
+		FutexWake,
+		FutexWaitV,
+		FixedFdInstall,
+		FileTruncate,
 		Last
 	}
 }
@@ -424,6 +431,8 @@ define_enum! {
 
 		RegisterFileAllocRange,
 
+		Last,
+
 		RegisterUseRegisteredRing = 1 << 31
 	}
 }
@@ -521,15 +530,6 @@ define_struct! {
 pub struct Probe {
 	pub probe: ProbeReg,
 	pub ops: [ProbeOp]
-}
-
-#[must_use]
-pub fn io_uring_opcode_supported(ops: &[ProbeOp], op: OpCode) -> bool {
-	if op as usize >= ops.len() {
-		false
-	} else {
-		ops[op as usize].flags().intersects(ProbeOpFlags::Supported)
-	}
 }
 
 define_enum! {
@@ -685,12 +685,31 @@ pub unsafe fn io_uring_register(
 	fd: BorrowedFd<'_>, opcode: RegisterOp, arg: MutPtr<()>, arg_count: u32
 ) -> OsResult<i32>;
 
+#[must_use]
+pub fn io_uring_opcode_supported(ops: &[ProbeOp], op: OpCode) -> bool {
+	if op as usize >= ops.len() {
+		false
+	} else {
+		ops[op as usize].flags().intersects(ProbeOpFlags::Supported)
+	}
+}
+
+pub fn io_uring_register_sync_cancel(
+	fd: BorrowedFd<'_>, cancel: &mut SyncCancelReg
+) -> OsResult<()> {
+	/* Safety: args are valid */
+	unsafe { io_uring_register(fd, RegisterOp::SyncCancel, ptr!(cancel).cast(), 1)? };
+
+	Ok(())
+}
+
 define_struct! {
 	pub struct IoRingFeatures {
 		pub min_ver: u32,
 		pub features: BitFlags<Feature>,
+		pub setup_flags: BitFlags<SetupFlag>,
 		pub ops: [bool; OpCode::Last as usize],
-		pub setup_flags: BitFlags<SetupFlag>
+		pub register: [bool; RegisterOp::Last as usize + 1]
 	}
 }
 
@@ -706,15 +725,153 @@ impl IoRingFeatures {
 	}
 
 	#[must_use]
+	pub fn setup_flag_supported(&self, flag: SetupFlag) -> bool {
+		self.setup_flags.intersects(flag)
+	}
+
+	#[must_use]
 	pub const fn opcode_supported(&self, op: OpCode) -> bool {
 		self.ops[op as usize]
 	}
 
 	#[must_use]
-	pub fn setup_flag_supported(&self, flag: SetupFlag) -> bool {
-		self.setup_flags.intersects(flag)
+	pub fn register_op_supported(&self, op: RegisterOp) -> bool {
+		let index = if op == RegisterOp::RegisterUseRegisteredRing {
+			RegisterOp::Last as usize
+		} else {
+			op as usize
+		};
+
+		self.register[index]
 	}
 }
+
+const FEATURE_MAP: &[(Feature, u32)] = &[
+	(Feature::SingleMmap, 504),
+	(Feature::NoDrop, 505),
+	(Feature::SubmitStable, 505),
+	(Feature::RwCurPos, 506),
+	(Feature::CurPersonality, 506),
+	(Feature::FastPoll, 507),
+	(Feature::Poll32Bits, 509),
+	(Feature::SqPollNonFixed, 511),
+	(Feature::ExtArg, 511),
+	(Feature::NativeWorkers, 512),
+	(Feature::RsrcTags, 513),
+	(Feature::CqeSkip, 517),
+	(Feature::LinkedFile, 517),
+	(Feature::RegRegRing, 603)
+];
+
+const OP_MAP: &[(OpCode, u32)] = &[
+	(OpCode::NoOp, 501),
+	(OpCode::ReadVector, 501),
+	(OpCode::WriteVector, 501),
+	(OpCode::ReadFixed, 501),
+	(OpCode::WriteFixed, 501),
+	(OpCode::FileSync, 501),
+	(OpCode::PollAdd, 501),
+	(OpCode::PollRemove, 501),
+	(OpCode::SyncFileRange, 502),
+	(OpCode::SendMsg, 503),
+	(OpCode::RecvMsg, 503),
+	(OpCode::Timeout, 504),
+	(OpCode::TimeoutRemove, 505),
+	(OpCode::Accept, 505),
+	(OpCode::AsyncCancel, 505),
+	(OpCode::LinkTimeout, 505),
+	(OpCode::Connect, 505),
+	(OpCode::EPollCtl, 506),
+	(OpCode::Send, 506),
+	(OpCode::Recv, 506),
+	(OpCode::FileAllocate, 506),
+	(OpCode::FileAdvise, 506),
+	(OpCode::MemoryAdvise, 506),
+	(OpCode::OpenAt, 506),
+	(OpCode::OpenAt2, 506),
+	(OpCode::Close, 506),
+	(OpCode::Statx, 506),
+	(OpCode::Read, 506),
+	(OpCode::Write, 506),
+	(OpCode::FilesUpdate, 506),
+	(OpCode::Splice, 507),
+	(OpCode::ProvideBuffers, 507),
+	(OpCode::RemoveBuffers, 507),
+	(OpCode::Tee, 508),
+	(OpCode::Shutdown, 511),
+	(OpCode::RenameAt, 511),
+	(OpCode::UnlinkAt, 511),
+	(OpCode::MkdirAt, 515),
+	(OpCode::SymlinkAt, 515),
+	(OpCode::LinkAt, 515),
+	(OpCode::MsgRing, 518),
+	(OpCode::FileSetXAttr, 519),
+	(OpCode::SetXAttr, 519),
+	(OpCode::FileGetXAttr, 519),
+	(OpCode::GetXAttr, 519),
+	(OpCode::Socket, 519),
+	(OpCode::UringCmd, 519),
+	(OpCode::SendZeroCopy, 600),
+	(OpCode::SendMsgZeroCopy, 601),
+	(OpCode::ReadMultishot, 607),
+	(OpCode::WaitId, 607),
+	(OpCode::FutexWait, 607),
+	(OpCode::FutexWake, 607),
+	(OpCode::FutexWaitV, 607),
+	(OpCode::FixedFdInstall, 608),
+	(OpCode::FileTruncate, 609)
+];
+
+const SETUP_FLAG_MAP: &[(SetupFlag, u32)] = &[
+	(SetupFlag::IoPoll, 501),
+	(SetupFlag::SubmissionQueuePolling, 501),
+	(SetupFlag::SubmissionQueueAffinity, 501),
+	(SetupFlag::CompletionRingSize, 505),
+	(SetupFlag::Clamp, 506),
+	(SetupFlag::AttachWq, 506),
+	(SetupFlag::RingDisabled, 510),
+	(SetupFlag::SubmitAll, 518),
+	(SetupFlag::CoopTaskrun, 519),
+	(SetupFlag::TaskrunFlag, 519),
+	(SetupFlag::SubmissionEntryWide, 519),
+	(SetupFlag::CompletionEntryWide, 519),
+	(SetupFlag::SingleIssuer, 600),
+	(SetupFlag::DeferTaskrun, 601),
+	// TODO: these need more work
+	(SetupFlag::NoMmap, 605),
+	(SetupFlag::RegisteredFdOnly, 605),
+	(SetupFlag::NoSubmissionArray, 606)
+];
+
+const REGISTER_MAP: &[(RegisterOp, u32)] = &[
+	(RegisterOp::RegisterBuffers, 501),
+	(RegisterOp::UnregisterBuffers, 501),
+	(RegisterOp::RegisterFiles, 501),
+	(RegisterOp::UnregisterFiles, 501),
+	(RegisterOp::RegisterEventFd, 502),
+	(RegisterOp::UnregisterEventFd, 502),
+	(RegisterOp::RegisterFilesUpdate, 505),
+	(RegisterOp::RegisterEventFdAsync, 506),
+	(RegisterOp::RegisterProbe, 506),
+	(RegisterOp::RegisterPersonality, 506),
+	(RegisterOp::UnregisterPersonality, 506),
+	(RegisterOp::RegisterRestrictions, 510),
+	(RegisterOp::RegisterEnableRings, 510),
+	(RegisterOp::RegisterFiles2, 513),
+	(RegisterOp::RegisterFilesUpdate2, 513),
+	(RegisterOp::RegisterBuffers2, 513),
+	(RegisterOp::RegisterBuffersUpdate, 513),
+	(RegisterOp::RegisterIoWqAff, 514),
+	(RegisterOp::UnregisterIoWqAff, 514),
+	(RegisterOp::RegisterIoWqMaxWorkers, 515),
+	(RegisterOp::RegisterRingFds, 518),
+	(RegisterOp::UnregisterRingFds, 518),
+	(RegisterOp::RegisterPBufRing, 519),
+	(RegisterOp::UnregisterPBufRing, 519),
+	(RegisterOp::SyncCancel, 600),
+	(RegisterOp::RegisterFileAllocRange, 600),
+	(RegisterOp::RegisterUseRegisteredRing, 603)
+];
 
 #[allow(clippy::missing_panics_doc)]
 pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
@@ -752,104 +909,15 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 		)
 	};
 
-	let feature_map = [
-		(Feature::SingleMmap, 504),
-		(Feature::NoDrop, 505),
-		(Feature::SubmitStable, 505),
-		(Feature::RwCurPos, 506),
-		(Feature::CurPersonality, 506),
-		(Feature::FastPoll, 507),
-		(Feature::Poll32Bits, 509),
-		(Feature::SqPollNonFixed, 511),
-		(Feature::ExtArg, 511),
-		(Feature::NativeWorkers, 512),
-		(Feature::RsrcTags, 513),
-		(Feature::CqeSkip, 517),
-		(Feature::LinkedFile, 517),
-		(Feature::RegRegRing, 603)
-	];
-
-	let op_map = [
-		(OpCode::NoOp, 501),
-		(OpCode::ReadVector, 501),
-		(OpCode::WriteVector, 501),
-		(OpCode::ReadFixed, 501),
-		(OpCode::WriteFixed, 501),
-		(OpCode::FileSync, 501),
-		(OpCode::PollAdd, 501),
-		(OpCode::PollRemove, 501),
-		(OpCode::SyncFileRange, 502),
-		(OpCode::SendMsg, 503),
-		(OpCode::RecvMsg, 503),
-		(OpCode::Timeout, 504),
-		(OpCode::TimeoutRemove, 505),
-		(OpCode::Accept, 505),
-		(OpCode::AsyncCancel, 505),
-		(OpCode::LinkTimeout, 505),
-		(OpCode::Connect, 505),
-		(OpCode::EPollCtl, 506),
-		(OpCode::Send, 506),
-		(OpCode::Recv, 506),
-		(OpCode::FileAllocate, 506),
-		(OpCode::FileAdvise, 506),
-		(OpCode::MemoryAdvise, 506),
-		(OpCode::OpenAt, 506),
-		(OpCode::OpenAt2, 506),
-		(OpCode::Close, 506),
-		(OpCode::Statx, 506),
-		(OpCode::Read, 506),
-		(OpCode::Write, 506),
-		(OpCode::FilesUpdate, 506),
-		(OpCode::Splice, 507),
-		(OpCode::ProvideBuffers, 507),
-		(OpCode::RemoveBuffers, 507),
-		(OpCode::Tee, 508),
-		(OpCode::Shutdown, 511),
-		(OpCode::RenameAt, 511),
-		(OpCode::UnlinkAt, 511),
-		(OpCode::MkdirAt, 515),
-		(OpCode::SymlinkAt, 515),
-		(OpCode::LinkAt, 515),
-		(OpCode::MsgRing, 518),
-		(OpCode::FileSetXAttr, 519),
-		(OpCode::SetXAttr, 519),
-		(OpCode::FileGetXAttr, 519),
-		(OpCode::GetXAttr, 519),
-		(OpCode::Socket, 519),
-		(OpCode::UringCmd, 519),
-		(OpCode::SendZeroCopy, 600),
-		(OpCode::SendMsgZeroCopy, 601),
-		(OpCode::WaitId, 605)
-	];
-
-	let setup_flag_map = [
-		(SetupFlag::IoPoll, 501),
-		(SetupFlag::SubmissionQueuePolling, 501),
-		(SetupFlag::SubmissionQueueAffinity, 501),
-		(SetupFlag::CompletionRingSize, 505),
-		(SetupFlag::Clamp, 506),
-		(SetupFlag::AttachWq, 506),
-		(SetupFlag::RingDisabled, 510),
-		(SetupFlag::SubmitAll, 518),
-		(SetupFlag::CoopTaskrun, 519),
-		(SetupFlag::TaskrunFlag, 519),
-		(SetupFlag::SubmissionEntryWide, 519),
-		(SetupFlag::CompletionEntryWide, 519),
-		(SetupFlag::SingleIssuer, 600),
-		(SetupFlag::DeferTaskrun, 601),
-		// TODO: these need more work
-		(SetupFlag::NoMmap, 605),
-		(SetupFlag::RegisteredFdOnly, 605)
-	];
-
 	let mut features = IoRingFeatures {
 		min_ver: 501,
 		features: params.features(),
+		setup_flags: BitFlags::default(),
 		ops: [false; OpCode::Last as usize],
-		setup_flags: BitFlags::default()
+		register: [false; RegisterOp::Last as usize + 1]
 	};
 
-	for (feature, version) in feature_map.iter().rev() {
+	for (feature, version) in FEATURE_MAP.iter().rev() {
 		if params.features().intersects(*feature) {
 			features.min_ver = *version;
 
@@ -863,7 +931,7 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 			_ => return Err(err)
 		}
 
-		for (op, version) in &op_map {
+		for (op, version) in OP_MAP {
 			if features.min_ver < *version {
 				break;
 			}
@@ -876,7 +944,7 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 		#[allow(clippy::arithmetic_side_effects)]
 		let ops = &probe.ops[..probe.probe.last_op as usize + 1];
 
-		for (op, version) in &op_map {
+		for (op, version) in OP_MAP {
 			let supported = io_uring_opcode_supported(ops, *op);
 
 			features.ops[*op as usize] = supported;
@@ -887,7 +955,7 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 		}
 	}
 
-	for (flag, version) in setup_flag_map.iter().rev() {
+	for (flag, version) in SETUP_FLAG_MAP.iter().rev() {
 		if features.min_ver >= *version {
 			features.setup_flags |= *flag;
 		} else {
@@ -901,6 +969,21 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 				features.min_ver = *version;
 			}
 		}
+	}
+
+	for (op, version) in REGISTER_MAP {
+		if features.min_ver < *version {
+			break;
+		}
+
+		#[allow(clippy::arithmetic_side_effects)]
+		let index = if *op == RegisterOp::RegisterUseRegisteredRing {
+			RegisterOp::Last as usize
+		} else {
+			*op as usize
+		};
+
+		features.register[index] = true;
 	}
 
 	Ok(Some(features))

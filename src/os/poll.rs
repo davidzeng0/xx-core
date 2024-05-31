@@ -1,7 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::time::Duration;
-
 use xx_core_macros::wrapper_functions;
 
 use super::{signal::SignalMask, time::TimeSpec, *};
@@ -68,12 +66,12 @@ impl PollFd {
 }
 
 #[repr(transparent)]
-pub struct BorrowedPollFd<'a> {
+pub struct BorrowedPollFd<'fd> {
 	poll_fd: PollFd,
-	phantom: PhantomData<&'a ()>
+	phantom: PhantomData<&'fd ()>
 }
 
-impl<'a> BorrowedPollFd<'a> {
+impl<'fd> BorrowedPollFd<'fd> {
 	wrapper_functions! {
 		inner = self.poll_fd;
 
@@ -82,7 +80,7 @@ impl<'a> BorrowedPollFd<'a> {
 	}
 
 	#[must_use]
-	pub fn new(fd: BorrowedFd<'a>, events: BitFlags<PollFlag>) -> Self {
+	pub fn new(fd: BorrowedFd<'fd>, events: BitFlags<PollFlag>) -> Self {
 		Self {
 			poll_fd: PollFd {
 				fd: fd.as_raw_fd(),

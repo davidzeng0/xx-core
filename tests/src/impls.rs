@@ -16,7 +16,7 @@ fn test_overflowing_signed_difference() {
 	];
 
 	for (a, b, ov_res, sat_res) in test_data {
-		assert_eq!(a.overflowing_signed_difference(b), ov_res);
-		assert_eq!(a.saturating_signed_difference(b), sat_res);
+		assert_eq!(a.overflowing_signed_diff(b), ov_res);
+		assert_eq!(a.saturating_signed_diff(b), sat_res);
 	}
 }

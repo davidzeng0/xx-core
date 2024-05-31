@@ -1,11 +1,45 @@
 use super::*;
 
+fn not_allowed<T>(what: &Option<T>, message: &'static str) -> Result<()>
+where
+	T: ToTokens
+{
+	if let Some(tokens) = what {
+		Err(Error::new_spanned(tokens, message))
+	} else {
+		Ok(())
+	}
+}
+
+fn transform_last_arg(inputs: &mut Punctuated<FnArg, Token![,]>, return_type: &Type) -> Result<()> {
+	let msg = "The last argument must be `request: _`";
+
+	let Some(FnArg::Typed(req)) = inputs.last_mut() else {
+		#[allow(clippy::needless_borrows_for_generic_args)]
+		return Err(Error::new_spanned(&inputs, msg));
+	};
+
+	let Pat::Ident(PatIdent { ident, subpat: None, .. }) = req.pat.as_ref() else {
+		return Err(Error::new_spanned(&req.pat, msg));
+	};
+
+	if ident != "request" {
+		return Err(Error::new_spanned(ident, msg));
+	}
+
+	if !matches!(req.ty.as_ref(), Type::Infer(_)) {
+		return Err(Error::new_spanned(&req.ty, msg));
+	}
+
+	req.ty = parse_quote! { ::xx_core::future::ReqPtr<#return_type> };
+
+	Ok(())
+}
+
 fn transform_func(func: &mut Function<'_>) -> Result<()> {
 	if !func.is_root && remove_attr_path(func.attrs, "future").is_none() {
 		return Ok(());
 	}
-
-	func.attrs.push(parse_quote!( #[must_use] ));
 
 	let return_type = get_return_type(&func.sig.output);
 
@@ -24,17 +58,6 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 	};
 
 	if let Some(block) = &mut func.block {
-		fn not_allowed<T>(what: &Option<T>, message: &'static str) -> Result<()>
-		where
-			T: ToTokens
-		{
-			if let Some(tokens) = what {
-				Err(Error::new_spanned(tokens, message))
-			} else {
-				Ok(())
-			}
-		}
-
 		for stmt in &mut block.stmts {
 			let Stmt::Item(Item::Fn(cancel)) = stmt else {
 				continue;
@@ -57,9 +80,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 			not_allowed(&cancel.sig.generics.lt_token, "Generics not allowed here")?;
 			not_allowed(&cancel.sig.variadic, "Variadics not allowed here")?;
 
-			cancel.sig.inputs.push(parse_quote! {
-				request: ::xx_core::future::ReqPtr<#return_type>
-			});
+			transform_last_arg(&mut cancel.sig.inputs, &return_type)?;
 
 			cancel_closure_type = make_explicit_closure(
 				&mut Function {
@@ -90,9 +111,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				&cancel.block
 			);
 
-			*stmt = parse_quote_spanned! {
-				cancel.span() =>
-
+			*stmt = parse_quote_spanned! { cancel.span() =>
 				#[allow(unused_variables)]
 				#(#attrs)*
 				let #ident = | #inputs | #output #unsafety #block;
@@ -102,6 +121,9 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 		}
 	}
 
+	transform_last_arg(&mut func.sig.inputs, &return_type)?;
+
+	func.sig.inputs.pop();
 	func.sig.output = parse_quote_spanned! { return_type.span() =>
 		-> ::xx_core::future::Progress<#return_type, #cancel_closure_type>
 	};

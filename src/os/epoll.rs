@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use super::{fcntl::OpenFlag, poll::PollFlag::*, signal::*, time::TimeSpec, *};
 
 define_enum! {
@@ -74,8 +72,6 @@ define_struct! {
 	}
 }
 
-pub struct EventPoll(OwnedFd);
-
 #[allow(clippy::module_name_repetitions)]
 pub fn epoll_create(_size: u32) -> OsResult<OwnedFd> {
 	epoll_create1(BitFlags::default())
@@ -106,8 +102,10 @@ pub fn epoll_pwait2(
 	#[array] sigmask: SignalMask<'_>
 ) -> OsResult<u32>;
 
+pub struct EventPoll(OwnedFd);
+
 impl EventPoll {
-	pub fn create(flags: BitFlags<CreateFlag>) -> OsResult<Self> {
+	pub fn new(flags: BitFlags<CreateFlag>) -> OsResult<Self> {
 		epoll_create1(flags).map(Self)
 	}
 

@@ -5,3 +5,4 @@ mod fiber;
 mod impls;
 mod macros;
 mod os;
+mod sync;

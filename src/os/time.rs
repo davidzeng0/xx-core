@@ -1,6 +1,5 @@
-use std::time::Duration;
-
 use super::{error::result_from_libc, *};
+use crate::macros::panic_nounwind;
 
 define_struct! {
 	pub struct TimeVal {
@@ -18,25 +17,35 @@ define_struct! {
 
 #[allow(clippy::unwrap_used)]
 impl TimeSpec {
-	/// # Panics
-	/// if the input cannot fit in the resulting Duration
 	#[must_use]
-	pub fn from_ms(duration: u64) -> Self {
-		let subsec_millis: i64 = (duration % 1000).try_into().unwrap();
+	pub const fn indefinite() -> Self {
+		Self { sec: -1, nanos: -1 }
+	}
+
+	#[must_use]
+	pub const fn zero() -> Self {
+		Self { sec: 0, nanos: 0 }
+	}
+
+	#[must_use]
+	#[allow(clippy::cast_possible_wrap, clippy::arithmetic_side_effects)]
+	pub const fn from_ms(ms: u64) -> Self {
+		let subsec_millis: i64 = (ms % 1000) as i64;
 
 		Self {
-			sec: (duration / 1000).try_into().unwrap(),
-			nanos: subsec_millis.checked_mul(1_000_000).unwrap()
+			sec: (ms / 1000) as i64,
+			nanos: subsec_millis * 1_000_000
 		}
 	}
 
 	/// # Panics
 	/// if the input cannot fit in the resulting Duration
 	#[must_use]
-	pub fn from_nanos(duration: u64) -> Self {
+	#[allow(clippy::cast_possible_wrap)]
+	pub const fn from_nanos(duration: u64) -> Self {
 		Self {
-			sec: (duration / 1_000_000_000).try_into().unwrap(),
-			nanos: (duration % 1_000_000_000).try_into().unwrap()
+			sec: (duration / 1_000_000_000) as i64,
+			nanos: (duration % 1_000_000_000) as i64
 		}
 	}
 
@@ -50,20 +59,21 @@ impl TimeSpec {
 		}
 	}
 
-	/// # Panics
-	/// if the input cannot fit in the resulting Duration
 	#[must_use]
-	pub fn from_ms_i32(duration: i32) -> Self {
-		Self::from_ms(duration.try_into().unwrap())
-	}
-
-	#[must_use]
-	pub fn as_nanos(&self) -> Option<u128> {
+	#[allow(clippy::arithmetic_side_effects)]
+	pub fn try_as_nanos(&self) -> Option<u128> {
 		let sec: u128 = self.sec.try_into().ok()?;
 		let nanos: u128 = self.nanos.try_into().ok()?;
 
-		#[allow(clippy::arithmetic_side_effects)]
 		Some(nanos + (sec * 1_000_000_000))
+	}
+
+	/// # Panics
+	/// if this timespec is not a valid duration
+	#[must_use]
+	#[allow(clippy::expect_used)]
+	pub fn as_nanos(&self) -> u128 {
+		self.try_as_nanos().expect("Invalid duration")
 	}
 }
 
@@ -88,13 +98,21 @@ extern "C" {
 	fn clock_gettime(clock: ClockId, spec: &mut TimeSpec) -> i32;
 }
 
-pub fn time(clock: ClockId) -> Result<u64> {
+pub fn time(clock: ClockId) -> Result<TimeSpec> {
 	let mut ts = TimeSpec { sec: 0, nanos: 0 };
 
 	/* Safety: FFI call */
 	result_from_libc(unsafe { clock_gettime(clock, &mut ts) } as isize)?;
 
-	ts.as_nanos()
-		.and_then(|nanos| -> Option<u64> { nanos.try_into().ok() })
-		.ok_or_else(|| Core::Overflow.into())
+	Ok(ts)
+}
+
+pub fn nanotime(clock: ClockId) -> Result<u64> {
+	let ts = time(clock)?;
+	let nanos = ts
+		.try_as_nanos()
+		.and_then(|nanos| -> Option<u64> { nanos.try_into().ok() });
+
+	/* time on linux fits into a u64 */
+	Ok(nanos.unwrap_or_else(|| panic_nounwind!("Failed to read the clock")))
 }

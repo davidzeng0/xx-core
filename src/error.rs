@@ -8,8 +8,16 @@ use std::{
 
 use crate::os::error::OsError;
 
-pub mod re_exports {
+pub mod internal {
 	pub use thiserror;
+
+	use super::*;
+
+	pub trait IntoError: error::Error + Send + Sync + Sized + 'static {
+		fn into_err(self) -> Error {
+			Error(self.into())
+		}
+	}
 }
 
 pub use io::ErrorKind;
@@ -51,12 +59,6 @@ impl<T> ErrorContext<T> for Result<T> {
 			Ok(ok) => Ok(ok),
 			Err(err) => Err(err.context(context()))
 		}
-	}
-}
-
-pub trait IntoError: error::Error + Send + Sync + Sized + 'static {
-	fn into_err(self) -> Error {
-		Error(self.into())
 	}
 }
 
@@ -109,7 +111,7 @@ impl Error {
 	}
 }
 
-impl<T: PartialEq + IntoError> PartialEq<T> for Error {
+impl<T: PartialEq + internal::IntoError> PartialEq<T> for Error {
 	fn eq(&self, other: &T) -> bool {
 		self.downcast_ref::<T>()
 			.is_some_and(|inner| inner.eq(other))
@@ -153,7 +155,7 @@ impl From<io::Error> for Error {
 	}
 }
 
-impl<T: IntoError> From<T> for Error {
+impl<T: internal::IntoError> From<T> for Error {
 	fn from(value: T) -> Self {
 		value.into_err()
 	}
@@ -192,7 +194,7 @@ impl Debug for Os {
 	}
 }
 
-impl IntoError for Os {}
+impl internal::IntoError for Os {}
 
 impl error::Error for Os {}
 

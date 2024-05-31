@@ -12,10 +12,14 @@ pub mod opt;
 pub mod os;
 pub mod pointer;
 pub mod runtime;
+pub mod sync;
 pub mod threadpool;
 
 extern crate self as xx_core;
 
 pub extern crate enumflags2;
+pub extern crate lazy_static;
+pub extern crate memchr;
 pub extern crate num_traits;
 pub extern crate paste;
+pub extern crate static_assertions;

@@ -91,8 +91,8 @@ where
 pub async unsafe fn select<E, T1, T2, O1, O2>(env: &E, task_1: T1, task_2: T2) -> Select<O1, O2>
 where
 	E: Environment,
-	T1: for<'a> Task<Output<'a> = O1>,
-	T2: for<'a> Task<Output<'a> = O2>
+	T1: for<'ctx> Task<Output<'ctx> = O1>,
+	T2: for<'ctx> Task<Output<'ctx> = O2>
 {
 	/* Safety: guaranteed by caller */
 	let result = unsafe {

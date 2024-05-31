@@ -19,7 +19,6 @@ pub struct Pool {
 
 impl Pool {
 	#[must_use]
-	#[allow(clippy::new_without_default)]
 	pub const fn new() -> Self {
 		Self { data: Mutex::new(Data::new()) }
 	}
@@ -33,11 +32,10 @@ impl Pool {
 			#[allow(clippy::unwrap_used)]
 			let mut data = self.data.lock().unwrap();
 
-			data.active = match data.active.checked_add(1) {
-				Some(active) => active,
-				None => panic_nounwind!("Fatal error: fiber count overflow")
-			};
-
+			data.active = data
+				.active
+				.checked_add(1)
+				.unwrap_or_else(|| panic_nounwind!("Fatal error: fiber count overflow"));
 			data.pool.pop()
 		};
 
@@ -76,10 +74,10 @@ impl Pool {
 		#[allow(clippy::unwrap_used)]
 		let mut data = self.data.lock().unwrap();
 
-		data.active = match data.active.checked_sub(1) {
-			Some(active) => active,
-			None => panic_nounwind!("Fatal error: fiber count overflow")
-		};
+		data.active = data
+			.active
+			.checked_sub(1)
+			.unwrap_or_else(|| panic_nounwind!("Fatal error: fiber count overflow"));
 
 		let ideal = Self::calculate_ideal(data.active);
 
@@ -90,5 +88,11 @@ impl Pool {
 		} else {
 			trace!(target: self, "-- Dropping worker stack");
 		}
+	}
+}
+
+impl Default for Pool {
+	fn default() -> Self {
+		Self::new()
 	}
 }

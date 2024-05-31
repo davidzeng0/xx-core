@@ -1,15 +1,15 @@
 use std::{rc::Rc, time::Duration};
 
-use xx_core::{async_std::sync::Notify, error::Result, pointer::Pinned};
+use xx_core::{async_std::sync::RcNotify, error::Result};
 use xx_pulse::*;
 
 #[asynchronous]
-async fn waiter(notify: Pinned<Rc<Notify>>) -> Result<()> {
+async fn waiter(notify: RcNotify) -> Result<()> {
 	notify.notified().await
 }
 
 #[asynchronous]
-async fn canceller(notify: Pinned<Rc<Notify>>) -> Result<()> {
+async fn canceller(notify: RcNotify) -> Result<()> {
 	match select(notify.notified(), sleep(Duration::from_secs(1))).await {
 		Select::First(f, _) => f,
 		Select::Second(_, f) => f.unwrap()
@@ -17,7 +17,7 @@ async fn canceller(notify: Pinned<Rc<Notify>>) -> Result<()> {
 }
 
 #[asynchronous]
-async fn nested_cancel(notify: Pinned<Rc<Notify>>) {
+async fn nested_cancel(notify: RcNotify) {
 	match select(notify.notified(), waiter(notify.clone())).await {
 		Select::First(success, error) => (success.unwrap(), error.unwrap().unwrap_err()),
 		Select::Second(..) => panic!("Order failed")
@@ -25,19 +25,19 @@ async fn nested_cancel(notify: Pinned<Rc<Notify>>) {
 }
 
 #[asynchronous]
-async fn expect_success(notify: Pinned<Rc<Notify>>) {
+async fn expect_success(notify: RcNotify) {
 	waiter(notify).await.unwrap();
 }
 
 #[asynchronous]
-async fn spawn_within(notify: Pinned<Rc<Notify>>) -> JoinHandle<()> {
+async fn spawn_within(notify: RcNotify) -> JoinHandle<()> {
 	notify.notified().await.unwrap();
 
 	spawn(expect_success(notify.clone())).await
 }
 
 #[asynchronous]
-async fn notify_within(notify: Pinned<Rc<Notify>>) {
+async fn notify_within(notify: RcNotify) {
 	notify.notified().await.unwrap();
 
 	for _ in 0..30 {
@@ -50,14 +50,14 @@ async fn notify_within(notify: Pinned<Rc<Notify>>) {
 #[main]
 #[test]
 async fn test_notify() {
-	let notify = Notify::new();
+	let notify = RcNotify::new();
 	let handle = spawn(waiter(notify.clone())).await;
 
 	notify.notify(());
 	handle.await.unwrap();
 	notify.notify(());
 
-	let notify = Notify::new();
+	let notify = RcNotify::new();
 	let handle = spawn(canceller(notify.clone())).await;
 
 	sleep(Duration::from_secs(1)).await.unwrap();
@@ -66,7 +66,7 @@ async fn test_notify() {
 	handle.await.unwrap_err();
 	notify.notify(());
 
-	let notify = Notify::new();
+	let notify = RcNotify::new();
 
 	spawn(nested_cancel(notify.clone())).await;
 
@@ -81,7 +81,7 @@ async fn test_notify() {
 	notify.notify(());
 	notify.notify(());
 
-	let notify = Notify::new();
+	let notify = RcNotify::new();
 	let mut handle = None;
 
 	for i in 0..30 {
@@ -114,7 +114,7 @@ async fn test_notify() {
 
 	notify.notify(());
 
-	let notify = Notify::new();
+	let notify = RcNotify::new();
 
 	for _ in 0..30 {
 		spawn(spawn_within(notify.clone())).await;
@@ -124,7 +124,7 @@ async fn test_notify() {
 	notify.notify(());
 	notify.notify(());
 
-	let notify = Notify::new();
+	let notify = RcNotify::new();
 
 	for _ in 0..30 {
 		spawn(notify_within(notify.clone())).await;

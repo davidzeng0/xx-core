@@ -1,5 +1,6 @@
 pub mod epoll;
 pub mod error;
+pub mod eventfd;
 pub mod fcntl;
 pub mod inet;
 pub mod io_uring;
@@ -20,7 +21,8 @@ pub mod unistd;
 use std::{
 	marker::PhantomData,
 	mem::{size_of, size_of_val, transmute},
-	os::fd::*
+	os::fd::*,
+	time::Duration
 };
 
 use enumflags2::*;
@@ -42,14 +44,14 @@ pub mod raw {
 
 	#[repr(transparent)]
 	#[derive(Default, Debug)]
-	pub struct BorrowedRawBuf<'a, const MUT: bool> {
+	pub struct BorrowedRawBuf<'buf, const MUT: bool> {
 		pub buf: RawBuf,
-		pub phantom: PhantomData<&'a ()>
+		pub phantom: PhantomData<&'buf ()>
 	}
 }
 
-pub type RawBuf<'a> = raw::BorrowedRawBuf<'a, false>;
-pub type MutRawBuf<'a> = raw::BorrowedRawBuf<'a, true>;
+pub type RawBuf<'buf> = raw::BorrowedRawBuf<'buf, false>;
+pub type MutRawBuf<'buf> = raw::BorrowedRawBuf<'buf, true>;
 
 impl IntoRawArray for RawBuf<'_> {
 	type Length = usize;
@@ -79,9 +81,9 @@ impl RawBuf<'_> {
 	}
 }
 
-impl<'a> RawBuf<'a> {
+impl<'buf> RawBuf<'buf> {
 	#[must_use]
-	pub const fn cast_mut(self) -> MutRawBuf<'a> {
+	pub const fn cast_mut(self) -> MutRawBuf<'buf> {
 		MutRawBuf { buf: self.buf, phantom: self.phantom }
 	}
 }
@@ -96,8 +98,8 @@ impl MutRawBuf<'_> {
 	}
 }
 
-impl<'a, T> From<&'a [T]> for RawBuf<'a> {
-	fn from(value: &'a [T]) -> Self {
+impl<'buf, T> From<&'buf [T]> for RawBuf<'buf> {
+	fn from(value: &'buf [T]) -> Self {
 		Self {
 			buf: raw::RawBuf {
 				ptr: ptr!(value.as_ptr()).cast_mut().cast(),
@@ -108,8 +110,8 @@ impl<'a, T> From<&'a [T]> for RawBuf<'a> {
 	}
 }
 
-impl<'a, T> From<&'a T> for RawBuf<'a> {
-	fn from(value: &'a T) -> Self {
+impl<'buf, T> From<&'buf T> for RawBuf<'buf> {
+	fn from(value: &'buf T) -> Self {
 		Self {
 			buf: raw::RawBuf {
 				ptr: ptr!(value).cast_mut().cast(),
@@ -120,8 +122,8 @@ impl<'a, T> From<&'a T> for RawBuf<'a> {
 	}
 }
 
-impl<'a, T> From<&'a mut [T]> for MutRawBuf<'a> {
-	fn from(value: &'a mut [T]) -> Self {
+impl<'buf, T> From<&'buf mut [T]> for MutRawBuf<'buf> {
+	fn from(value: &'buf mut [T]) -> Self {
 		Self {
 			buf: raw::RawBuf {
 				ptr: ptr!(value.as_mut_ptr()).cast(),
@@ -132,8 +134,8 @@ impl<'a, T> From<&'a mut [T]> for MutRawBuf<'a> {
 	}
 }
 
-impl<'a, T> From<&'a mut T> for MutRawBuf<'a> {
-	fn from(value: &'a mut T) -> Self {
+impl<'buf, T> From<&'buf mut T> for MutRawBuf<'buf> {
+	fn from(value: &'buf mut T) -> Self {
 		Self {
 			buf: raw::RawBuf { ptr: ptr!(value).cast(), len: size_of::<T>() },
 			phantom: PhantomData
@@ -148,6 +150,12 @@ macro_rules! define_into_raw_repr {
 
 			fn into_raw(self) -> $repr {
 				self as $repr
+			}
+		}
+
+		impl From<$name> for $repr {
+			fn from(value: $name) -> Self {
+				value as Self
 			}
 		}
 

@@ -363,21 +363,21 @@ pub mod raw {
 
 	#[repr(transparent)]
 	#[derive(Default, Debug)]
-	pub struct BorrowedMsgHdr<'a, const MUT: bool> {
+	pub struct BorrowedMsgHdr<'bufs, const MUT: bool> {
 		pub msg_hdr: MsgHdr,
-		pub phantom: PhantomData<&'a ()>
+		pub phantom: PhantomData<&'bufs ()>
 	}
 
 	#[derive(Default, Debug)]
-	pub struct ExtraBuf<'a, const MUT: bool> {
+	pub struct ExtraBuf<'buf, const MUT: bool> {
 		pub ptr: MutPtr<()>,
 		pub len: i32,
-		pub phantom: PhantomData<&'a ()>
+		pub phantom: PhantomData<&'buf ()>
 	}
 }
 
-pub type MsgHdr<'a> = raw::BorrowedMsgHdr<'a, false>;
-pub type MsgHdrMut<'a> = raw::BorrowedMsgHdr<'a, true>;
+pub type MsgHdr<'bufs> = raw::BorrowedMsgHdr<'bufs, false>;
+pub type MsgHdrMut<'bufs> = raw::BorrowedMsgHdr<'bufs, true>;
 
 impl<const MUT: bool> raw::BorrowedMsgHdr<'_, MUT> {
 	#[must_use]
@@ -386,46 +386,47 @@ impl<const MUT: bool> raw::BorrowedMsgHdr<'_, MUT> {
 	}
 }
 
-impl<'a> MsgHdr<'a> {
+impl<'bufs> MsgHdr<'bufs> {
 	/// # Panics
 	/// if size of A cannot fit in an i32
 	#[allow(clippy::unwrap_used)]
-	pub fn set_addr<A>(&mut self, addr: &'a A) {
+	pub fn set_addr<'addr, A>(&mut self, addr: &'addr A)
+	where
+		'addr: 'bufs
+	{
 		self.msg_hdr.address = ptr!(addr).cast_mut().cast();
 		self.msg_hdr.address_len = size_of::<A>().try_into().unwrap();
 	}
 
-	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b [IoVec<'c>])
+	pub fn set_vecs<'vecs>(&mut self, vecs: &'vecs [IoVec<'_>])
 	where
-		'b: 'a,
-		'c: 'a
+		'vecs: 'bufs
 	{
 		self.msg_hdr.iov = ptr!(vecs.as_ptr()).cast_mut().cast();
 		self.msg_hdr.iov_len = vecs.len();
 	}
 }
 
-impl<'a> MsgHdrMut<'a> {
+impl<'bufs> MsgHdrMut<'bufs> {
 	/// # Panics
 	/// if size of A cannot fit in an i32
 	#[allow(clippy::unwrap_used)]
-	pub fn set_addr<A>(&mut self, addr: &'a mut A) {
+	pub fn set_addr<A>(&mut self, addr: &'bufs mut A) {
 		self.msg_hdr.address = ptr!(addr).cast();
 		self.msg_hdr.address_len = size_of::<A>().try_into().unwrap();
 	}
 
-	pub fn set_vecs<'b, 'c>(&mut self, vecs: &'b mut [IoVecMut<'c>])
+	pub fn set_vecs<'vecs>(&mut self, vecs: &'vecs mut [IoVecMut<'_>])
 	where
-		'b: 'a,
-		'c: 'a
+		'vecs: 'bufs
 	{
 		self.msg_hdr.iov = ptr!(vecs.as_mut_ptr()).cast();
 		self.msg_hdr.iov_len = vecs.len();
 	}
 }
 
-pub type ExtraBuf<'a> = raw::ExtraBuf<'a, false>;
-pub type ExtraBufMut<'a> = raw::ExtraBuf<'a, true>;
+pub type ExtraBuf<'buf> = raw::ExtraBuf<'buf, false>;
+pub type ExtraBufMut<'buf> = raw::ExtraBuf<'buf, true>;
 
 impl ExtraBuf<'_> {
 	#[must_use]
@@ -441,11 +442,11 @@ impl ExtraBufMut<'_> {
 	}
 }
 
-impl<'a, T> From<&'a T> for ExtraBuf<'a> {
+impl<'buf, T> From<&'buf T> for ExtraBuf<'buf> {
 	/// # Panics
 	/// if size of A cannot fit in an i32
 	#[allow(clippy::unwrap_used)]
-	fn from(value: &'a T) -> Self {
+	fn from(value: &'buf T) -> Self {
 		Self {
 			ptr: ptr!(value).cast_mut().cast(),
 			len: size_of::<T>().try_into().unwrap(),
@@ -454,11 +455,11 @@ impl<'a, T> From<&'a T> for ExtraBuf<'a> {
 	}
 }
 
-impl<'a, T> From<&'a mut T> for ExtraBufMut<'a> {
+impl<'buf, T> From<&'buf mut T> for ExtraBufMut<'buf> {
 	/// # Panics
 	/// if size of A cannot fit in an i32
 	#[allow(clippy::unwrap_used)]
-	fn from(value: &'a mut T) -> Self {
+	fn from(value: &'buf mut T) -> Self {
 		Self {
 			ptr: ptr!(value).cast(),
 			len: size_of::<T>().try_into().unwrap(),

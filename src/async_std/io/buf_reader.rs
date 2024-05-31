@@ -1,17 +1,17 @@
 use std::ops::Range;
 
 use super::*;
-use crate::{impls::UIntExtensions, macros::assert_unsafe_precondition};
+use crate::impls::UIntExtensions;
 
 /// The async equivalent of [`std::io::BufReader`]
-pub struct BufReader<R> {
-	reader: R,
+pub struct BufReader<R: ?Sized> {
 	data: Box<[u8]>,
-	buffered: Range<usize>
+	buffered: Range<usize>,
+	reader: R
 }
 
 #[asynchronous]
-impl<R: Read> BufReader<R> {
+impl<R: Read + ?Sized> BufReader<R> {
 	/// Reads from our internal buffer into `buf`
 	fn read_into(&mut self, buf: &mut [u8]) -> usize {
 		let len = read_into_slice(buf, self.buffer());
@@ -37,7 +37,6 @@ impl<R: Read> BufReader<R> {
 		Ok(read)
 	}
 
-	#[inline(never)]
 	#[cold]
 	async fn fill_buf(&mut self) -> Result<usize> {
 		let read = self.fill_buf_range(0..self.data.len()).await?;
@@ -50,12 +49,18 @@ impl<R: Read> BufReader<R> {
 	}
 
 	/// Creates a new `BufReader<R>` with a [`DEFAULT_BUFFER_SIZE`]
-	pub fn new(reader: R) -> Self {
+	pub fn new(reader: R) -> Self
+	where
+		R: Sized
+	{
 		Self::with_capacity(reader, DEFAULT_BUFFER_SIZE)
 	}
 
 	/// Creates a new `BufReader<R>` with the specified buffer capacity
-	pub fn with_capacity(reader: R, capacity: usize) -> Self {
+	pub fn with_capacity(reader: R, capacity: usize) -> Self
+	where
+		R: Sized
+	{
 		Self::from_parts(reader, Vec::with_capacity(capacity), 0)
 	}
 
@@ -63,7 +68,10 @@ impl<R: Read> BufReader<R> {
 	///
 	/// # Panics
 	/// If `pos` > `buf.len()`
-	pub fn from_parts(reader: R, mut buf: Vec<u8>, pos: usize) -> Self {
+	pub fn from_parts(reader: R, mut buf: Vec<u8>, pos: usize) -> Self
+	where
+		R: Sized
+	{
 		let len = buf.len();
 
 		assert!(pos <= len);
@@ -81,7 +89,10 @@ impl<R: Read> BufReader<R> {
 	///
 	/// Any leftover data in the internal buffer is lost. Therefore, a following
 	/// read from the underlying reader may lead to data loss
-	pub fn into_inner(self) -> R {
+	pub fn into_inner(self) -> R
+	where
+		R: Sized
+	{
 		self.reader
 	}
 
@@ -99,7 +110,10 @@ impl<R: Read> BufReader<R> {
 	///
 	/// The `Vec<u8>` contains the buffered data,
 	/// and the `usize` is the position to start reading
-	pub fn into_parts(self) -> (R, Vec<u8>, usize) {
+	pub fn into_parts(self) -> (R, Vec<u8>, usize)
+	where
+		R: Sized
+	{
 		let mut buf = self.data.into_vec();
 
 		buf.truncate(self.buffered.end);
@@ -133,7 +147,7 @@ impl<R: Read> BufReader<R> {
 }
 
 #[asynchronous]
-impl<R: Read> Read for BufReader<R> {
+impl<R: Read + ?Sized> Read for BufReader<R> {
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		if !self.buffer().is_empty() {
 			let read = self.read_into(buf);
@@ -185,7 +199,7 @@ impl<R: Read> Read for BufReader<R> {
 }
 
 #[asynchronous]
-impl<R: Read> BufRead for BufReader<R> {
+impl<R: Read + ?Sized> BufRead for BufReader<R> {
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize> {
 		assert!(amount <= self.capacity());
 
@@ -251,36 +265,14 @@ impl<R: Read> BufRead for BufReader<R> {
 		self.buffered.start += count;
 	}
 
-	/// # Safety
-	/// See [`BufRead::consume_unchecked`]
-	#[allow(unsafe_code)]
-	unsafe fn consume_unchecked(&mut self, count: usize) {
-		/* Safety: guaranteed by caller */
-		unsafe { assert_unsafe_precondition!(count <= self.buffer().len()) };
-
-		#[allow(clippy::arithmetic_side_effects)]
-		(self.buffered.start += count);
-	}
-
 	/// # Panics
 	/// See [`BufRead::unconsume`]
 	fn unconsume(&mut self, count: usize) {
-		(self.buffered.start = self
+		self.buffered.start = self
 			.buffered
 			.start
 			.checked_sub(count)
-			.expect("`count` > `self.pos`"));
-	}
-
-	/// # Safety
-	/// See [`BufRead::unconsume_unchecked`]
-	#[allow(unsafe_code)]
-	unsafe fn unconsume_unchecked(&mut self, count: usize) {
-		/* Safety: guaranteed by caller */
-		unsafe { assert_unsafe_precondition!(count <= self.buffered.start) };
-
-		#[allow(clippy::arithmetic_side_effects)]
-		(self.buffered.start -= count);
+			.expect("`count` > `self.pos`");
 	}
 
 	fn discard(&mut self) {
@@ -289,7 +281,7 @@ impl<R: Read> BufRead for BufReader<R> {
 }
 
 #[asynchronous]
-impl<R: Read + Seek> BufReader<R> {
+impl<R: Read + Seek + ?Sized> BufReader<R> {
 	async fn seek_relative(&mut self, rel: i64) -> Result<u64> {
 		#[allow(clippy::never_loop)]
 		loop {
@@ -338,7 +330,7 @@ impl<R: Read + Seek> BufReader<R> {
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
 		let stream_pos = self.stream_position().await?;
-		let (rel, overflow) = abs.overflowing_signed_difference(stream_pos);
+		let (rel, overflow) = abs.overflowing_signed_diff(stream_pos);
 
 		if !overflow {
 			self.seek_relative(rel).await
@@ -349,7 +341,7 @@ impl<R: Read + Seek> BufReader<R> {
 }
 
 #[asynchronous]
-impl<R: Read + Seek> Seek for BufReader<R> {
+impl<R: Read + Seek + ?Sized> Seek for BufReader<R> {
 	fn stream_len_fast(&self) -> bool {
 		self.reader.stream_len_fast()
 	}

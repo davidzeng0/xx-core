@@ -167,7 +167,7 @@ pub trait Read {
 				capacity = buf.capacity();
 			}
 
-			if len < capacity {
+			if buf.len() < capacity {
 				buf.resize(capacity, 0);
 			}
 
@@ -427,15 +427,6 @@ pub trait BufRead: Read {
 	/// See also [`std::io::BufRead::consume`]
 	fn consume(&mut self, count: usize);
 
-	/// Same as [`consume`], but unchecked
-	///
-	/// # Safety
-	/// `count` must be within the valid range
-	///
-	/// [`consume`]: BufRead::consume
-	#[allow(unsafe_code)]
-	unsafe fn consume_unchecked(&mut self, count: usize);
-
 	/// Unconsume `count` bytes from the buffer
 	///
 	/// The next call to [`Read::read`] will return the unconsumed bytes
@@ -444,15 +435,6 @@ pub trait BufRead: Read {
 	/// If `count` is greater than the maximum number of bytes that can be
 	/// unconsumed
 	fn unconsume(&mut self, count: usize);
-
-	/// Same as [`unconsume`], but unchecked
-	///
-	/// # Safety
-	/// `count` must be within the valid range
-	///
-	/// [`unconsume`]: BufRead::unconsume
-	#[allow(unsafe_code)]
-	unsafe fn unconsume_unchecked(&mut self, count: usize);
 
 	/// Discard all data in the buffer
 	fn discard(&mut self);
@@ -507,15 +489,7 @@ macro_rules! bufread_wrapper {
 			fn consume(&mut self, count: usize);
 
 			#[asynchronous(traitfn)]
-			#[allow(unsafe_code)]
-			unsafe fn consume_unchecked(&mut self, count: usize);
-
-			#[asynchronous(traitfn)]
 			fn unconsume(&mut self, count: usize);
-
-			#[asynchronous(traitfn)]
-			#[allow(unsafe_code)]
-			unsafe fn unconsume_unchecked(&mut self, count: usize);
 
 			#[asynchronous(traitfn)]
 			fn discard(&mut self);

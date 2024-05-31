@@ -6,11 +6,12 @@ use std::{
 	fmt::{self, Debug, Formatter, Result},
 	ops::{Deref, DerefMut},
 	ptr::{null_mut, slice_from_raw_parts_mut},
-	rc::Rc
+	rc::Rc,
+	sync::Arc
 };
 
 pub use crate::macros::ptr;
-use crate::macros::{seal_trait, wrapper_functions};
+use crate::macros::{assert_unsafe_precondition, seal_trait, wrapper_functions};
 
 #[repr(transparent)]
 pub struct Pointer<T: ?Sized, const MUT: bool> {
@@ -84,6 +85,23 @@ pub mod internal {
 			pointer
 		}
 	}
+
+	pub trait PointerIndex<const MUT: bool, Idx> {
+		type Output: ?Sized;
+
+		/// # Safety
+		/// See [`std::ptr::offset`]
+		unsafe fn index(self, index: Idx) -> Pointer<Self::Output, MUT>;
+	}
+
+	impl<const MUT: bool, T> PointerIndex<MUT, usize> for Pointer<[T], MUT> {
+		type Output = T;
+
+		unsafe fn index(self, index: usize) -> Pointer<T, MUT> {
+			/* Safety: guaranteed by caller */
+			unsafe { self.cast().add(index) }
+		}
+	}
 }
 
 impl<T: ?Sized, const MUT: bool> Pointer<T, MUT> {
@@ -141,6 +159,9 @@ impl<T: ?Sized, const MUT: bool> Pointer<T, MUT> {
 	#[must_use]
 	#[allow(clippy::missing_const_for_fn)]
 	pub unsafe fn as_ref<'a>(self) -> &'a T {
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(!self.is_null()) };
+
 		/* Safety: guaranteed by caller */
 		unsafe { &*self.ptr }
 	}
@@ -202,6 +223,9 @@ impl<T: ?Sized> MutPtr<T> {
 	#[must_use]
 	pub unsafe fn as_mut<'a>(self) -> &'a mut T {
 		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(!self.is_null()) };
+
+		/* Safety: guaranteed by caller */
 		unsafe { &mut *self.ptr }
 	}
 }
@@ -212,6 +236,41 @@ impl<T> MutPtr<T> {
 
 		pub unsafe fn write_bytes(self, val: u8, count: usize);
 		pub unsafe fn write(self, value: T);
+	}
+}
+
+pub struct PointerIterator<T, const MUT: bool> {
+	start: Pointer<T, MUT>,
+	end: Pointer<T, MUT>
+}
+
+impl<T, const MUT: bool> Iterator for PointerIterator<T, MUT> {
+	type Item = Pointer<T, MUT>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		let cur = self.start;
+
+		if cur < self.end {
+			/* Safety: start < end */
+			unsafe { self.start = self.start.add(1) };
+
+			Some(cur)
+		} else {
+			None
+		}
+	}
+}
+
+impl<T, const MUT: bool> DoubleEndedIterator for PointerIterator<T, MUT> {
+	fn next_back(&mut self) -> Option<Self::Item> {
+		if self.end > self.start {
+			/* Safety: start < end */
+			unsafe { self.end = self.end.sub(1) };
+
+			Some(self.end)
+		} else {
+			None
+		}
 	}
 }
 
@@ -229,6 +288,18 @@ impl<T, const MUT: bool> Pointer<[T], MUT> {
 	#[must_use]
 	pub fn slice_from_raw_parts(data: Pointer<T, MUT>, len: usize) -> Self {
 		Self { ptr: slice_from_raw_parts_mut(data.ptr, len) }
+	}
+
+	/// # Safety
+	/// The slice must be one contiguous memory segment
+	#[must_use]
+	pub unsafe fn into_iter(self) -> PointerIterator<T, MUT> {
+		let start = self.cast::<T>();
+
+		/* Safety: guaranteed by caller */
+		let end = unsafe { start.add(self.len()) };
+
+		PointerIterator { start, end }
 	}
 }
 
@@ -311,20 +382,18 @@ pub trait Pin {
 	unsafe fn pin(&mut self) {}
 }
 
-pub struct Pinned<P> {
-	pointer: P
-}
+pub struct Pinned<P>(P);
 
 impl<P> Pinned<P> {
 	#[must_use]
 	pub const fn new(pointer: P) -> Self {
-		Self { pointer }
+		Self(pointer)
 	}
 
 	/// # Safety
 	/// the implementation specific contract for unpinning P must be satisfied
 	pub unsafe fn into_inner(self) -> P {
-		self.pointer
+		self.0
 	}
 }
 
@@ -332,25 +401,19 @@ impl<P: Deref> Deref for Pinned<P> {
 	type Target = P::Target;
 
 	fn deref(&self) -> &Self::Target {
-		&self.pointer
+		&self.0
 	}
 }
 
 impl<P: DerefMut> DerefMut for Pinned<P> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.pointer
+		&mut self.0
 	}
 }
 
-impl<T> Clone for Pinned<Rc<T>> {
+impl<P: Clone> Clone for Pinned<P> {
 	fn clone(&self) -> Self {
-		Self::new(self.pointer.clone())
-	}
-}
-
-impl<T: Clone> Clone for Pinned<Box<T>> {
-	fn clone(&self) -> Self {
-		Self::new(self.pointer.clone())
+		Self::new(self.0.clone())
 	}
 }
 
@@ -390,6 +453,20 @@ pub trait PinExt: PinSealed {
 		unsafe { this.pin() };
 
 		Pinned::new(rc)
+	}
+
+	#[allow(clippy::unwrap_used)]
+	fn pin_arc(self) -> Pinned<Arc<Self>>
+	where
+		Self: Sized
+	{
+		let mut arc = Arc::new(self);
+		let this = Arc::get_mut(&mut arc).unwrap();
+
+		/* Safety: we are being pinned */
+		unsafe { this.pin() };
+
+		Pinned::new(arc)
 	}
 }
 

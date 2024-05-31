@@ -36,9 +36,9 @@ where
 	}
 }
 
-fn parse_named_units<'a, E>(input: &'a str) -> IResult<&'a str, f64, E>
+fn parse_named_units<'input, E>(input: &'input str) -> IResult<&'input str, f64, E>
 where
-	E: ParseError<&'a str>
+	E: ParseError<&'input str>
 {
 	let scales = [
 		("d", 24.0),
@@ -89,9 +89,9 @@ where
 	Ok((leftover, duration))
 }
 
-fn parse_unnamed_units<'a, E>(input: &'a str) -> IResult<&'a str, f64, E>
+fn parse_unnamed_units<'input, E>(input: &'input str) -> IResult<&'input str, f64, E>
 where
-	E: ParseError<&'a str>
+	E: ParseError<&'input str>
 {
 	let scales = [24.0, 60.0, 60.0, 1_000_000_000.0];
 
