@@ -9,8 +9,6 @@ use std::{
 
 use super::*;
 use crate::{
-	coroutines::*,
-	error::*,
 	macros::{macro_each, seal_trait},
 	opt::hint::*
 };

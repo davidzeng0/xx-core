@@ -1,7 +1,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::{
-	fmt::*,
+	fmt,
 	hint::spin_loop,
 	ops::{Deref, DerefMut},
 	panic::*,
@@ -9,7 +9,7 @@ use std::{
 };
 
 use super::*;
-use crate::{coroutines::check_interrupt, pointer::*, sync::poison::*};
+use crate::sync::poison::*;
 
 pub struct MutexGuard<'a, T: ?Sized> {
 	lock: &'a Mutex<T>,
@@ -47,8 +47,8 @@ impl<T: ?Sized> Drop for MutexGuard<'_, T> {
 	}
 }
 
-impl<T: ?Sized + Debug> Debug for MutexGuard<'_, T> {
-	fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
+impl<T: ?Sized + fmt::Debug> fmt::Debug for MutexGuard<'_, T> {
+	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
 		self.deref().fmt(fmt)
 	}
 }

@@ -155,12 +155,12 @@ impl TryFrom<AddressStorage> for Address {
 	fn try_from(value: AddressStorage) -> Result<Self> {
 		match AddressFamily::from_u16(value.common.family) {
 			Some(AddressFamily::INet) => {
-				/* Safety: reinterpret is safe */
+				/* Safety: repr C */
 				Ok(Self::V4(unsafe { ptr!(*ptr!(&value).cast()) }))
 			}
 
 			Some(AddressFamily::INet6) => {
-				/* Safety: reinterpret is safe */
+				/* Safety: repr C */
 				Ok(Self::V6(unsafe { ptr!(*ptr!(&value).cast()) }))
 			}
 

@@ -3,7 +3,6 @@
 use std::{marker::PhantomData, rc::Rc};
 
 use super::*;
-use crate::{error::*, pointer::*};
 
 pub struct RawNotify<T = ()> {
 	waiters: RawWaitList<T>,

@@ -261,7 +261,7 @@ extern "C" {
 pub fn get_system_configuration(name: SystemConfiguration) -> OsResult<Option<u64>> {
 	set_errno(0);
 
-	/* Safety: FFI call */
+	/* Safety: this function is safe to call */
 	let result = unsafe { sysconf(name as i32) };
 
 	if result >= 0 {

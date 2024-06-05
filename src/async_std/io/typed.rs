@@ -190,11 +190,11 @@ where
 		let value = T::from_le_bytes(bytes);
 		let mask = T::MAX.wrapping_shr(shift);
 
-		/* LE 0ABC: CBAX -> XABC -> shave top */
+		/* LE 0ABC: CBAX -> XABC -> zero high bits */
 		value & mask
 	} else {
 		let value = T::from_be_bytes(bytes);
-		/* BE 0ABC: ABCX -> ABCX -> shave bottom */
+		/* BE 0ABC: ABCX -> ABCX -> zero low bits */
 		value.wrapping_shr(shift)
 	}
 }

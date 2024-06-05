@@ -16,3 +16,4 @@ Core modules.
 - Extension impls
 - Optimization hints
 - Error handling
+- Synchronization

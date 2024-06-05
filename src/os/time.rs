@@ -101,7 +101,7 @@ extern "C" {
 pub fn time(clock: ClockId) -> Result<TimeSpec> {
 	let mut ts = TimeSpec { sec: 0, nanos: 0 };
 
-	/* Safety: FFI call */
+	/* Safety: &mut ts is a valid pointer */
 	result_from_libc(unsafe { clock_gettime(clock, &mut ts) } as isize)?;
 
 	Ok(ts)

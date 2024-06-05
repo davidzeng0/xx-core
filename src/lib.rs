@@ -17,6 +17,7 @@ pub mod threadpool;
 
 extern crate self as xx_core;
 
+pub extern crate ctor;
 pub extern crate enumflags2;
 pub extern crate lazy_static;
 pub extern crate memchr;

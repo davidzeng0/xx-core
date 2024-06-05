@@ -1,4 +1,5 @@
 use super::*;
+use crate::pointer::*;
 
 mod wait_list;
 

@@ -10,10 +10,15 @@ use std::{
 
 use ctor::ctor;
 use lazy_static::lazy_static;
+pub use log::{max_level as get_max_level, set_max_level, Level, LevelFilter};
 use log::{set_boxed_logger, Log, Metadata, Record};
-pub use log::{set_max_level, Level, LevelFilter};
 
 use crate::{macros::panic_nounwind, pointer::*};
+
+lazy_static! {
+	static ref STDERR: Mutex<BufWriter<Stderr>> =
+		Mutex::new(BufWriter::with_capacity(1024, stderr()));
+}
 
 pub mod internal {
 	pub use log::{log, log_enabled};
@@ -61,19 +66,27 @@ pub mod internal {
 		val.int_addr() & u32::MAX as usize
 	}
 
-	#[inline(never)]
-	#[cold]
-	pub fn log_target<T, const MUT: bool>(
-		level: Level, target: Pointer<T, MUT>, args: Arguments<'_>
+	#[allow(clippy::impl_trait_in_params)]
+	pub fn format_struct<T, const MUT: bool>(
+		write: &mut impl Write, addr: Pointer<T, MUT>, name: &str
+	) -> Result<()>
+	where
+		T: ?Sized
+	{
+		write.write_fmt(format_args!(
+			"@ {:0>8x} {: >13}",
+			get_struct_addr_low(addr),
+			name
+		))
+	}
+
+	pub fn log_struct<T, const MUT: bool>(
+		level: Level, addr: Pointer<T, MUT>, name: &str, args: Arguments<'_>
 	) where
 		T: ?Sized
 	{
 		let mut fmt_buf = Cursor::new([0u8; 64]);
-		let _ = fmt_buf.write_fmt(format_args!(
-			"@ {:0>8x} {: >13}",
-			get_struct_addr_low(target),
-			get_struct_name::<T>()
-		));
+		let _ = format_struct(&mut fmt_buf, addr, name);
 
 		#[allow(clippy::cast_possible_truncation)]
 		let pos = fmt_buf.position() as usize;
@@ -86,6 +99,16 @@ pub mod internal {
 		);
 	}
 
+	#[inline(never)]
+	#[cold]
+	pub fn log_target<T, const MUT: bool>(
+		level: Level, target: Pointer<T, MUT>, args: Arguments<'_>
+	) where
+		T: ?Sized
+	{
+		log_struct(level, target, get_struct_name::<T>(), args);
+	}
+
 	pub(super) fn print_fatal(thread_name: &str, fmt: Arguments<'_>) {
 		log!(target: thread_name, Level::Error, "{}", fmt);
 	}
@@ -95,13 +118,6 @@ pub mod internal {
 
 		log!(target: thread_name, Level::Error, "{:?}", backtrace);
 	}
-}
-
-struct Logger;
-
-lazy_static! {
-	static ref STDERR: Mutex<BufWriter<Stderr>> =
-		Mutex::new(BufWriter::with_capacity(1024, stderr()));
 }
 
 fn get_stderr() -> MutexGuard<'static, BufWriter<Stderr>> {
@@ -183,6 +199,8 @@ impl fmt::Write for Adapter<'_> {
 	}
 }
 
+struct Logger;
+
 impl Log for Logger {
 	fn enabled(&self, _: &Metadata<'_>) -> bool {
 		true
@@ -207,6 +225,32 @@ impl Log for Logger {
 	fn flush(&self) {
 		let _ = get_stderr().flush();
 	}
+}
+
+#[track_caller]
+fn panic_hook(info: &PanicInfo<'_>) {
+	let msg = match info.payload().downcast_ref::<&'static str>() {
+		Some(s) => *s,
+		None => match info.payload().downcast_ref::<String>() {
+			Some(s) => &s[..],
+			None => "Box<dyn Any>"
+		}
+	};
+
+	print_panic(info.location(), format_args!("{}", msg));
+}
+
+#[cfg(feature = "log")]
+#[ctor]
+fn init() {
+	if set_boxed_logger(Box::new(Logger)).is_err() {
+		panic_nounwind!("Failed to initialize logger");
+	}
+
+	#[cfg(feature = "panic-log")]
+	set_hook(Box::new(panic_hook));
+
+	set_max_level(LevelFilter::Info);
 }
 
 macro_rules! get_thread_name {
@@ -255,32 +299,6 @@ pub fn print_panic(location: Option<&Location<'_>>, fmt: Arguments<'_>) {
 			)
 		);
 	}
-}
-
-#[track_caller]
-fn panic_hook(info: &PanicInfo<'_>) {
-	let msg = match info.payload().downcast_ref::<&'static str>() {
-		Some(s) => *s,
-		None => match info.payload().downcast_ref::<String>() {
-			Some(s) => &s[..],
-			None => "Box<dyn Any>"
-		}
-	};
-
-	print_panic(info.location(), format_args!("{}", msg));
-}
-
-#[cfg(feature = "log")]
-#[ctor]
-fn init() {
-	if set_boxed_logger(Box::new(Logger)).is_err() {
-		panic_nounwind!("Failed to initialize logger");
-	}
-
-	#[cfg(feature = "panic-log")]
-	set_hook(Box::new(panic_hook));
-
-	set_max_level(LevelFilter::Info);
 }
 
 #[macro_export]
