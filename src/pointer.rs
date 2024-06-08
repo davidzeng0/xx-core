@@ -1,38 +1,32 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::{
-	cell,
-	cmp::Ordering,
+	cell, cmp,
 	fmt::{self, Debug, Formatter, Result},
+	mem::transmute,
+	num::NonZeroUsize,
 	ops::{Deref, DerefMut},
-	ptr::{null_mut, slice_from_raw_parts_mut},
+	ptr::{self, null_mut, slice_from_raw_parts_mut},
 	rc::Rc,
-	sync::Arc
+	result,
+	sync::{atomic, Arc}
 };
 
 pub use crate::macros::ptr;
 use crate::macros::{assert_unsafe_precondition, seal_trait, wrapper_functions};
-
-#[repr(transparent)]
-pub struct Pointer<T: ?Sized, const MUT: bool> {
-	ptr: *mut T
-}
-
-pub type Ptr<T> = Pointer<T, false>;
-pub type MutPtr<T> = Pointer<T, true>;
 
 pub mod internal {
 	use super::*;
 
 	seal_trait!();
 
-	impl<T: ?Sized, const MUT: bool> Sealed for Pointer<T, MUT> {}
-
 	pub trait AsPointer: Sealed {
 		type Target;
 
 		fn as_pointer(&self) -> Self::Target;
 	}
+
+	impl<T: ?Sized, const MUT: bool> Sealed for Pointer<T, MUT> {}
 
 	impl<T: ?Sized> AsPointer for Ptr<T> {
 		type Target = *const T;
@@ -47,6 +41,24 @@ pub mod internal {
 
 		fn as_pointer(&self) -> *mut T {
 			self.ptr
+		}
+	}
+
+	impl<T: ?Sized, const MUT: bool> Sealed for NonNullPtr<T, MUT> {}
+
+	impl<T: ?Sized> AsPointer for NonNull<T> {
+		type Target = *const T;
+
+		fn as_pointer(&self) -> *const T {
+			self.as_ptr()
+		}
+	}
+
+	impl<T: ?Sized> AsPointer for MutNonNull<T> {
+		type Target = *mut T;
+
+		fn as_pointer(&self) -> *mut T {
+			self.as_mut_ptr()
 		}
 	}
 
@@ -104,6 +116,14 @@ pub mod internal {
 	}
 }
 
+#[repr(transparent)]
+pub struct Pointer<T: ?Sized, const MUT: bool> {
+	ptr: *mut T
+}
+
+pub type Ptr<T> = Pointer<T, false>;
+pub type MutPtr<T> = Pointer<T, true>;
+
 impl<T: ?Sized, const MUT: bool> Pointer<T, MUT> {
 	wrapper_functions! {
 		inner = self.ptr;
@@ -118,40 +138,12 @@ impl<T: ?Sized, const MUT: bool> Pointer<T, MUT> {
 
 	#[must_use]
 	pub const fn cast<T2>(self) -> Pointer<T2, MUT> {
-		Pointer { ptr: self.ptr.cast::<()>().cast() }
+		Pointer { ptr: self.ptr.cast() }
 	}
 
 	#[must_use]
-	pub fn int_addr(self) -> usize {
-		self.ptr as *const () as usize
-	}
-
-	#[must_use]
-	pub const fn from_int_addr(value: usize) -> Self
-	where
-		T: Sized
-	{
-		Self { ptr: value as *mut _ }
-	}
-
-	/// # Safety
-	/// See [`std::ptr::offset`]
-	#[must_use]
-	#[allow(clippy::impl_trait_in_params)]
-	pub unsafe fn offset(self, offset: impl internal::PointerOffset) -> Self
-	where
-		T: Sized
-	{
-		/* Safety: guaranteed by caller */
-		unsafe { offset.offset(self) }
-	}
-
-	#[must_use]
-	pub const fn null() -> Self
-	where
-		T: Sized
-	{
-		Self { ptr: null_mut() }
+	pub fn addr(self) -> usize {
+		self.as_ptr().cast::<()>() as usize
 	}
 
 	/// # Safety
@@ -191,6 +183,25 @@ impl<T, const MUT: bool> Pointer<T, MUT> {
 		/* Safety: guaranteed by caller */
 		self.ptr = unsafe { self.ptr.sub(count) };
 		self
+	}
+
+	/// # Safety
+	/// See [`std::ptr::offset`]
+	#[must_use]
+	#[allow(clippy::impl_trait_in_params)]
+	pub unsafe fn offset(self, offset: impl internal::PointerOffset) -> Self {
+		/* Safety: guaranteed by caller */
+		unsafe { offset.offset(self) }
+	}
+
+	#[must_use]
+	pub const fn from_addr(value: usize) -> Self {
+		Self { ptr: value as *mut _ }
+	}
+
+	#[must_use]
+	pub const fn null() -> Self {
+		Self { ptr: null_mut() }
 	}
 }
 
@@ -259,6 +270,14 @@ impl<T, const MUT: bool> Iterator for PointerIterator<T, MUT> {
 			None
 		}
 	}
+
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		#[allow(clippy::cast_sign_loss)]
+		/* Safety: start < end */
+		let len = unsafe { self.end.as_ptr().offset_from(self.start.as_ptr()) } as usize;
+
+		(len, Some(len))
+	}
 }
 
 impl<T, const MUT: bool> DoubleEndedIterator for PointerIterator<T, MUT> {
@@ -273,6 +292,8 @@ impl<T, const MUT: bool> DoubleEndedIterator for PointerIterator<T, MUT> {
 		}
 	}
 }
+
+impl<T, const MUT: bool> ExactSizeIterator for PointerIterator<T, MUT> {}
 
 impl<T, const MUT: bool> Pointer<[T], MUT> {
 	wrapper_functions! {
@@ -312,15 +333,9 @@ impl<T: ?Sized, const MUT: bool> Clone for Pointer<T, MUT> {
 
 impl<T: ?Sized, const MUT: bool> Copy for Pointer<T, MUT> {}
 
-impl<T: ?Sized> From<*mut T> for MutPtr<T> {
-	fn from(ptr: *mut T) -> Self {
-		Self { ptr }
-	}
-}
-
-impl<T: ?Sized> From<&mut T> for MutPtr<T> {
-	fn from(ptr: &mut T) -> Self {
-		Self { ptr }
+impl<T: ?Sized, const MUT: bool> From<NonNullPtr<T, MUT>> for Pointer<T, MUT> {
+	fn from(value: NonNullPtr<T, MUT>) -> Self {
+		value.as_pointer()
 	}
 }
 
@@ -337,23 +352,35 @@ impl<T: ?Sized> From<&T> for Ptr<T> {
 	}
 }
 
+impl<T: ?Sized> From<*mut T> for MutPtr<T> {
+	fn from(ptr: *mut T) -> Self {
+		Self { ptr }
+	}
+}
+
+impl<T: ?Sized> From<&mut T> for MutPtr<T> {
+	fn from(ptr: &mut T) -> Self {
+		Self { ptr }
+	}
+}
+
 impl<T: ?Sized, const MUT: bool> PartialEq for Pointer<T, MUT> {
 	fn eq(&self, other: &Self) -> bool {
-		std::ptr::eq(self.ptr, other.ptr)
+		ptr::eq(self.ptr, other.ptr)
 	}
 }
 
 impl<T: ?Sized, const MUT: bool> Eq for Pointer<T, MUT> {}
 
 impl<T: ?Sized, const MUT: bool> PartialOrd for Pointer<T, MUT> {
-	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+	fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
 		Some(self.cmp(other))
 	}
 }
 
 impl<T: ?Sized, const MUT: bool> Ord for Pointer<T, MUT> {
 	#[allow(ambiguous_wide_pointer_comparisons)]
-	fn cmp(&self, other: &Self) -> Ordering {
+	fn cmp(&self, other: &Self) -> cmp::Ordering {
 		self.ptr.cmp(&other.ptr)
 	}
 }
@@ -371,6 +398,248 @@ impl<T: ?Sized, const MUT: bool> Debug for Pointer<T, MUT> {
 }
 
 impl<T: ?Sized, const MUT: bool> fmt::Pointer for Pointer<T, MUT> {
+	fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
+		fmt::Pointer::fmt(&self.ptr, fmt)
+	}
+}
+
+#[repr(transparent)]
+pub struct NonNullPtr<T: ?Sized, const MUT: bool> {
+	ptr: ptr::NonNull<T>
+}
+
+pub type NonNull<T> = NonNullPtr<T, false>;
+pub type MutNonNull<T> = NonNullPtr<T, true>;
+
+impl<T: ?Sized, const MUT: bool> NonNullPtr<T, MUT> {
+	/// # Safety
+	/// `ptr` must not be null
+	#[must_use]
+	pub const unsafe fn new_unchecked(ptr: Pointer<T, MUT>) -> Self {
+		/* Safety: guaranteed by caller */
+		let ptr = unsafe { ptr::NonNull::new_unchecked(ptr.ptr) };
+
+		Self { ptr }
+	}
+
+	#[must_use]
+	pub fn new(ptr: Pointer<T, MUT>) -> Option<Self> {
+		ptr::NonNull::new(ptr.ptr).map(|ptr| Self { ptr })
+	}
+
+	#[must_use]
+	pub const fn as_pointer(self) -> Pointer<T, MUT> {
+		Pointer { ptr: self.ptr.as_ptr() }
+	}
+
+	#[must_use]
+	pub const fn as_ptr(self) -> *const T {
+		self.ptr.as_ptr()
+	}
+
+	#[must_use]
+	pub const fn cast<T2>(self) -> NonNullPtr<T2, MUT> {
+		NonNullPtr { ptr: self.ptr.cast() }
+	}
+
+	#[must_use]
+	pub fn addr(self) -> usize {
+		self.as_pointer().addr()
+	}
+
+	/// # Safety
+	/// Caller must enforce aliasing rules. See std::ptr::as_ref
+	#[must_use]
+	#[allow(clippy::missing_const_for_fn)]
+	pub unsafe fn as_ref<'a>(self) -> &'a T {
+		/* Safety: guaranteed by caller */
+		unsafe { self.as_pointer().as_ref() }
+	}
+}
+
+impl<T, const MUT: bool> NonNullPtr<T, MUT> {
+	wrapper_functions! {
+		inner = self.as_pointer();
+
+		pub fn align_offset(self, align: usize) -> usize;
+		pub unsafe fn read(self) -> T;
+	}
+
+	#[must_use]
+	pub const fn dangling() -> Self {
+		Self { ptr: ptr::NonNull::dangling() }
+	}
+
+	/// # Safety
+	/// See [`std::ptr::add`]
+	#[must_use]
+	pub const unsafe fn add(mut self, count: usize) -> Self {
+		/* Safety: guaranteed by caller */
+		self.ptr = unsafe { self.ptr.add(count) };
+		self
+	}
+
+	/// # Safety
+	/// See [`std::ptr::sub`]
+	#[must_use]
+	pub const unsafe fn sub(mut self, count: usize) -> Self {
+		/* Safety: guaranteed by caller */
+		self.ptr = unsafe { self.ptr.sub(count) };
+		self
+	}
+
+	/// # Safety
+	/// See [`std::ptr::offset`]
+	#[must_use]
+	#[allow(clippy::impl_trait_in_params)]
+	pub unsafe fn offset(self, offset: impl internal::PointerOffset) -> Self {
+		/* Safety: guaranteed by caller */
+		#[allow(clippy::multiple_unsafe_ops_per_block)]
+		unsafe {
+			Self::new_unchecked(offset.offset(self.as_pointer()))
+		}
+	}
+
+	/// # Safety
+	/// `value` must be non zero
+	#[must_use]
+	pub const unsafe fn from_addr_unchecked(value: usize) -> Self {
+		/* Safety: guaranteed by caller */
+		unsafe { Self::new_unchecked(Pointer::from_addr(value)) }
+	}
+
+	#[must_use]
+	pub const fn from_addr(value: NonZeroUsize) -> Self {
+		/* Safety: value is non zero */
+		unsafe { Self::from_addr_unchecked(value.get()) }
+	}
+}
+
+impl<T: ?Sized> NonNull<T> {
+	#[must_use]
+	pub const fn cast_mut(self) -> MutNonNull<T> {
+		MutNonNull { ptr: self.ptr }
+	}
+}
+
+impl<T: ?Sized> MutNonNull<T> {
+	wrapper_functions! {
+		inner = self.as_pointer();
+
+		pub unsafe fn drop_in_place(self);
+	}
+
+	#[must_use]
+	pub const fn cast_const(self) -> NonNull<T> {
+		NonNull { ptr: self.ptr }
+	}
+
+	#[must_use]
+	pub const fn as_mut_ptr(self) -> *mut T {
+		self.ptr.as_ptr()
+	}
+
+	/// # Safety
+	/// Caller must enforce aliasing rules. See std::ptr::as_ref
+	#[must_use]
+	pub unsafe fn as_mut<'a>(self) -> &'a mut T {
+		/* Safety: guaranteed by caller */
+		unsafe { self.as_pointer().as_mut() }
+	}
+
+	#[must_use]
+	pub fn from_box(ptr: Box<T>) -> Self {
+		/* Safety: Box::into_raw is always non null */
+		unsafe { Self::new_unchecked(Box::into_raw(ptr).into()) }
+	}
+}
+
+impl<T> MutNonNull<T> {
+	wrapper_functions! {
+		inner = self.as_pointer();
+
+		pub unsafe fn write_bytes(self, val: u8, count: usize);
+		pub unsafe fn write(self, value: T);
+	}
+}
+
+impl<T, const MUT: bool> NonNullPtr<[T], MUT> {
+	wrapper_functions! {
+		inner = self.as_pointer();
+
+		#[must_use]
+		pub fn len(self) -> usize;
+
+		#[must_use]
+		pub fn is_empty(self) -> bool;
+
+		#[must_use]
+		pub unsafe fn into_iter(self) -> PointerIterator<T, MUT>;
+	}
+
+	#[must_use]
+	pub fn slice_from_raw_parts(data: NonNullPtr<T, MUT>, len: usize) -> Self {
+		Self {
+			ptr: ptr::NonNull::slice_from_raw_parts(data.ptr, len)
+		}
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> Clone for NonNullPtr<T, MUT> {
+	fn clone(&self) -> Self {
+		*self
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> Copy for NonNullPtr<T, MUT> {}
+
+impl<T: ?Sized> From<&T> for NonNull<T> {
+	fn from(ptr: &T) -> Self {
+		#[allow(trivial_casts)]
+		Self { ptr: ptr.into() }
+	}
+}
+
+impl<T: ?Sized> From<&mut T> for MutNonNull<T> {
+	fn from(ptr: &mut T) -> Self {
+		Self { ptr: ptr.into() }
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> PartialEq for NonNullPtr<T, MUT> {
+	fn eq(&self, other: &Self) -> bool {
+		self.as_pointer().eq(&other.as_pointer())
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> Eq for NonNullPtr<T, MUT> {}
+
+impl<T: ?Sized, const MUT: bool> PartialOrd for NonNullPtr<T, MUT> {
+	fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> Ord for NonNullPtr<T, MUT> {
+	#[allow(ambiguous_wide_pointer_comparisons)]
+	fn cmp(&self, other: &Self) -> cmp::Ordering {
+		self.ptr.cmp(&other.ptr)
+	}
+}
+
+impl<T: Sized, const MUT: bool> Default for NonNullPtr<T, MUT> {
+	fn default() -> Self {
+		Self::dangling()
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> Debug for NonNullPtr<T, MUT> {
+	fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
+		Debug::fmt(&self.ptr, fmt)
+	}
+}
+
+impl<T: ?Sized, const MUT: bool> fmt::Pointer for NonNullPtr<T, MUT> {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
 		fmt::Pointer::fmt(&self.ptr, fmt)
 	}
@@ -519,5 +788,83 @@ impl<T: Pin + ?Sized> Pin for UnsafeCell<T> {
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
 		unsafe { self.get_mut().pin() };
+	}
+}
+
+pub struct AtomicPointer<T, const MUT: bool> {
+	ptr: atomic::AtomicPtr<T>
+}
+
+pub type AtomicMutPtr<T> = AtomicPointer<T, true>;
+pub type AtomicPtr<T> = AtomicPointer<T, false>;
+
+impl<T, const MUT: bool> AtomicPointer<T, MUT> {
+	#[must_use]
+	pub const fn new(value: Pointer<T, MUT>) -> Self {
+		Self { ptr: atomic::AtomicPtr::new(value.ptr) }
+	}
+
+	pub fn get_mut(&mut self) -> &mut Pointer<T, MUT> {
+		/* Safety: repr transparent */
+		#[allow(clippy::transmute_ptr_to_ptr)]
+		unsafe {
+			transmute(self.ptr.get_mut())
+		}
+	}
+
+	pub const fn into_inner(self) -> Pointer<T, MUT> {
+		Pointer { ptr: self.ptr.into_inner() }
+	}
+
+	pub fn load(&self, order: atomic::Ordering) -> Pointer<T, MUT> {
+		Pointer { ptr: self.ptr.load(order) }
+	}
+
+	pub fn store(&self, value: Pointer<T, MUT>, order: atomic::Ordering) {
+		self.ptr.store(value.ptr, order);
+	}
+
+	pub fn swap(&self, value: Pointer<T, MUT>, order: atomic::Ordering) -> Pointer<T, MUT> {
+		Pointer { ptr: self.ptr.swap(value.ptr, order) }
+	}
+
+	pub fn compare_exchange(
+		&self, current: Pointer<T, MUT>, new: Pointer<T, MUT>, success: atomic::Ordering,
+		failure: atomic::Ordering
+	) -> result::Result<Pointer<T, MUT>, Pointer<T, MUT>> {
+		match self
+			.ptr
+			.compare_exchange(current.ptr, new.ptr, success, failure)
+		{
+			Ok(ptr) => Ok(Pointer { ptr }),
+			Err(ptr) => Err(Pointer { ptr })
+		}
+	}
+
+	pub fn compare_exchange_weak(
+		&self, current: Pointer<T, MUT>, new: Pointer<T, MUT>, success: atomic::Ordering,
+		failure: atomic::Ordering
+	) -> result::Result<Pointer<T, MUT>, Pointer<T, MUT>> {
+		match self
+			.ptr
+			.compare_exchange_weak(current.ptr, new.ptr, success, failure)
+		{
+			Ok(ptr) => Ok(Pointer { ptr }),
+			Err(ptr) => Err(Pointer { ptr })
+		}
+	}
+
+	pub fn fetch_update<F>(
+		&self, set_order: atomic::Ordering, fetch_order: atomic::Ordering, mut update: F
+	) -> result::Result<Pointer<T, MUT>, Pointer<T, MUT>>
+	where
+		F: FnMut(Pointer<T, MUT>) -> Option<Pointer<T, MUT>>
+	{
+		match self.ptr.fetch_update(set_order, fetch_order, |ptr| {
+			update(Pointer { ptr }).map(|ptr| ptr.ptr)
+		}) {
+			Ok(ptr) => Ok(Pointer { ptr }),
+			Err(ptr) => Err(Pointer { ptr })
+		}
 	}
 }

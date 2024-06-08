@@ -275,5 +275,5 @@ pub fn get_system_configuration(name: SystemConfiguration) -> OsResult<Option<u6
 		return Ok(None);
 	}
 
-	Err(OsError::from_raw(code))
+	Err(OsError::from(code))
 }

@@ -668,7 +668,7 @@ pub unsafe fn io_uring_enter_timeout(
 
 	#[allow(clippy::cast_possible_truncation)]
 	(args.sig_mask_size = SIGSET_SIZE as u32);
-	args.ts = ptr!(&ts).int_addr() as u64;
+	args.ts = ptr!(&ts).addr() as u64;
 	flags |= EnterFlag::ExtArg;
 
 	/* Safety: guaranteed by caller */

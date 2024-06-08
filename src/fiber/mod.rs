@@ -153,7 +153,7 @@ impl Fiber {
 		/* Safety: map the bottom `page_size` bytes as a guard page */
 		unsafe {
 			mprotect(
-				RawBuf::from_parts(stack.addr().cast_const(), page_size),
+				RawBuf::from_parts(stack.as_ptr().cast_const(), page_size),
 				Default::default()
 			)
 			.expect("Failed to set permissions for guard page");
@@ -189,7 +189,7 @@ impl Fiber {
 			/* set the stack back to the beginning. unuse all the stack that the previous
 			 * worker used */
 			self.context
-				.set_stack(self.stack.addr().cast_const(), self.stack.length());
+				.set_stack(self.stack.as_ptr().cast_const(), self.stack.len());
 			self.context.set_start(start);
 		}
 	}

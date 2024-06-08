@@ -3,6 +3,7 @@
 use std::{marker::PhantomData, rc::Rc};
 
 use super::*;
+use crate::macros::wrapper_functions;
 
 pub struct RawNotify<T = ()> {
 	waiters: RawWaitList<T>,

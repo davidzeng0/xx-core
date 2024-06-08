@@ -3,11 +3,11 @@ use super::*;
 #[macro_export]
 macro_rules! seal_trait {
 	() => {
-		mod private {
+		mod private_sealed {
 			pub trait Sealed {}
 		}
 
-		use private::Sealed;
+		use private_sealed::Sealed;
 	};
 
 	($trait:ident) => {

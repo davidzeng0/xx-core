@@ -75,7 +75,7 @@ pub trait Write {
 	/// Same as [`Write::try_write_all`], except it returns an [`UnexpectedEof`]
 	/// on partial writes
 	///
-	/// [`UnexpectedEof`]: Core::UnexpectedEof
+	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
 	async fn write_all(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
@@ -125,7 +125,7 @@ pub trait Write {
 	/// the length of all the buffers
 	///
 	/// [`try_write_all_vectored`]: Write::try_write_all_vectored
-	/// [`UnexpectedEof`]: Core::UnexpectedEof
+	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
 	async fn write_all_vectored(&mut self, bufs: &mut [IoSlice<'_>]) -> Result<usize> {
 		let (wrote, exhausted) = default_write_vectored(self, bufs).await?;
 

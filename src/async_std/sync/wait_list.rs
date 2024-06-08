@@ -2,19 +2,129 @@
 
 use std::{
 	marker::PhantomData,
-	sync::atomic::{AtomicBool, AtomicUsize, Ordering}
+	sync::atomic::{Ordering::*, *}
 };
 
 use super::*;
 use crate::{
 	container::zero_alloc::linked_list::*,
-	coroutines::{block_on, block_on_thread_safe, is_interrupted},
+	coroutines::block_on,
 	future::*,
 	impls::Cell,
 	macros::container_of,
+	pointer::AtomicPtr,
 	runtime::{catch_unwind_safe, join, MaybePanic},
 	sync::{SpinMutex, SpinMutexGuard}
 };
+
+#[errors]
+pub enum WaitError {
+	#[error("Suspend cancelled")]
+	#[kind = ErrorKind::Interrupted]
+	Cancelled,
+
+	#[error("Wait list closed")]
+	Closed
+}
+
+const fn closed<T>() -> ReqPtr<T> {
+	Ptr::from_addr(usize::MAX)
+}
+
+pub struct AtomicWaiter<T = ()> {
+	waiter: AtomicPtr<Request<Result<T>>>
+}
+
+#[asynchronous]
+impl<T> AtomicWaiter<T> {
+	#[must_use]
+	pub const fn new() -> Self {
+		Self { waiter: AtomicPtr::new(ReqPtr::null()) }
+	}
+
+	fn set_waiter(&self, request: ReqPtr<Result<T>>) -> ReqPtr<Result<T>> {
+		loop {
+			let prev = self.waiter.load(Relaxed);
+
+			if prev == closed() {
+				break prev;
+			}
+
+			let result = self
+				.waiter
+				.compare_exchange(prev, request, Relaxed, Relaxed);
+			let Ok(prev) = result else { continue };
+
+			break prev;
+		}
+	}
+
+	#[future]
+	fn wait(&self, request: _) -> Result<T> {
+		#[cancel]
+		fn cancel(&self, request: _) -> Result<()> {
+			/* wake may already be in progress */
+			let result = self
+				.waiter
+				.compare_exchange(request, Ptr::null(), Relaxed, Relaxed);
+
+			if result.is_ok() {
+				/* Safety: we took ownership of waking up the task. send the cancellation */
+				unsafe { Request::complete(request, Err(ErrorKind::Interrupted.into())) };
+			}
+
+			Ok(())
+		}
+
+		let prev = self.set_waiter(request);
+
+		if !prev.is_null() {
+			if prev == closed() {
+				return Progress::Done(Err(WaitError::Closed.into()));
+			}
+
+			/* Safety: we took ownership of waking up the task. send the cancellation */
+			unsafe { Request::complete(prev, Err(WaitError::Cancelled.into())) };
+		}
+
+		Progress::Pending(cancel(self, request))
+	}
+
+	pub async fn notified(&self) -> Result<T> {
+		check_interrupt().await?;
+		block_on(self.wait()).await
+	}
+
+	pub async fn notified_thread_safe(&self) -> Result<T> {
+		check_interrupt().await?;
+		block_on_thread_safe(self.wait()).await
+	}
+
+	fn wake_internal(&self, new_waiter: ReqPtr<Result<T>>, value: T) -> bool {
+		let prev = self.set_waiter(new_waiter);
+
+		if prev.is_null() || prev == closed() {
+			return false;
+		}
+
+		/* Safety: complete the future */
+		unsafe { Request::complete(prev, Ok(value)) };
+
+		true
+	}
+
+	pub fn wake(&self, value: T) -> bool {
+		self.wake_internal(Ptr::null(), value)
+	}
+
+	pub fn close(&self, value: T) -> bool {
+		self.wake_internal(closed(), value)
+	}
+
+	pub fn is_closed(&self) -> bool {
+		self.waiter.load(Relaxed) == closed()
+	}
+}
 
 struct Waiter<T> {
 	node: Node,
@@ -22,15 +132,20 @@ struct Waiter<T> {
 }
 
 impl<T> Waiter<T> {
-	unsafe fn complete(node: Ptr<Node>, value: MaybePanic<T>) {
-		/* Safety: all nodes are wrapped in Waiter */
-		let waiter = unsafe { container_of!(node, Self=>node) };
-
-		/* Safety: the waiter must be valid */
-		let request = unsafe { ptr!(waiter=>request) };
+	unsafe fn complete(this: Ptr<Self>, value: Result<MaybePanic<T>>) {
+		/* Safety: guaranteed by caller */
+		let request = unsafe { ptr!(this=>request) };
 
 		/* Safety: complete the future */
-		unsafe { Request::complete(request, Ok(value)) };
+		unsafe { Request::complete(request, value) };
+	}
+
+	unsafe fn complete_node(node: Ptr<Node>, value: Result<MaybePanic<T>>) {
+		/* Safety: guaranteed by caller */
+		let waiter = unsafe { container_of!(node, Self=>node) };
+
+		/* Safety: guaranteed by caller */
+		unsafe { Self::complete(waiter, value) }
 	}
 }
 
@@ -56,21 +171,19 @@ impl<T: Clone> RawWaitList<T> {
 	/// # Safety
 	/// Waiter must be pinned, unlinked, and live until it's waked
 	#[future]
-	unsafe fn wait_notified(&self, waiter: &mut Waiter<T>, request: _) -> Result<MaybePanic<T>> {
+	unsafe fn wait(&self, waiter: &mut Waiter<T>, request: _) -> Result<MaybePanic<T>> {
 		#[cancel]
 		fn cancel(waiter: MutPtr<Waiter<T>>, request: _) -> Result<()> {
-			/* Safety: guaranteed by future's contract */
-			let waiter = unsafe { waiter.as_ref() };
-
 			/* Safety: we linked this node earlier */
-			unsafe { waiter.node.unlink_unchecked() };
+			#[allow(clippy::multiple_unsafe_ops_per_block)]
+			(unsafe { ptr!(waiter=>node.unlink_unchecked()) });
 
 			/* Safety: send the cancellation. waiter is unlinked, so there won't be
 			 * another completion
 			 *
 			 * note: the waiter may no longer be valid after this call
 			 */
-			unsafe { Request::complete(waiter.request, Err(Core::interrupted().into())) };
+			unsafe { Waiter::complete(waiter.cast_const(), Err(ErrorKind::Interrupted.into())) };
 
 			Ok(())
 		}
@@ -89,9 +202,11 @@ impl<T: Clone> RawWaitList<T> {
 	}
 
 	pub async fn notified(&self) -> Result<T> {
-		if self.closed.get() || is_interrupted().await {
-			return Err(Core::interrupted().into());
+		if self.closed.get() {
+			return Err(WaitError::Closed.into());
 		}
+
+		check_interrupt().await?;
 
 		/* we don't really care if it overflows */
 		#[allow(clippy::arithmetic_side_effects)]
@@ -100,7 +215,7 @@ impl<T: Clone> RawWaitList<T> {
 		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
 
 		/* Safety: waiter is new, pinned, and lives until it completes */
-		let result = unsafe { block_on(self.wait_notified(&mut waiter)).await };
+		let result = block_on(unsafe { self.wait(&mut waiter) }).await;
 
 		#[allow(clippy::arithmetic_side_effects)]
 		self.count.update(|count| count - 1);
@@ -114,7 +229,7 @@ impl<T: Clone> RawWaitList<T> {
 		};
 
 		/* Safety: complete the future */
-		unsafe { Waiter::complete(node, Ok(value)) };
+		unsafe { Waiter::complete_node(node, Ok(Ok(value))) };
 
 		true
 	}
@@ -136,12 +251,12 @@ impl<T: Clone> RawWaitList<T> {
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
 			unsafe {
 				if list.is_empty() {
-					Waiter::complete(node, Ok(value));
+					Waiter::complete_node(node, Ok(Ok(value)));
 
 					break;
 				}
 
-				Waiter::complete(node, catch_unwind_safe(|| value.clone()));
+				Waiter::complete_node(node, Ok(catch_unwind_safe(|| value.clone())));
 			};
 		}
 
@@ -172,7 +287,7 @@ struct Counter<'a>(&'a AtomicUsize);
 
 impl<'a> Counter<'a> {
 	pub fn new(count: &'a AtomicUsize) -> Self {
-		count.fetch_add(1, Ordering::Relaxed);
+		count.fetch_add(1, Relaxed);
 
 		Self(count)
 	}
@@ -180,7 +295,7 @@ impl<'a> Counter<'a> {
 
 impl Drop for Counter<'_> {
 	fn drop(&mut self) {
-		self.0.fetch_sub(1, Ordering::Relaxed);
+		self.0.fetch_sub(1, Relaxed);
 	}
 }
 
@@ -210,7 +325,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 	/// # Safety
 	/// Waiter must be pinned, unlinked, and live until it's waked
 	#[future]
-	unsafe fn wait_notified<F>(
+	unsafe fn wait<F>(
 		&self, waiter: &mut Waiter<T>, should_block: F, request: _
 	) -> Result<MaybePanic<T>>
 	where
@@ -239,7 +354,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 			 *
 			 * note: the waiter may no longer be valid after this call
 			 */
-			unsafe { Request::complete(waiter.request, Err(Core::interrupted().into())) };
+			unsafe { Request::complete(waiter.request, Err(ErrorKind::Interrupted.into())) };
 
 			Ok(())
 		}
@@ -248,8 +363,12 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 
 		let list = self.list();
 
-		if self.closed.load(Ordering::Relaxed) || !should_block() {
-			return Progress::Done(Err(Core::interrupted().into()));
+		if !should_block() {
+			return Progress::Done(Err(WaitError::Cancelled.into()));
+		}
+
+		if self.closed.load(Relaxed) {
+			return Progress::Done(Err(WaitError::Closed.into()));
 		}
 
 		/* Safety: guaranteed by caller */
@@ -262,16 +381,13 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 	where
 		F: FnOnce() -> bool
 	{
-		if is_interrupted().await {
-			return Err(Core::interrupted().into());
-		}
+		check_interrupt().await?;
 
 		let counter = Counter::new(&self.count);
 		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
 
 		/* Safety: waiter is new, pinned, and lives until it completes */
-		let result =
-			unsafe { block_on_thread_safe(self.wait_notified(&mut waiter, should_block)).await };
+		let result = block_on_thread_safe(unsafe { self.wait(&mut waiter, should_block) }).await;
 
 		drop(counter);
 
@@ -284,13 +400,13 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		};
 
 		/* Safety: complete the future */
-		unsafe { Waiter::complete(node, Ok(value)) };
+		unsafe { Waiter::complete_node(node, Ok(Ok(value))) };
 
 		true
 	}
 
 	pub fn wake_all(&self, value: T) -> usize {
-		let count = self.count.load(Ordering::Relaxed);
+		let count = self.count.load(Relaxed);
 		let list = self.list();
 
 		while let Some(node) = list.pop_front() {
@@ -300,12 +416,12 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
 			unsafe {
 				if list.is_empty() {
-					Waiter::complete(node, Ok(value));
+					Waiter::complete_node(node, Ok(Ok(value)));
 
 					break;
 				}
 
-				Waiter::complete(node, catch_unwind_safe(|| value.clone()));
+				Waiter::complete_node(node, Ok(catch_unwind_safe(|| value.clone())));
 			};
 		}
 
@@ -313,7 +429,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 	}
 
 	pub fn close(&self, value: T) -> usize {
-		self.closed.store(true, Ordering::Relaxed);
+		self.closed.store(true, Relaxed);
 		self.wake_all(value)
 	}
 }

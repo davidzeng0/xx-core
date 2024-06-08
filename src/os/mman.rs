@@ -288,12 +288,13 @@ impl<'mem> Map<'mem> {
 	}
 
 	#[must_use]
-	pub const fn addr(&self) -> MutPtr<()> {
+	pub const fn as_ptr(&self) -> MutPtr<()> {
 		self.addr
 	}
 
 	#[must_use]
-	pub const fn length(&self) -> usize {
+	#[allow(clippy::len_without_is_empty)]
+	pub const fn len(&self) -> usize {
 		self.length
 	}
 

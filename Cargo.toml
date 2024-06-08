@@ -12,8 +12,6 @@ num-derive = "0.4.2"
 num-traits = "0.2.19"
 paste = "1.0.15"
 lazy_static = "1.4.0"
-anyhow = "1.0.86"
-thiserror = "1.0.61"
 static_assertions = "1.1.0"
 xx-core-macros = { path = "macros" }
 

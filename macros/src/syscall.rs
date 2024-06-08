@@ -277,8 +277,5 @@ fn expand_syscall_define(attrs: TokenStream, item: TokenStream) -> Result<TokenS
 }
 
 pub fn syscall_define(attrs: TokenStream, item: TokenStream) -> TokenStream {
-	match expand_syscall_define(attrs, item) {
-		Ok(tokens) => tokens,
-		Err(err) => err.to_compile_error()
-	}
+	try_expand(|| expand_syscall_define(attrs, item))
 }

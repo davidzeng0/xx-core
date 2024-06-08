@@ -3,13 +3,25 @@ use crate::macros::macro_each;
 pub trait UIntExtensions: Sized {
 	type Signed;
 
+	#[must_use = "This returns the result of the operation without modifying the original"]
 	fn overflowing_signed_diff(self, rhs: Self) -> (Self::Signed, bool);
+
+	#[must_use = "This returns the result of the operation without modifying the original"]
 	fn saturating_signed_diff(self, rhs: Self) -> Self::Signed;
+
+	#[must_use = "This returns the result of the operation without modifying the original"]
 	fn checked_signed_diff(self, rhs: Self) -> Option<Self::Signed>;
 
+	#[must_use = "This returns the result of the operation without modifying the original"]
 	fn overflowing_sub_signed(self, rhs: Self::Signed) -> (Self, bool);
+
+	#[must_use = "This returns the result of the operation without modifying the original"]
 	fn saturating_sub_signed(self, rhs: Self::Signed) -> Self;
+
+	#[must_use = "This returns the result of the operation without modifying the original"]
 	fn checked_sub_signed(self, rhs: Self::Signed) -> Option<Self>;
+
+	#[must_use = "This returns the result of the operation without modifying the original"]
 	fn wrapping_sub_signed(self, rhs: Self::Signed) -> Self;
 }
 

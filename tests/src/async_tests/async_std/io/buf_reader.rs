@@ -164,7 +164,7 @@ pub async fn test_buf_reader() -> Result<()> {
 				SeekFrom::Current(n) => stream_pos.checked_add_signed(n),
 				SeekFrom::End(n) => len.checked_add_signed(n)
 			}
-			.ok_or(Core::Overflow)?;
+			.ok_or(ErrorKind::Overflow)?;
 
 			stream_pos = pos;
 			inner_pos = pos;

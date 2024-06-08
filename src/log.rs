@@ -63,7 +63,7 @@ pub mod internal {
 	where
 		T: ?Sized
 	{
-		val.int_addr() & u32::MAX as usize
+		val.addr() & u32::MAX as usize
 	}
 
 	#[allow(clippy::impl_trait_in_params)]

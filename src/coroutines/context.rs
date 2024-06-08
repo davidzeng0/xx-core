@@ -343,7 +343,7 @@ impl Context {
 		if !interrupted {
 			Ok(())
 		} else {
-			Err(Core::Pending("Interrupt pending".into()).into())
+			Err(ErrorKind::AlreadyInProgress.into())
 		}
 	}
 

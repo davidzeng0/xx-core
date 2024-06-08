@@ -23,16 +23,16 @@ extern "C" {
 
 impl Context {
 	pub const fn program_counter(&self) -> Ptr<()> {
-		Ptr::from_int_addr(self.rip)
+		Ptr::from_addr(self.rip)
 	}
 
 	pub unsafe fn set_stack(&mut self, stack: Ptr<()>, len: usize) {
 		#[allow(clippy::arithmetic_side_effects)]
-		(self.rsp = stack.int_addr() + len);
+		(self.rsp = stack.addr() + len);
 	}
 
 	pub unsafe fn set_start(&mut self, start: Start) {
-		let stack = MutPtr::<Start>::from_int_addr(self.rsp);
+		let stack = MutPtr::<Start>::from_addr(self.rsp);
 
 		/* Safety: guaranteed by caller */
 		unsafe { stack.sub(1).write(start) };
@@ -41,7 +41,7 @@ impl Context {
 	}
 
 	pub unsafe fn set_intercept(&mut self, intercept: Intercept) {
-		let stack = MutPtr::<Intercept>::from_int_addr(self.rsp);
+		let stack = MutPtr::<Intercept>::from_addr(self.rsp);
 
 		/* Safety: guaranteed by caller */
 		unsafe { stack.sub(1).write(intercept) };

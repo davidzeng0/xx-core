@@ -53,7 +53,7 @@ macro_each!(impl_from_primitive, u64, i64);
 
 impl<T, const MUT: bool> From<Pointer<T, MUT>> for SyscallParameter {
 	fn from(value: Pointer<T, MUT>) -> Self {
-		value.int_addr().into()
+		value.addr().into()
 	}
 }
 
@@ -101,7 +101,7 @@ impl From<SyscallResult> for OsResult<OwnedFd> {
 
 impl<T, const MUT: bool> From<SyscallResult> for OsResult<Pointer<T, MUT>> {
 	fn from(val: SyscallResult) -> Self {
-		result_from_ptr(val.0).map(|addr| Pointer::from_int_addr(addr))
+		result_from_ptr(val.0).map(|addr| Pointer::from_addr(addr))
 	}
 }
 

@@ -23,6 +23,28 @@ macro_rules! ptr {
 		$crate::pointer::Pointer::from(::std::ptr::addr_of_mut!($value))
 	};
 
+	(!null &$value:expr) => {
+		({
+			const fn as_non_null<T>(ptr: $crate::pointer::Ptr<T>) -> $crate::pointer::NonNull<T> {
+				/* Safety: reference of a value is always non null */
+				unsafe { $crate::pointer::NonNull::new_unchecked(ptr) }
+			}
+
+			as_non_null::<_>
+		})($crate::macros::ptr!(&$value))
+	};
+
+	(!null &mut $value:expr) => {
+		({
+			const fn as_non_null<T>(ptr: $crate::pointer::MutPtr<T>) -> $crate::pointer::MutNonNull<T> {
+				/* Safety: reference of a value is always non null */
+				unsafe { $crate::pointer::MutNonNull::new_unchecked(ptr) }
+			}
+
+			as_non_null::<_>
+		})($crate::macros::ptr!(&mut $value))
+	};
+
 	(&$ptr:expr => $($expr:tt)*) => {
 		$crate::macros::ptr!(
 			&$crate::macros::ptr!($ptr => $($expr)*)
@@ -32,6 +54,18 @@ macro_rules! ptr {
 	(&mut $ptr:expr => $($expr:tt)*) => {
 		$crate::macros::ptr!(
 			&mut $crate::macros::ptr!($ptr => $($expr)*)
+		)
+	};
+
+	(!null &$ptr:expr => $($expr:tt)*) => {
+		$crate::macros::ptr!(
+			!null &$crate::macros::ptr!($ptr => $($expr)*)
+		)
+	};
+
+	(!null &mut $ptr:expr => $($expr:tt)*) => {
+		$crate::macros::ptr!(
+			!null &mut $crate::macros::ptr!($ptr => $($expr)*)
 		)
 	};
 
@@ -47,6 +81,10 @@ macro_rules! ptr {
 
 	($ref:expr) => {
 		$crate::pointer::Pointer::from($ref)
+	};
+
+	(!null $ref:expr) => {
+		$crate::pointer::NonNullPtr::from($ref)
 	};
 }
 

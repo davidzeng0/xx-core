@@ -33,7 +33,7 @@ pub const DEFAULT_BUFFER_SIZE: usize = 0x4000;
 pub fn check_utf8(buf: &[u8]) -> Result<()> {
 	match from_utf8(buf) {
 		Ok(_) => Ok(()),
-		Err(_) => Err(Core::InvalidUtf8.into())
+		Err(_) => Err(ErrorKind::invalid_utf8().into())
 	}
 }
 
@@ -128,13 +128,13 @@ pub fn length_check(buf: &[u8], len: usize) -> usize {
 
 /// Returns [`UnexpectedEof`] unless the current task is interrupted
 ///
-/// [`UnexpectedEof`]: Core::UnexpectedEof
+/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
 #[asynchronous]
 pub async fn short_io_error_unless_interrupt() -> Error {
 	check_interrupt()
 		.await
 		.err()
-		.unwrap_or_else(|| Core::UnexpectedEof.into())
+		.unwrap_or_else(|| ErrorKind::UnexpectedEof.into())
 }
 
 #[macro_export]

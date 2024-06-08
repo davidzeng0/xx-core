@@ -130,7 +130,7 @@ pub trait Read {
 	/// See also [`std::io::Read::read_fully`]
 	///
 	/// [`try_read_fully`]: Read::try_read_fully
-	/// [`UnexpectedEof`]: Core::UnexpectedEof
+	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
 	async fn read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
@@ -213,11 +213,9 @@ pub trait Read {
 	/// On interrupt, returns the number of bytes read if it is not zero
 	///
 	/// Interrupts may cause the read operation to stop in the middle of a
-	/// character, in which case an [`InvalidUtf8`] error may be returned
+	/// character, in which case an invalid utf8 error may be returned
 	///
 	/// See also [`std::io::Read::read_to_string`]
-	///
-	/// [`InvalidUtf8`]: Core::InvalidUtf8
 	async fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
 		append_to_string(buf, |vec: &mut Vec<u8>| async move {
 			self.read_to_end(vec).await.map(Some)
@@ -265,7 +263,7 @@ pub trait Read {
 	/// the length of all the buffers
 	///
 	/// [`try_read_fully_vectored`]: Read::try_read_fully_vectored
-	/// [`UnexpectedEof`]: Core::UnexpectedEof
+	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
 	async fn read_fully_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
 		let (read, exhausted) = default_read_vectored(self, bufs).await?;
 
@@ -384,13 +382,11 @@ pub trait BufRead: Read {
 	///
 	/// On interrupt, this function cannot be called again because it may stop
 	/// reading in the middle of a utf8 character, in which case it may return
-	/// an [`InvalidUtf8`] error
+	/// an invalid utf8 error
 	///
 	/// Returns the number of bytes read, if any
 	///
 	/// See also [`read_until`]
-	///
-	/// [`InvalidUtf8`]: Core::InvalidUtf8
 	///
 	/// [`read_until`]: BufRead::read_until
 	async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>> {

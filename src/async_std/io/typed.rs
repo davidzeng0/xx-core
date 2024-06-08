@@ -258,13 +258,13 @@ macro_rules! read_vint_type {
 			#[inline(always)]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _le >](&mut self, size: usize) -> Result<$type> {
-				[< $func >](self, size, true).await?.ok_or_else(|| Core::UnexpectedEof.into())
+				[< $func >](self, size, true).await?.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 			}
 
 			#[inline(always)]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _be >](&mut self, size: usize) -> Result<$type> {
-				[< $func >](self, size, false).await?.ok_or_else(|| Core::UnexpectedEof.into())
+				[< $func >](self, size, false).await?.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 			}
 		}
 	};
@@ -309,7 +309,7 @@ macro_rules! read_vfloat_impl {
 		async fn read_vfloat_le(&mut self, size: usize) -> Result<f64> {
 			self.try_read_vfloat_le(size)
 				.await?
-				.ok_or_else(|| Core::UnexpectedEof.into())
+				.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 		}
 
 		#[inline(always)]
@@ -317,7 +317,7 @@ macro_rules! read_vfloat_impl {
 		async fn read_vfloat_be(&mut self, size: usize) -> Result<f64> {
 			self.try_read_vfloat_be(size)
 				.await?
-				.ok_or_else(|| Core::UnexpectedEof.into())
+				.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 		}
 	};
 }
@@ -334,7 +334,7 @@ macro_rules! read_num_type_endian {
 			#[asynchronous(traitext)]
 			#[inline(always)]
 			async fn [<read_ $endian_type>](&mut self) -> Result<$type> {
-				self.[<try_read_ $endian_type>]().await?.ok_or_else(|| Core::UnexpectedEof.into())
+				self.[<try_read_ $endian_type>]().await?.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 			}
 		}
 	};
@@ -389,7 +389,7 @@ pub trait ReadTyped: ReadSealed {
 	{
 		self.try_read_type()
 			.await?
-			.ok_or_else(|| Core::UnexpectedEof.into())
+			.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 	}
 }
 
@@ -415,7 +415,7 @@ pub trait BufReadTyped: BufReadSealed {
 	{
 		self.try_read_type()
 			.await?
-			.ok_or_else(|| Core::UnexpectedEof.into())
+			.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 	}
 }
 
@@ -444,7 +444,7 @@ impl<'a, W: Write> FmtAdapter<'a, W> {
 			Err(_) => Err(self
 				.error
 				.take()
-				.unwrap_or_else(|| Core::FormatterError.into()))
+				.unwrap_or_else(|| ErrorKind::FormatterError.into()))
 		}
 	}
 }

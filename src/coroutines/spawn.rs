@@ -11,7 +11,7 @@ pub type SpawnResult<T> = MaybePanic<T>;
 enum SpawnData<E, T: for<'ctx> Task<Output<'ctx> = Output>, Output> {
 	Uninit,
 	Start(E, T, Worker, ReqPtr<SpawnResult<Output>>),
-	Pending(Ptr<Context>, MutPtr<bool>),
+	Pending(NonNull<Context>, MutNonNull<bool>),
 	Done(SpawnResult<Output>)
 }
 
@@ -65,7 +65,7 @@ impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWork
 		unsafe { context.set_worker(worker) };
 
 		let mut is_async = false;
-		let data = SpawnData::Pending(ptr!(&*context), ptr!(&mut is_async));
+		let data = SpawnData::Pending(ptr!(!null & *context), ptr!(!null &mut is_async));
 
 		/* pass back a pointer to is_async. the caller will tell us
 		 * if we've suspended from this function
@@ -98,9 +98,9 @@ impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWork
 	#[future]
 	unsafe fn spawn(env: E, task: T, request: _) -> SpawnResult<Output> {
 		#[cancel]
-		fn cancel(context: Ptr<Context>, request: _) -> Result<()> {
+		fn cancel(context: NonNull<Context>, request: _) -> Result<()> {
 			/* Safety: guaranteed by Future's contract */
-			unsafe { Context::interrupt(context) }
+			unsafe { Context::interrupt(context.as_pointer()) }
 		}
 
 		let mut spawn = Self { data: SpawnData::Uninit };
@@ -154,7 +154,7 @@ where
 	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	#[cancel]
-	fn cancel(context: Ptr<Context>, request: _) -> Result<()> {
+	fn cancel(context: NonNull<Context>, request: _) -> Result<()> {
 		/* use this fn to generate the cancel closure type */
 		Ok(())
 	}
@@ -175,7 +175,7 @@ where
 	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	#[cancel]
-	fn cancel(context: Ptr<Context>, request: _) -> Result<()> {
+	fn cancel(context: NonNull<Context>, request: _) -> Result<()> {
 		Ok(())
 	}
 
@@ -185,7 +185,7 @@ where
 
 struct SpawnHandle<Output> {
 	#[allow(clippy::type_complexity)]
-	cancel: Option<CancelClosure<(Ptr<Context>, ReqPtr<SpawnResult<Output>>)>>,
+	cancel: Option<CancelClosure<(NonNull<Context>, ReqPtr<SpawnResult<Output>>)>>,
 	output: Option<SpawnResult<Output>>,
 	waiter: ReqPtr<SpawnResult<Output>>
 }

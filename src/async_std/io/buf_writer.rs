@@ -43,7 +43,7 @@ impl<W: Write + ?Sized> BufWriter<W> {
 			let wrote = self.writer.write(buf).await?;
 
 			if wrote == 0 {
-				return Err(Core::WriteZero.into());
+				return Err(ErrorKind::WriteZero.into());
 			}
 
 			#[allow(clippy::arithmetic_side_effects)]

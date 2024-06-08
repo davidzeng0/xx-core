@@ -161,7 +161,7 @@ pub async fn check_interrupt() -> Result<()> {
 	if !is_interrupted().await {
 		Ok(())
 	} else {
-		Err(Core::interrupted().into())
+		Err(ErrorKind::Interrupted.into())
 	}
 }
 
@@ -187,7 +187,7 @@ pub async fn check_interrupt_take() -> Result<()> {
 	if !take_interrupt().await {
 		Ok(())
 	} else {
-		Err(Core::interrupted().into())
+		Err(ErrorKind::Interrupted.into())
 	}
 }
 

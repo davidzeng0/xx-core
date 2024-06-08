@@ -50,7 +50,7 @@ fn test_poll() {
 #[test]
 fn test_mmap() {
 	let mem = Map::map(
-		Ptr::from_int_addr(0x12345678000),
+		Ptr::from_addr(0x12345678000),
 		16384,
 		Protection::Read.into(),
 		Flags::new(Type::Private).flag(Flag::Anonymous),
@@ -59,8 +59,8 @@ fn test_mmap() {
 	)
 	.unwrap();
 
-	assert_eq!(mem.length(), 16384);
-	assert_eq!(mem.addr(), MutPtr::from_int_addr(0x12345678000));
+	assert_eq!(mem.len(), 16384);
+	assert_eq!(mem.as_ptr(), MutPtr::from_addr(0x12345678000));
 
 	unsafe {
 		mem.protect(Protection::Write.into()).unwrap();
@@ -84,5 +84,5 @@ fn test_error() {
 	result_from_ptr(-4096).unwrap();
 	result_from_ptr(isize::MIN).unwrap();
 	result_from_ptr(isize::MAX).unwrap();
-	assert_eq!(OsError::from_raw(2), OsError::NoEnt);
+	assert_eq!(OsError::from(2), OsError::NoEnt);
 }

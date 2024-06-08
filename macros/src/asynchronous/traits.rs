@@ -8,29 +8,13 @@ fn format_trait_ident(ident: &Ident) -> Ident {
 	format_ident!("{}Ext", ident)
 }
 
-fn remove_bounds(mut generics: Generics) -> Generics {
-	for generic in &mut generics.params {
-		match generic {
-			GenericParam::Lifetime(ltg) => ltg.bounds.clear(),
-			GenericParam::Type(tg) => tg.bounds.clear(),
-			GenericParam::Const(cg) => {
-				let ident = &cg.ident;
-
-				*generic = parse_quote! { #ident };
-			}
-		}
-	}
-
-	generics
-}
-
 fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream> {
 	let name = ext.ident.clone();
 
 	ext.ident = format_trait_ident(&name);
 
-	let generics = remove_bounds(ext.generics.clone());
-	let super_trait: TypeParamBound = parse_quote_spanned! { name.span() => #name #generics };
+	let (_, type_generics, where_clause) = ext.generics.split_for_impl();
+	let super_trait: TypeParamBound = parse_quote_spanned! { name.span() => #name #type_generics };
 
 	ext.supertraits.push(super_trait.clone());
 	attrs.async_kind.0 = AsyncKind::TraitExt;
@@ -46,18 +30,16 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 		call.push(quote_spanned! { func.sig.span() => <Self as #super_trait>::#ident });
 
 		if !func.sig.generics.params.is_empty() {
-			let mut generics = remove_bounds(func.sig.generics.clone());
+			let mut generics = func.sig.generics.clone();
 
 			generics.params = generics
 				.params
 				.into_iter()
 				.filter(|generic| !matches!(generic, GenericParam::Lifetime(_)))
 				.collect();
+			let (_, type_generics, _) = generics.split_for_impl();
 
-			if !generics.params.is_empty() {
-				call.push(quote! { :: });
-				call.push(generics.to_token_stream());
-			}
+			call.push(type_generics.as_turbofish().into_token_stream());
 		}
 
 		let mut args = get_args(&func.sig.inputs, true);
@@ -99,7 +81,7 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 		#ext
 
 		#[cfg(not(doc))]
-		impl #new_generics #ident #generics for XXInternalTraitImplementer {}
+		impl #new_generics #ident #type_generics for XXInternalTraitImplementer #where_clause {}
 	})
 }
 
