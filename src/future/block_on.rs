@@ -60,7 +60,7 @@ impl<Resume, Output> BlockState<Resume, Output> {
 		ManuallyDrop::into_inner(unsafe { resume.pending })
 	}
 
-	unsafe fn output(self) -> Output {
+	const unsafe fn output(self) -> Output {
 		/* Safety: guaranteed by caller */
 		ManuallyDrop::into_inner(unsafe { self.done })
 	}
@@ -92,6 +92,7 @@ impl<Resume: FnOnce(), Output> Waiter<Resume, Output> {
 		Self { request, state: BlockState::pending(resume) }
 	}
 
+	#[allow(clippy::missing_const_for_fn)]
 	unsafe fn output(self) -> Output {
 		/* Safety: guaranteed by caller */
 		unsafe { self.state.output() }
