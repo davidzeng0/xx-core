@@ -83,12 +83,8 @@ impl DynError<()> {
 			(vtable.downcast_owned)(this.cast(), TypeId::of::<T>(), ptr!(&mut result).cast())
 		};
 
-		if downcasted {
-			/* Safety: downcast successful */
-			Some(unsafe { result.assume_init() })
-		} else {
-			None
-		}
+		/* Safety: downcast successful */
+		downcasted.then(|| unsafe { result.assume_init() })
 	}
 
 	pub unsafe fn backtrace<'a>(this: MutNonNull<Self>) -> Option<&'a Backtrace> {

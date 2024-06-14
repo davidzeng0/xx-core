@@ -87,12 +87,9 @@ where
 	R: Read + ?Sized
 {
 	let mut bytes = [0u8; N];
+	let success = read_bytes(reader, &mut bytes).await? != 0;
 
-	Ok(if read_bytes(reader, &mut bytes).await? != 0 {
-		Some(bytes)
-	} else {
-		None
-	})
+	Ok(success.then_some(bytes))
 }
 
 #[asynchronous]
@@ -129,12 +126,9 @@ where
 		Some(bytes)
 	} else {
 		let mut bytes = [0u8; N];
+		let success = read_bytes_cold(reader, &mut bytes[..consume]).await? != 0;
 
-		if read_bytes_cold(reader, &mut bytes[..consume]).await? != 0 {
-			Some(bytes)
-		} else {
-			None
-		}
+		success.then_some(bytes)
 	})
 }
 
@@ -176,7 +170,7 @@ macro_rules! impl_vint {
 	};
 }
 
-macro_each!(impl_vint, u32, u64, u128);
+macro_each!(impl_vint, u16, u32, u64, u128);
 
 #[inline(always)]
 fn vint_from_bytes<T, const N: usize>(bytes: [u8; N], size: usize, le: bool) -> T
@@ -232,12 +226,9 @@ where
 	}
 
 	let mut bytes = [0u8; N];
+	let success = read_bytes(reader, &mut bytes[..size]).await? != 0;
 
-	Ok(if read_bytes(reader, &mut bytes[..size]).await? != 0 {
-		Some(vint_from_bytes(bytes, size, le))
-	} else {
-		None
-	})
+	Ok(success.then(|| vint_from_bytes(bytes, size, le)))
 }
 
 macro_rules! read_vint_type {
@@ -272,6 +263,7 @@ macro_rules! read_vint_type {
 
 macro_rules! read_vint_impl {
 	($func:ident) => {
+		read_vint_type!(u16, $func);
 		read_vint_type!(u32, $func);
 		read_vint_type!(u64, $func);
 		read_vint_type!(u128, $func);

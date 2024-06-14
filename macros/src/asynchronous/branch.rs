@@ -257,7 +257,7 @@ impl Select {
 
 		let tasks: Vec<_> = branches
 			.iter()
-			.flat_map(|branch| branch.task.as_ref())
+			.filter_map(|branch| branch.task.as_ref())
 			.collect();
 		if tasks.len() < 2 {
 			return Err(Error::new(

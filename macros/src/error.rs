@@ -352,14 +352,14 @@ impl Input {
 			}
 		};
 
-		let display = if !displays.is_empty() {
+		let display = (!displays.is_empty()).then(|| {
 			let where_clause = add_bounds(
 				&self.input.generics,
 				where_clause,
 				&[parse_quote! { ::std::fmt::Display }]
 			);
 
-			Some(quote! {
+			quote! {
 				impl #impl_generics ::std::fmt::Display for #name #type_generics #where_clause {
 					fn fmt(&self, #fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
 						#[allow(unused_variables)]
@@ -368,10 +368,8 @@ impl Input {
 						}
 					}
 				}
-			})
-		} else {
-			None
-		};
+			}
+		});
 
 		let mut from_impls = Vec::new();
 

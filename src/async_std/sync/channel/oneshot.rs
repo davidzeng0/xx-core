@@ -27,11 +27,10 @@ impl<T> Channel<T> {
 
 	#[allow(clippy::multiple_unsafe_ops_per_block)]
 	fn try_consume_value(&self) -> Option<T> {
-		match self.sent.swap(false, Ordering::Acquire) {
+		self.sent
+			.swap(false, Ordering::Acquire)
 			/* Safety: we took ownership of the value */
-			true => Some(unsafe { ptr!(self.value=>assume_init_read()) }),
-			false => None
-		}
+			.then(|| unsafe { ptr!(self.value=>assume_init_read()) })
 	}
 }
 

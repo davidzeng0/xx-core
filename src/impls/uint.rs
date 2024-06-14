@@ -54,11 +54,7 @@ macro_rules! uint_impl {
 			fn checked_signed_diff(self, rhs: Self) -> Option<$signed> {
 				let (res, overflow) = self.overflowing_signed_diff(rhs);
 
-				if !overflow {
-					Some(res)
-				} else {
-					None
-				}
+				(!overflow).then_some(res)
 			}
 
 			fn overflowing_sub_signed(self, rhs: $signed) -> (Self, bool) {
@@ -82,11 +78,7 @@ macro_rules! uint_impl {
 			fn checked_sub_signed(self, rhs: $signed) -> Option<Self> {
 				let (res, overflow) = self.overflowing_sub_signed(rhs);
 
-				if !overflow {
-					Some(res)
-				} else {
-					None
-				}
+				(!overflow).then_some(res)
 			}
 
 			fn wrapping_sub_signed(self, rhs: $signed) -> Self {

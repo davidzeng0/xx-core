@@ -43,20 +43,11 @@ impl<T> AtomicWaiter<T> {
 	}
 
 	fn set_waiter(&self, request: ReqPtr<Result<T>>) -> ReqPtr<Result<T>> {
-		loop {
-			let prev = self.waiter.load(Relaxed);
+		let result = self.waiter.fetch_update(Relaxed, Relaxed, |prev| {
+			(prev != closed()).then_some(request)
+		});
 
-			if prev == closed() {
-				break prev;
-			}
-
-			let result = self
-				.waiter
-				.compare_exchange(prev, request, Relaxed, Relaxed);
-			let Ok(prev) = result else { continue };
-
-			break prev;
-		}
+		result.unwrap_or_else(|err| err)
 	}
 
 	#[future]
