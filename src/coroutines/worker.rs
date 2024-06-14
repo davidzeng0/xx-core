@@ -35,7 +35,7 @@ impl Worker {
 	/// executor must be valid for the duration of the worker, unless its the
 	/// main fiber
 	#[must_use]
-	pub unsafe fn from_fiber(executor: Ptr<Executor>, fiber: Fiber) -> Self {
+	pub const unsafe fn from_fiber(executor: Ptr<Executor>, fiber: Fiber) -> Self {
 		Self {
 			executor,
 

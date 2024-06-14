@@ -63,7 +63,7 @@ struct AddLifetime {
 }
 
 impl AddLifetime {
-	fn new(annotations: LifetimeAnnotations) -> Self {
+	const fn new(annotations: LifetimeAnnotations) -> Self {
 		Self {
 			annotations,
 			explicit_lifetimes: Vec::new(),
