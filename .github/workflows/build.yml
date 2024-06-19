@@ -29,7 +29,7 @@ jobs:
 
           cargo binstall -y cargo-valgrind cargo-llvm-cov &
       - name: Check & Lint
-        run: RUSTFLAGS="-D warnings" cargo clippy --all-targets --
+        run: RUSTFLAGS="-D warnings" cargo clippy --all-targets && cargo clippy -r --all-targets
       - name: Test debug build
         run: cd tests && cargo test --tests && cargo valgrind test --tests
       - name: Test release build
