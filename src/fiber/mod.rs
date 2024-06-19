@@ -280,5 +280,5 @@ impl Fiber {
 	}
 }
 
-/* Safety: the stack is owned by the fiber */
+/* Safety: this is an owned type */
 unsafe impl Send for Fiber {}

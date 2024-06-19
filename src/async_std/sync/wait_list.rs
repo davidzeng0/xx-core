@@ -1,14 +1,15 @@
-#![allow(unreachable_pub, dead_code, clippy::module_name_repetitions)]
+#![allow(unreachable_pub, clippy::module_name_repetitions)]
 
 use std::{
 	marker::PhantomData,
+	result,
 	sync::atomic::{Ordering::*, *}
 };
 
 use super::*;
 use crate::{
 	container::zero_alloc::linked_list::*,
-	coroutines::block_on,
+	coroutines::{self, block_on},
 	future::*,
 	impls::Cell,
 	macros::container_of,
@@ -27,12 +28,21 @@ pub enum WaitError {
 	Closed
 }
 
+type WaitResult<T> = result::Result<T, WaitError>;
+
+#[asynchronous]
+async fn check_interrupt() -> WaitResult<()> {
+	coroutines::check_interrupt()
+		.await
+		.map_err(|_| WaitError::Cancelled)
+}
+
 const fn closed<T>() -> ReqPtr<T> {
 	Ptr::from_addr(usize::MAX)
 }
 
 pub struct AtomicWaiter<T = ()> {
-	waiter: AtomicPtr<Request<Result<T>>>
+	waiter: AtomicPtr<Request<WaitResult<T>>>
 }
 
 #[asynchronous]
@@ -42,7 +52,7 @@ impl<T> AtomicWaiter<T> {
 		Self { waiter: AtomicPtr::new(ReqPtr::null()) }
 	}
 
-	fn set_waiter(&self, request: ReqPtr<Result<T>>) -> ReqPtr<Result<T>> {
+	fn set_waiter(&self, request: ReqPtr<WaitResult<T>>) -> ReqPtr<WaitResult<T>> {
 		let result = self.waiter.fetch_update(Relaxed, Relaxed, |prev| {
 			(prev != closed()).then_some(request)
 		});
@@ -51,7 +61,7 @@ impl<T> AtomicWaiter<T> {
 	}
 
 	#[future]
-	fn wait(&self, request: _) -> Result<T> {
+	fn wait(&self, request: _) -> WaitResult<T> {
 		#[cancel]
 		fn cancel(&self, request: _) -> Result<()> {
 			/* wake may already be in progress */
@@ -61,7 +71,7 @@ impl<T> AtomicWaiter<T> {
 
 			if result.is_ok() {
 				/* Safety: we took ownership of waking up the task. send the cancellation */
-				unsafe { Request::complete(request, Err(ErrorKind::Interrupted.into())) };
+				unsafe { Request::complete(request, Err(WaitError::Cancelled)) };
 			}
 
 			Ok(())
@@ -71,27 +81,27 @@ impl<T> AtomicWaiter<T> {
 
 		if !prev.is_null() {
 			if prev == closed() {
-				return Progress::Done(Err(WaitError::Closed.into()));
+				return Progress::Done(Err(WaitError::Closed));
 			}
 
 			/* Safety: we took ownership of waking up the task. send the cancellation */
-			unsafe { Request::complete(prev, Err(WaitError::Cancelled.into())) };
+			unsafe { Request::complete(prev, Err(WaitError::Cancelled)) };
 		}
 
 		Progress::Pending(cancel(self, request))
 	}
 
-	pub async fn notified(&self) -> Result<T> {
+	pub async fn notified(&self) -> WaitResult<T> {
 		check_interrupt().await?;
 		block_on(self.wait()).await
 	}
 
-	pub async fn notified_thread_safe(&self) -> Result<T> {
+	pub async fn notified_thread_safe(&self) -> WaitResult<T> {
 		check_interrupt().await?;
 		block_on_thread_safe(self.wait()).await
 	}
 
-	fn wake_internal(&self, new_waiter: ReqPtr<Result<T>>, value: T) -> bool {
+	fn wake_internal(&self, new_waiter: ReqPtr<WaitResult<T>>, value: T) -> bool {
 		let prev = self.set_waiter(new_waiter);
 
 		if prev.is_null() || prev == closed() {
@@ -119,11 +129,11 @@ impl<T> AtomicWaiter<T> {
 
 struct Waiter<T> {
 	node: Node,
-	request: ReqPtr<Result<MaybePanic<T>>>
+	request: ReqPtr<WaitResult<MaybePanic<T>>>
 }
 
 impl<T> Waiter<T> {
-	unsafe fn complete(this: Ptr<Self>, value: Result<MaybePanic<T>>) {
+	unsafe fn complete(this: Ptr<Self>, value: WaitResult<MaybePanic<T>>) {
 		/* Safety: guaranteed by caller */
 		let request = unsafe { ptr!(this=>request) };
 
@@ -131,7 +141,7 @@ impl<T> Waiter<T> {
 		unsafe { Request::complete(request, value) };
 	}
 
-	unsafe fn complete_node(node: Ptr<Node>, value: Result<MaybePanic<T>>) {
+	unsafe fn complete_node(node: Ptr<Node>, value: WaitResult<MaybePanic<T>>) {
 		/* Safety: guaranteed by caller */
 		let waiter = unsafe { container_of!(node, Self=>node) };
 
@@ -162,7 +172,7 @@ impl<T: Clone> RawWaitList<T> {
 	/// # Safety
 	/// Waiter must be pinned, unlinked, and live until it's waked
 	#[future]
-	unsafe fn wait(&self, waiter: &mut Waiter<T>, request: _) -> Result<MaybePanic<T>> {
+	unsafe fn wait(&self, waiter: &mut Waiter<T>, request: _) -> WaitResult<MaybePanic<T>> {
 		#[cancel]
 		fn cancel(waiter: MutPtr<Waiter<T>>, request: _) -> Result<()> {
 			/* Safety: we linked this node earlier */
@@ -174,7 +184,7 @@ impl<T: Clone> RawWaitList<T> {
 			 *
 			 * note: the waiter may no longer be valid after this call
 			 */
-			unsafe { Waiter::complete(waiter.cast_const(), Err(ErrorKind::Interrupted.into())) };
+			unsafe { Waiter::complete(waiter.cast_const(), Err(WaitError::Cancelled)) };
 
 			Ok(())
 		}
@@ -192,9 +202,9 @@ impl<T: Clone> RawWaitList<T> {
 		Progress::Pending(cancel(ptr!(waiter), request))
 	}
 
-	pub async fn notified(&self) -> Result<T> {
+	pub async fn notified(&self) -> WaitResult<T> {
 		if self.closed.get() {
-			return Err(WaitError::Closed.into());
+			return Err(WaitError::Closed);
 		}
 
 		check_interrupt().await?;
@@ -318,7 +328,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 	#[future]
 	unsafe fn wait<F>(
 		&self, waiter: &mut Waiter<T>, should_block: F, request: _
-	) -> Result<MaybePanic<T>>
+	) -> WaitResult<MaybePanic<T>>
 	where
 		F: FnOnce() -> bool
 	{
@@ -345,7 +355,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 			 *
 			 * note: the waiter may no longer be valid after this call
 			 */
-			unsafe { Request::complete(waiter.request, Err(ErrorKind::Interrupted.into())) };
+			unsafe { Request::complete(waiter.request, Err(WaitError::Cancelled)) };
 
 			Ok(())
 		}
@@ -355,11 +365,11 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		let list = self.list();
 
 		if !should_block() {
-			return Progress::Done(Err(WaitError::Cancelled.into()));
+			return Progress::Done(Err(WaitError::Cancelled));
 		}
 
 		if self.closed.load(Relaxed) {
-			return Progress::Done(Err(WaitError::Closed.into()));
+			return Progress::Done(Err(WaitError::Closed));
 		}
 
 		/* Safety: guaranteed by caller */
@@ -368,7 +378,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		Progress::Pending(cancel(self, ptr!(waiter), request))
 	}
 
-	pub async fn notified<F>(&self, should_block: F) -> Result<T>
+	pub async fn notified<F>(&self, should_block: F) -> WaitResult<T>
 	where
 		F: FnOnce() -> bool
 	{
@@ -417,6 +427,10 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		}
 
 		count
+	}
+
+	pub fn is_closed(&self) -> bool {
+		self.closed.load(Relaxed)
 	}
 
 	pub fn close(&self, value: T) -> usize {

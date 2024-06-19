@@ -53,10 +53,10 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for MutexGuard<'_, T> {
 	}
 }
 
-/* Safety: &mut T is send if T is send */
+/* Safety: same as &mut T */
 unsafe impl<T: ?Sized + Send> Send for MutexGuard<'_, T> {}
 
-/* Safety: &mut T is sync if T is sync */
+/* Safety: same as &mut T */
 unsafe impl<T: ?Sized + Sync> Sync for MutexGuard<'_, T> {}
 
 #[repr(u8)]
@@ -188,10 +188,10 @@ impl<T: ?Sized> Mutex<T> {
 	}
 }
 
-/* Safety: a mutex is send if T is send */
+/* Safety: T is send */
 unsafe impl<T: ?Sized + Send> Send for Mutex<T> {}
 
-/* Safety: a mutex is sync if T is send */
+/* Safety: T is send. mutex provides synchronization */
 unsafe impl<T: ?Sized + Send> Sync for Mutex<T> {}
 
 impl<T: ?Sized> UnwindSafe for Mutex<T> {}

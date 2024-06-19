@@ -50,10 +50,10 @@ impl<T: ?Sized + Debug> Debug for SpinMutexGuard<'_, T> {
 	}
 }
 
-/* Safety: &mut T is send if T is send */
+/* Safety: same as &mut T */
 unsafe impl<T: ?Sized + Send> Send for SpinMutexGuard<'_, T> {}
 
-/* Safety: &mut T is sync if T is sync */
+/* Safety: same as &mut T */
 unsafe impl<T: ?Sized + Sync> Sync for SpinMutexGuard<'_, T> {}
 
 pub struct SpinMutex<T: ?Sized> {

@@ -1,11 +1,5 @@
 #![allow(clippy::needless_pass_by_ref_mut)]
 
-use std::{
-	mem::MaybeUninit,
-	result,
-	sync::{atomic::*, Arc}
-};
-
 use super::*;
 
 struct Channel<T> {
@@ -40,23 +34,13 @@ unsafe impl<T: Send> Send for Channel<T> {}
 /* Safety: only if T is send */
 unsafe impl<T: Send> Sync for Channel<T> {}
 
-#[errors]
-pub enum RecvError {
-	#[error("Channel empty")]
-	#[kind = ErrorKind::WouldBlock]
-	Empty,
-
-	#[error("Channel closed")]
-	Closed
-}
-
 pub struct Receiver<T> {
 	channel: Arc<Channel<T>>
 }
 
 #[asynchronous]
 impl<T> Receiver<T> {
-	pub fn try_recv(&mut self) -> result::Result<T, RecvError> {
+	pub fn try_recv(&mut self) -> RecvResult<T> {
 		match self.channel.try_consume_value() {
 			Some(value) => {
 				self.channel.tx_waiter.close(());
@@ -64,15 +48,11 @@ impl<T> Receiver<T> {
 				Ok(value)
 			}
 
-			None => Err(if self.channel.tx_waiter.is_closed() {
-				RecvError::Closed
-			} else {
-				RecvError::Empty
-			})
+			None => Err(RecvError::new(self.channel.tx_waiter.is_closed()))
 		}
 	}
 
-	pub async fn recv(&mut self) -> result::Result<T, RecvError> {
+	pub async fn recv(&mut self) -> RecvResult<T> {
 		let _ = self.channel.rx_waiter.notified_thread_safe().await;
 
 		self.try_recv()
@@ -85,9 +65,9 @@ impl<T> Receiver<T> {
 
 #[asynchronous(task)]
 impl<T> Task for Receiver<T> {
-	type Output<'ctx> = result::Result<T, RecvError>;
+	type Output<'ctx> = RecvResult<T>;
 
-	async fn run(mut self) -> result::Result<T, RecvError> {
+	async fn run(mut self) -> RecvResult<T> {
 		self.recv().await
 	}
 }

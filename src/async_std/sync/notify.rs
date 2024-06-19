@@ -11,13 +11,13 @@ pub struct RawNotify<T = ()> {
 }
 
 impl<T: Clone> RawNotify<T> {
-	wrapper_functions! {
-		inner = self.waiters;
+	#[asynchronous]
+	pub async fn notified(&self) -> Result<T> {
+		self.waiters.notified().await.map_err(Into::into)
+	}
 
-		#[asynchronous]
-		pub async fn notified(&self) -> Result<T>;
-
-		notify = pub fn wake_all(&self, value: T) -> usize;
+	pub fn notify(&self, value: T) -> usize {
+		self.waiters.wake_all(value)
 	}
 
 	/// # Safety
@@ -77,13 +77,6 @@ pub struct Notify<T = ()> {
 }
 
 impl<T: Clone> Notify<T> {
-	wrapper_functions! {
-		inner = self.waiters;
-		mut inner = self.waiters;
-
-		notify = pub fn wake_all(&self, value: T) -> usize;
-	}
-
 	#[must_use]
 	pub fn new() -> Self {
 		Self {
@@ -95,7 +88,11 @@ impl<T: Clone> Notify<T> {
 
 	#[asynchronous]
 	pub async fn notified(&self) -> Result<T> {
-		self.waiters.notified(|| true).await
+		self.waiters.notified(|| true).await.map_err(Into::into)
+	}
+
+	pub fn notify(&self, value: T) -> usize {
+		self.waiters.wake_all(value)
 	}
 }
 
@@ -104,3 +101,9 @@ impl<T: Clone> Default for Notify<T> {
 		Self::new()
 	}
 }
+
+/* Safety: T is send */
+unsafe impl<T: Send> Send for Notify<T> {}
+
+/* Safety: T is send */
+unsafe impl<T: Send> Sync for Notify<T> {}
