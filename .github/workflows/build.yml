@@ -12,11 +12,6 @@ env:
 
 jobs:
   rust:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - linux/amd64
     runs-on: ubuntu-latest
     name: Build
     steps:
