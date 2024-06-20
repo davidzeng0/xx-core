@@ -1,4 +1,5 @@
-use super::{time::TimeVal, *};
+use super::time::TimeVal;
+use super::*;
 
 define_enum! {
 	#[repr(u32)]

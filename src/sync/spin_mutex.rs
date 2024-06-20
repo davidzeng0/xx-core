@@ -1,23 +1,26 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::{
-	fmt::*,
-	ops::{Deref, DerefMut},
-	panic::*,
-	sync::*
-};
+use std::fmt::*;
+use std::ops::{Deref, DerefMut};
+use std::result;
 
 use super::*;
+use crate::macros::errors;
 use crate::pointer::UnsafeCell;
 
+#[errors]
+pub enum TryLockError {
+	#[error("Try lock failed because the operation would block")]
+	WouldBlock
+}
+
 pub struct SpinMutexGuard<'a, T: ?Sized> {
-	lock: &'a SpinMutex<T>,
-	poison: PoisonGuard<'a>
+	lock: &'a SpinMutex<T>
 }
 
 impl<'a, T: ?Sized> SpinMutexGuard<'a, T> {
-	unsafe fn new(lock: &'a SpinMutex<T>) -> Self {
-		Self { lock, poison: lock.poison.guard() }
+	const unsafe fn new(lock: &'a SpinMutex<T>) -> Self {
+		Self { lock }
 	}
 }
 
@@ -39,7 +42,6 @@ impl<T: ?Sized> DerefMut for SpinMutexGuard<'_, T> {
 
 impl<T: ?Sized> Drop for SpinMutexGuard<'_, T> {
 	fn drop(&mut self) {
-		self.poison.finish();
 		self.lock.lock.unlock();
 	}
 }
@@ -58,7 +60,6 @@ unsafe impl<T: ?Sized + Sync> Sync for SpinMutexGuard<'_, T> {}
 
 pub struct SpinMutex<T: ?Sized> {
 	lock: SpinLock,
-	poison: PoisonFlag,
 	value: UnsafeCell<T>
 }
 
@@ -69,48 +70,37 @@ impl<T: ?Sized> SpinMutex<T> {
 	{
 		Self {
 			lock: SpinLock::new(),
-			poison: PoisonFlag::new(),
 			value: UnsafeCell::new(value)
 		}
 	}
 
-	pub fn lock(&self) -> LockResult<SpinMutexGuard<'_, T>> {
+	pub fn lock(&self) -> SpinMutexGuard<'_, T> {
 		self.lock.lock();
 
 		/* Safety: guaranteed by caller */
-		let guard = unsafe { SpinMutexGuard::new(self) };
-
-		self.poison.map(guard)
+		unsafe { SpinMutexGuard::new(self) }
 	}
 
-	pub fn try_lock(&self) -> TryLockResult<SpinMutexGuard<'_, T>> {
+	pub fn try_lock(&self) -> result::Result<SpinMutexGuard<'_, T>, TryLockError> {
 		if self.lock.try_lock() {
 			/* Safety: guaranteed by caller */
 			let guard = unsafe { SpinMutexGuard::new(self) };
 
-			Ok(self.poison.map(guard)?)
+			Ok(guard)
 		} else {
 			Err(TryLockError::WouldBlock)
 		}
 	}
 
-	pub fn is_poisoned(&self) -> bool {
-		self.poison.get()
-	}
-
-	pub fn clear_poison(&self) {
-		self.poison.clear();
-	}
-
-	pub fn into_inner(self) -> LockResult<T>
+	pub fn into_inner(self) -> T
 	where
 		T: Sized
 	{
-		self.poison.map(self.value.into_inner())
+		self.value.into_inner()
 	}
 
-	pub fn get_mut(&mut self) -> LockResult<&mut T> {
-		self.poison.map(self.value.get_mut())
+	pub fn get_mut(&mut self) -> &mut T {
+		self.value.get_mut()
 	}
 }
 
@@ -119,7 +109,3 @@ unsafe impl<T: ?Sized + Send> Send for SpinMutex<T> {}
 
 /* Safety: a mutex is sync if T is send */
 unsafe impl<T: ?Sized + Send> Sync for SpinMutex<T> {}
-
-impl<T: ?Sized> UnwindSafe for SpinMutex<T> {}
-
-impl<T: ?Sized> RefUnwindSafe for SpinMutex<T> {}

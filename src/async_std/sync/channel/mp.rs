@@ -1,11 +1,28 @@
 #![allow(unreachable_pub)]
 
 use super::*;
-use crate::sync::CachePadded;
 
 struct Slot<T> {
 	sequence: AtomicUsize,
 	data: UnsafeCell<MaybeUninit<T>>
+}
+
+#[allow(clippy::expect_used)]
+fn create_slots<T>(mut size: usize) -> Box<[Slot<T>]> {
+	assert!(size != 0, "Cannot create a zero sized channel");
+
+	size = size.checked_next_power_of_two().expect("Channel too big");
+
+	let mut slots = Vec::with_capacity(size);
+
+	for i in 0..size {
+		slots.push(Slot {
+			sequence: AtomicUsize::new(i),
+			data: UnsafeCell::new(MaybeUninit::uninit())
+		});
+	}
+
+	slots.into_boxed_slice()
 }
 
 macro_rules! common_impl {
@@ -21,10 +38,12 @@ macro_rules! common_impl {
 			{
 				#[allow(clippy::arithmetic_side_effects)]
 				let mask = self.slots.len() - 1;
-				let mut pos = counter.load(Ordering::Relaxed);
+				let mut pos;
 				let mut slot;
+				let mut backoff = Backoff::new();
 
 				loop {
+					pos = counter.load(Ordering::Relaxed);
 					/* Safety: masked */
 					slot = unsafe { self.slots.get_unchecked(pos & mask) };
 
@@ -35,7 +54,6 @@ macro_rules! common_impl {
 					#[allow(clippy::cast_possible_wrap)]
 					let diff = sequence.wrapping_sub(expect) as isize;
 
-					#[allow(clippy::comparison_chain)]
 					if diff == 0 {
 						let result = counter.compare_exchange_weak(
 							pos,
@@ -44,8 +62,8 @@ macro_rules! common_impl {
 							Ordering::Relaxed
 						);
 
-						if let Err(prev) = result {
-							pos = prev;
+						if result.is_err() {
+							backoff.spin();
 
 							continue;
 						}
@@ -55,11 +73,13 @@ macro_rules! common_impl {
 						slot.sequence.store(next, Ordering::Release);
 
 						break Ok(value);
-					} else if diff < 0 {
+					}
+
+					if diff < 0 {
 						break Err(value);
 					}
 
-					pos = counter.load(Ordering::Relaxed);
+					backoff.spin();
 				}
 			}
 
@@ -99,10 +119,11 @@ macro_rules! common_impl {
 			}
 
 			fn can_send(&self) -> bool {
+				/* lock held, relaxed is ok */
 				let head = self.head.load(Ordering::Relaxed);
 				let tail = self.tail.load(Ordering::Relaxed);
 
-				tail == head.wrapping_add(self.slots.len())
+				tail != head.wrapping_add(self.slots.len())
 			}
 
 			fn wake_send(&self) {
@@ -188,27 +209,12 @@ common_impl!(MCChannel);
 
 #[asynchronous]
 impl<T> MCChannel<T> {
-	#[allow(clippy::expect_used)]
-	pub fn new(mut size: usize) -> Self {
-		assert!(size != 0, "Cannot create a zero sized channel");
-
-		size = size.checked_next_power_of_two().expect("Channel too big");
-
-		let mut slots = Vec::with_capacity(size);
-
-		for i in 0..size {
-			slots.push(Slot {
-				sequence: AtomicUsize::new(i),
-				data: UnsafeCell::new(MaybeUninit::uninit())
-			});
-		}
-
+	pub fn new(size: usize) -> Self {
 		Self {
 			head: CachePadded(AtomicUsize::new(0)),
 			tail: CachePadded(AtomicUsize::new(0)),
 
-			slots: slots.into_boxed_slice(),
-
+			slots: create_slots(size),
 			tx_waiters: ThreadSafeWaitList::new(),
 			rx_waiters: ThreadSafeWaitList::new(),
 			tx_count: AtomicUsize::new(0),
@@ -217,6 +223,7 @@ impl<T> MCChannel<T> {
 	}
 
 	fn can_recv(&self) -> bool {
+		/* lock held, relaxed is ok */
 		let head = self.head.load(Ordering::Relaxed);
 		let tail = self.tail.load(Ordering::Relaxed);
 
@@ -271,26 +278,12 @@ common_impl!(SCChannel);
 #[asynchronous]
 impl<T> SCChannel<T> {
 	#[allow(clippy::expect_used)]
-	pub fn new(mut size: usize) -> Self {
-		assert!(size != 0, "Cannot create a zero sized channel");
-
-		size = size.checked_next_power_of_two().expect("Channel too big");
-
-		let mut slots = Vec::with_capacity(size);
-
-		for i in 0..size {
-			slots.push(Slot {
-				sequence: AtomicUsize::new(i),
-				data: UnsafeCell::new(MaybeUninit::uninit())
-			});
-		}
-
+	pub fn new(size: usize) -> Self {
 		Self {
 			head: CachePadded(AtomicUsize::new(0)),
 			tail: CachePadded(AtomicUsize::new(0)),
 
-			slots: slots.into_boxed_slice(),
-
+			slots: create_slots(size),
 			tx_waiters: ThreadSafeWaitList::new(),
 			rx_waiter: AtomicWaiter::new(),
 			tx_count: AtomicUsize::new(0)
@@ -343,6 +336,8 @@ macro_rules! channel_impl {
 			}
 
 			pub async fn recv(&self) -> RecvResult<T> {
+				let mut backoff = Backoff::new();
+
 				loop {
 					let result = self.try_recv();
 
@@ -350,7 +345,13 @@ macro_rules! channel_impl {
 						return result;
 					}
 
-					self.channel.recv_notified().await;
+					if backoff.is_completed() {
+						self.channel.recv_notified().await;
+
+						backoff.reset();
+					} else {
+						backoff.snooze();
+					}
 				}
 			}
 
@@ -385,6 +386,8 @@ macro_rules! channel_impl {
 			}
 
 			pub async fn send(&self, mut value: T) -> SendResult<T> {
+				let mut backoff = Backoff::new();
+
 				loop {
 					match self.try_send(value) {
 						Ok(()) => return Ok(()),
@@ -393,7 +396,13 @@ macro_rules! channel_impl {
 						Err(SendError::Full(v)) => value = v
 					}
 
-					self.channel.send_notified().await;
+					if backoff.is_completed() {
+						self.channel.send_notified().await;
+
+						backoff.reset();
+					} else {
+						backoff.snooze();
+					}
 				}
 			}
 

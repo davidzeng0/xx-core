@@ -1,12 +1,8 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::{
-	sync::{
-		atomic::{AtomicBool, Ordering},
-		LockResult, PoisonError
-	},
-	thread::panicking
-};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LockResult, PoisonError};
+use std::thread::panicking;
 
 pub struct PoisonGuard<'a> {
 	flag: &'a PoisonFlag,

@@ -1,16 +1,15 @@
 #![allow(unreachable_pub, clippy::multiple_unsafe_ops_per_block)]
 
-use std::{
-	arch::global_asm,
-	mem::{zeroed, ManuallyDrop}
-};
+use std::arch::global_asm;
+use std::mem::{zeroed, ManuallyDrop};
 
-use super::{
-	macros::{assert_unsafe_precondition, import_sysdeps, panic_nounwind},
-	opt::hint::unreachable_unchecked,
-	os::{mman::*, resource::*, unistd::*, RawBuf},
-	pointer::*
-};
+use super::macros::{assert_unsafe_precondition, import_sysdeps, panic_nounwind};
+use super::opt::hint::unreachable_unchecked;
+use super::os::mman::*;
+use super::os::resource::*;
+use super::os::unistd::*;
+use super::os::RawBuf;
+use super::pointer::*;
 
 import_sysdeps!();
 

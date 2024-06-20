@@ -1,4 +1,8 @@
-use super::{fcntl::OpenFlag, poll::PollFlag::*, signal::*, time::TimeSpec, *};
+use super::fcntl::OpenFlag;
+use super::poll::PollFlag::*;
+use super::signal::*;
+use super::time::TimeSpec;
+use super::*;
 
 define_enum! {
 	#[bitflags]

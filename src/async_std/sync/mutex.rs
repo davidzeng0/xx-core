@@ -1,12 +1,11 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::{
-	fmt,
-	hint::spin_loop,
-	ops::{Deref, DerefMut},
-	panic::*,
-	sync::{atomic::*, *}
-};
+use std::fmt;
+use std::hint::spin_loop;
+use std::ops::{Deref, DerefMut};
+use std::panic::*;
+use std::sync::atomic::*;
+use std::sync::*;
 
 use super::*;
 use crate::sync::poison::*;

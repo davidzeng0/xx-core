@@ -18,17 +18,17 @@ pub mod tcp;
 pub mod time;
 pub mod unistd;
 
-use std::{
-	marker::PhantomData,
-	mem::{size_of, size_of_val, transmute},
-	os::fd::*,
-	time::Duration
-};
+use std::marker::PhantomData;
+use std::mem::{size_of, size_of_val, transmute};
+use std::os::fd::*;
+use std::time::Duration;
 
 use enumflags2::*;
 use syscall::*;
 
-use crate::{error::*, macros::syscall_define, pointer::*};
+use crate::error::*;
+use crate::macros::syscall_define;
+use crate::pointer::*;
 
 pub const INVALID_FD: RawFd = -1;
 

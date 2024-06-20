@@ -1,4 +1,5 @@
-use crate::{coroutines::*, error::*};
+use crate::coroutines::*;
+use crate::error::*;
 
 pub mod io;
 pub mod iterator;

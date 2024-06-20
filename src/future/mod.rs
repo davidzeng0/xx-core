@@ -1,5 +1,7 @@
+use crate::error::*;
 pub use crate::macros::future;
-use crate::{error::*, pointer::*, runtime::call_no_unwind};
+use crate::pointer::*;
+use crate::runtime::call_no_unwind;
 
 mod block_on;
 pub mod closure;

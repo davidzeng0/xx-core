@@ -1,18 +1,14 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::{
-	fmt::{self, Arguments},
-	mem::size_of,
-	ops::BitAnd
-};
+use std::fmt::{self, Arguments};
+use std::mem::size_of;
+use std::ops::BitAnd;
 
 use paste::paste;
 
 use super::*;
-use crate::{
-	impls::{FromBytes, ToBytes},
-	macros::macro_each
-};
+use crate::impls::{FromBytes, ToBytes};
+use crate::macros::macro_each;
 
 macro_rules! impl_primitive_bytes_encoding_endian {
 	($type:ty, $endian:ident, $trait_endian:ident) => {

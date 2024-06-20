@@ -1,13 +1,14 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use syn::{
-	parse::{Parse, ParseStream, Parser},
-	punctuated::Punctuated,
-	spanned::Spanned,
-	visit_mut::*,
-	*
-};
-use xx_macro_support::{attribute::*, fallible::*, function::*, visit_macro::*};
+use syn::parse::{Parse, ParseStream, Parser};
+use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
+use syn::visit_mut::*;
+use syn::*;
+use xx_macro_support::attribute::*;
+use xx_macro_support::fallible::*;
+use xx_macro_support::function::*;
+use xx_macro_support::visit_macro::*;
 
 mod asynchronous;
 mod duration;

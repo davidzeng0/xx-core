@@ -1,8 +1,6 @@
-use std::{
-	hint::spin_loop,
-	sync::atomic::{AtomicBool, Ordering},
-	thread::yield_now
-};
+use std::hint::spin_loop;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::yield_now;
 
 // A spin lock for when the critical section is short and predictable
 pub struct SpinLock(AtomicBool);
@@ -30,7 +28,7 @@ impl SpinLock {
 			let locked = self.0.load(Ordering::Relaxed);
 
 			if !locked {
-				return !self.0.swap(true, Ordering::Acquire);
+				return self.try_lock();
 			}
 
 			spin_loop();

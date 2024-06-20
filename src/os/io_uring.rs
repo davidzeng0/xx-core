@@ -1,11 +1,9 @@
 #![allow(clippy::module_name_repetitions)]
 
-use super::{
-	error::OsError,
-	signal::{SignalMask, SIGRTMAX},
-	time::TimeSpec,
-	*
-};
+use super::error::OsError;
+use super::signal::{SignalMask, SIGRTMAX};
+use super::time::TimeSpec;
+use super::*;
 
 define_enum! {
 	#[bitflags]

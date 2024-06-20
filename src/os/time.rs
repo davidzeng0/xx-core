@@ -1,4 +1,5 @@
-use super::{error::result_from_libc, *};
+use super::error::result_from_libc;
+use super::*;
 use crate::macros::panic_nounwind;
 
 define_struct! {

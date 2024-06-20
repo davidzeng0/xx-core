@@ -1,17 +1,16 @@
 use enumflags2::*;
 
-use crate::{
-	error::*,
-	macros::{import_sysdeps, macro_each, syscall_impl},
-	pointer::*
-};
+use crate::error::*;
+use crate::macros::{import_sysdeps, macro_each, syscall_impl};
+use crate::pointer::*;
 
 import_sysdeps!();
 
 pub use platform::*;
 pub use SyscallNumber::*;
 
-use super::{error::*, *};
+use super::error::*;
+use super::*;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Copy)]

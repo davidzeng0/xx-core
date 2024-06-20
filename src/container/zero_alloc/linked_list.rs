@@ -3,7 +3,8 @@
 use std::cell::Cell;
 
 use super::*;
-use crate::{macros::assert_unsafe_precondition, opt::hint::assume};
+use crate::macros::assert_unsafe_precondition;
+use crate::opt::hint::assume;
 
 pub struct Node {
 	prev: Cell<Ptr<Self>>,

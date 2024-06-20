@@ -1,7 +1,5 @@
-use std::{
-	cell,
-	ops::{Deref, DerefMut}
-};
+use std::cell;
+use std::ops::{Deref, DerefMut};
 
 use crate::macros::wrapper_functions;
 

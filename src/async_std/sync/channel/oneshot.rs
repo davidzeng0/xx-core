@@ -1,5 +1,6 @@
 #![allow(clippy::needless_pass_by_ref_mut)]
 
+pub use super::error::RecvError;
 use super::*;
 
 struct Channel<T> {
@@ -22,9 +23,14 @@ impl<T> Channel<T> {
 	#[allow(clippy::multiple_unsafe_ops_per_block)]
 	fn try_consume_value(&self) -> Option<T> {
 		self.sent
-			.swap(false, Ordering::Acquire)
+			.swap(false, Ordering::SeqCst)
 			/* Safety: we took ownership of the value */
 			.then(|| unsafe { ptr!(self.value=>assume_init_read()) })
+	}
+
+	fn close(&self) {
+		self.tx_waiter.close(());
+		self.rx_waiter.close(());
 	}
 }
 
@@ -59,7 +65,7 @@ impl<T> Receiver<T> {
 	}
 
 	pub fn close(&mut self) {
-		self.channel.tx_waiter.close(());
+		self.channel.close();
 	}
 }
 
@@ -74,8 +80,9 @@ impl<T> Task for Receiver<T> {
 
 impl<T> Drop for Receiver<T> {
 	fn drop(&mut self) {
-		self.close();
+		self.channel.tx_waiter.close(());
 
+		/* the value may already be sent. try a read here to prevent leaking */
 		let _ = self.channel.try_consume_value();
 	}
 }
@@ -90,7 +97,7 @@ impl<T> Sender<T> {
 		/* Safety: first time storing a value */
 		unsafe { ptr!(self.channel.value=>write(value)) };
 
-		self.channel.sent.store(true, Ordering::Release);
+		self.channel.sent.store(true, Ordering::SeqCst);
 		self.channel.rx_waiter.close(());
 
 		if !self.channel.tx_waiter.is_closed() {
@@ -108,7 +115,7 @@ impl<T> Sender<T> {
 
 	#[must_use]
 	pub fn is_closed(&self) -> bool {
-		self.channel.rx_waiter.is_closed()
+		self.channel.tx_waiter.is_closed()
 	}
 
 	pub async fn closed(&mut self) -> bool {
@@ -120,8 +127,7 @@ impl<T> Sender<T> {
 
 impl<T> Drop for Sender<T> {
 	fn drop(&mut self) {
-		self.channel.tx_waiter.close(());
-		self.channel.rx_waiter.close(());
+		self.channel.close();
 	}
 }
 

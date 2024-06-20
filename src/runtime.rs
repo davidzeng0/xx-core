@@ -1,4 +1,5 @@
-use std::{fmt::Arguments, panic::*};
+use std::fmt::Arguments;
+use std::panic::*;
 
 use crate::log::*;
 

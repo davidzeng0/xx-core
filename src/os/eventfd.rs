@@ -1,4 +1,7 @@
-use super::{fcntl::OpenFlag, poll::*, unistd::*, *};
+use super::fcntl::OpenFlag;
+use super::poll::*;
+use super::unistd::*;
+use super::*;
 
 define_enum! {
 	#[repr(u32)]

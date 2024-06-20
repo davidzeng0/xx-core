@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
-use crate::{fiber::*, trace};
+use crate::fiber::*;
+use crate::trace;
 
 struct Data {
 	pool: Vec<Fiber>,

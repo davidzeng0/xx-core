@@ -1,7 +1,5 @@
-use xx_core::{
-	fiber::{Fiber, Start},
-	pointer::*
-};
+use xx_core::fiber::{Fiber, Start};
+use xx_core::pointer::*;
 
 unsafe extern "C" fn start(arg: Ptr<()>) {
 	let mut val = 0;

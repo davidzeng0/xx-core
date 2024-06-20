@@ -1,12 +1,10 @@
 #![allow(clippy::module_name_repetitions)]
 
-use super::{
-	fcntl::OpenFlag,
-	inet::Address,
-	iovec::{self, IoVec, IoVecMut},
-	tcp::TcpOption,
-	*
-};
+use super::fcntl::OpenFlag;
+use super::inet::Address;
+use super::iovec::{self, IoVec, IoVecMut};
+use super::tcp::TcpOption;
+use super::*;
 
 define_enum! {
 	#[repr(u32)]

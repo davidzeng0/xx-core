@@ -4,7 +4,8 @@
 	unreachable_pub
 )]
 
-use std::{cell::Cell, mem::replace};
+use std::cell::Cell;
+use std::mem::replace;
 
 use super::*;
 

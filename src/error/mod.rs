@@ -1,13 +1,11 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::{
-	backtrace::Backtrace,
-	error,
-	fmt::{self, Debug, Display, Formatter},
-	io, result
-};
+use std::backtrace::Backtrace;
+use std::fmt::{self, Debug, Display, Formatter};
+use std::{error, io, result};
 
-use crate::{macros::seal_trait, os::error::OsError};
+use crate::macros::seal_trait;
+use crate::os::error::OsError;
 
 mod common;
 mod repr;

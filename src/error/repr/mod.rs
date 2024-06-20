@@ -1,13 +1,11 @@
 #![allow(unreachable_pub, clippy::multiple_unsafe_ops_per_block)]
 
-use std::{
-	any::*,
-	backtrace::*,
-	error::Error,
-	fmt::{self, Debug, Display, Formatter},
-	marker::PhantomData,
-	mem::{forget, transmute, ManuallyDrop, MaybeUninit}
-};
+use std::any::*;
+use std::backtrace::*;
+use std::error::Error;
+use std::fmt::{self, Debug, Display, Formatter};
+use std::marker::PhantomData;
+use std::mem::{forget, transmute, ManuallyDrop, MaybeUninit};
 
 use static_assertions::const_assert;
 
@@ -19,7 +17,9 @@ use context::*;
 use custom::*;
 use dynamic::*;
 
-use super::{internal::*, private::*, BoxedError, Context, ErrorKind, OsError};
+use super::internal::*;
+use super::private::*;
+use super::{BoxedError, Context, ErrorKind, OsError};
 
 pub struct CustomRef<'a, const MUT: bool = false>(MutNonNull<DynError<()>>, PhantomData<&'a ()>);
 

@@ -1,6 +1,7 @@
 #![allow(clippy::multiple_unsafe_ops_per_block)]
 
-use std::{mem::replace, rc::Rc};
+use std::mem::replace;
+use std::rc::Rc;
 
 use super::*;
 use crate::{trace, warn};

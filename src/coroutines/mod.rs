@@ -1,16 +1,14 @@
+use crate::error::*;
+use crate::fiber::*;
+use crate::future::closure::*;
+use crate::future::{self, future, Cancel, Complete, Future, Progress, ReqPtr, Request};
+use crate::impls::async_fn::*;
+use crate::macros::{assert_unsafe_precondition, panic_nounwind, unreachable_unchecked};
 pub use crate::macros::{asynchronous, join, select};
-use crate::{
-	debug,
-	error::*,
-	fiber::*,
-	future::{self, closure::*, future, Cancel, Complete, Future, Progress, ReqPtr, Request},
-	impls::async_fn::*,
-	macros::{assert_unsafe_precondition, panic_nounwind, unreachable_unchecked},
-	opt::hint::*,
-	pointer::*,
-	runtime::{self, call_no_unwind, catch_unwind_safe, MaybePanic},
-	warn
-};
+use crate::opt::hint::*;
+use crate::pointer::*;
+use crate::runtime::{self, call_no_unwind, catch_unwind_safe, MaybePanic};
+use crate::{debug, warn};
 
 mod lang {}
 

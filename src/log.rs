@@ -1,19 +1,18 @@
-use std::{
-	any::type_name,
-	backtrace::*,
-	fmt::{self, Arguments},
-	io::*,
-	panic::*,
-	str::from_utf8,
-	sync::*
-};
+use std::any::type_name;
+use std::backtrace::*;
+use std::fmt::{self, Arguments};
+use std::io::*;
+use std::panic::*;
+use std::str::from_utf8;
+use std::sync::*;
 
 use ctor::ctor;
 use lazy_static::lazy_static;
 pub use log::{max_level as get_max_level, set_max_level, Level, LevelFilter};
 use log::{set_boxed_logger, Log, Metadata, Record};
 
-use crate::{macros::panic_nounwind, pointer::*};
+use crate::macros::panic_nounwind;
+use crate::pointer::*;
 
 lazy_static! {
 	static ref STDERR: Mutex<BufWriter<Stderr>> =

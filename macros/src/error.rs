@@ -413,7 +413,7 @@ impl Input {
 				Self: ::std::error::Error + ::std::marker::Send
 					+::std::marker::Sync + 'static
 			{
-				fn kind(&self) -> ErrorKind {
+				fn kind(&self) -> ::xx_core::error::ErrorKind {
 					#[allow(unused_variables)]
 					match self {
 						#kinds

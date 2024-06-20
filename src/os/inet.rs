@@ -2,7 +2,8 @@ use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 
 use num_traits::FromPrimitive;
 
-use super::{socket::AddressFamily, *};
+use super::socket::AddressFamily;
+use super::*;
 
 define_enum! {
 	#[repr(u32)]

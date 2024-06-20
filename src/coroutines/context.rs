@@ -1,9 +1,7 @@
 #![allow(clippy::multiple_unsafe_ops_per_block)]
 
-use std::{
-	any::TypeId,
-	hash::{DefaultHasher, Hash, Hasher}
-};
+use std::any::TypeId;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use static_assertions::const_assert;
 

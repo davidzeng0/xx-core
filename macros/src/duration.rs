@@ -1,13 +1,11 @@
-use nom::{
-	branch::alt,
-	bytes::complete::{tag, tag_no_case},
-	character::complete::multispace0,
-	error::{ErrorKind, ParseError},
-	multi::{many1, separated_list1},
-	number::complete::double,
-	sequence::tuple,
-	IResult, Parser
-};
+use nom::branch::alt;
+use nom::bytes::complete::{tag, tag_no_case};
+use nom::character::complete::multispace0;
+use nom::error::{ErrorKind, ParseError};
+use nom::multi::{many1, separated_list1};
+use nom::number::complete::double;
+use nom::sequence::tuple;
+use nom::{IResult, Parser};
 
 use super::*;
 

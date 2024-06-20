@@ -1,20 +1,14 @@
-use std::{
-	mem::transmute,
-	os::fd::{FromRawFd, OwnedFd},
-	time::Duration
-};
+use std::mem::transmute;
+use std::os::fd::{FromRawFd, OwnedFd};
+use std::time::Duration;
 
-use xx_core::{
-	os::{
-		error::{result_from_int, result_from_ptr, OsError},
-		mman::{Advice, Flag, Flags, Map, Protection, Type},
-		poll::{poll_timeout, PollFd, PollFlag},
-		resource::{get_rlimit, Resource},
-		time::{nanotime, ClockId},
-		unistd::close
-	},
-	pointer::{MutPtr, Ptr}
-};
+use xx_core::os::error::{result_from_int, result_from_ptr, OsError};
+use xx_core::os::mman::{Advice, Flag, Flags, Map, Protection, Type};
+use xx_core::os::poll::{poll_timeout, PollFd, PollFlag};
+use xx_core::os::resource::{get_rlimit, Resource};
+use xx_core::os::time::{nanotime, ClockId};
+use xx_core::os::unistd::close;
+use xx_core::pointer::{MutPtr, Ptr};
 
 #[test]
 fn test_close_inval() {

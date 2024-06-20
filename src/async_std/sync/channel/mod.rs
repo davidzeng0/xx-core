@@ -1,10 +1,10 @@
-use std::{
-	mem::MaybeUninit,
-	result,
-	sync::{atomic::*, Arc}
-};
+use std::mem::MaybeUninit;
+use std::result;
+use std::sync::atomic::*;
+use std::sync::Arc;
 
 use super::*;
+use crate::sync::{Backoff, CachePadded};
 
 mod mp;
 use mp::*;
@@ -13,15 +13,33 @@ pub mod mpmc;
 pub mod mpsc;
 pub mod oneshot;
 
-#[errors]
-pub enum RecvError {
-	#[error("Channel empty")]
-	#[kind = ErrorKind::WouldBlock]
-	Empty,
+mod error {
+	#![allow(clippy::module_name_repetitions)]
 
-	#[error("Channel closed")]
-	Closed
+	use super::*;
+
+	#[errors]
+	pub enum RecvError {
+		#[error("Channel empty")]
+		#[kind = ErrorKind::WouldBlock]
+		Empty,
+
+		#[error("Channel closed")]
+		Closed
+	}
+
+	#[errors]
+	pub enum SendError<T> {
+		#[error("Channel full")]
+		#[kind = ErrorKind::WouldBlock]
+		Full(T),
+
+		#[error("Channel closed")]
+		Closed(T)
+	}
 }
+
+use error::*;
 
 impl RecvError {
 	#[must_use]
@@ -32,16 +50,6 @@ impl RecvError {
 			Self::Empty
 		}
 	}
-}
-
-#[errors]
-pub enum SendError<T> {
-	#[error("Channel full")]
-	#[kind = ErrorKind::WouldBlock]
-	Full(T),
-
-	#[error("Channel closed")]
-	Closed(T)
 }
 
 impl<T> SendError<T> {

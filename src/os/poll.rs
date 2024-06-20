@@ -2,7 +2,9 @@
 
 use xx_core_macros::wrapper_functions;
 
-use super::{signal::SignalMask, time::TimeSpec, *};
+use super::signal::SignalMask;
+use super::time::TimeSpec;
+use super::*;
 
 define_enum! {
 	#[bitflags]

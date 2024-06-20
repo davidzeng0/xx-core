@@ -1,16 +1,13 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::{
-	cell, cmp,
-	fmt::{self, Debug, Formatter, Result},
-	mem::transmute,
-	num::NonZeroUsize,
-	ops::{Deref, DerefMut},
-	ptr::{self, null_mut, slice_from_raw_parts_mut},
-	rc::Rc,
-	result,
-	sync::{atomic, Arc}
-};
+use std::fmt::{self, Debug, Formatter, Result};
+use std::mem::transmute;
+use std::num::NonZeroUsize;
+use std::ops::{Deref, DerefMut};
+use std::ptr::{self, null_mut, slice_from_raw_parts_mut};
+use std::rc::Rc;
+use std::sync::{atomic, Arc};
+use std::{cell, cmp, result};
 
 pub use crate::macros::ptr;
 use crate::macros::{assert_unsafe_precondition, seal_trait, wrapper_functions};

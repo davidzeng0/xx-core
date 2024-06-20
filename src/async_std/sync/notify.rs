@@ -1,6 +1,7 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::{marker::PhantomData, rc::Rc};
+use std::marker::PhantomData;
+use std::rc::Rc;
 
 use super::*;
 use crate::macros::wrapper_functions;

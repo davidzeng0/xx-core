@@ -1,8 +1,6 @@
 use core::slice;
-use std::{
-	io::{IoSlice, IoSliceMut},
-	ops::{Deref, DerefMut}
-};
+use std::io::{IoSlice, IoSliceMut};
+use std::ops::{Deref, DerefMut};
 
 use super::*;
 

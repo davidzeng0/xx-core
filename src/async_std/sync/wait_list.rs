@@ -1,22 +1,19 @@
 #![allow(unreachable_pub, clippy::module_name_repetitions)]
 
-use std::{
-	marker::PhantomData,
-	result,
-	sync::atomic::{Ordering::*, *}
-};
+use std::marker::PhantomData;
+use std::result;
+use std::sync::atomic::Ordering::*;
+use std::sync::atomic::*;
 
 use super::*;
-use crate::{
-	container::zero_alloc::linked_list::*,
-	coroutines::{self, block_on},
-	future::*,
-	impls::Cell,
-	macros::container_of,
-	pointer::AtomicPtr,
-	runtime::{catch_unwind_safe, join, MaybePanic},
-	sync::{SpinMutex, SpinMutexGuard}
-};
+use crate::container::zero_alloc::linked_list::*;
+use crate::coroutines::{self, block_on};
+use crate::future::*;
+use crate::impls::Cell;
+use crate::macros::container_of;
+use crate::pointer::AtomicPtr;
+use crate::runtime::{catch_unwind_safe, join, MaybePanic};
+use crate::sync::SpinMutex;
 
 #[errors]
 pub enum WaitError {
@@ -281,6 +278,7 @@ pub struct ThreadSafeWaitList<T = ()> {
 	list: SpinMutex<Pinned<Box<LinkedList>>>,
 	count: AtomicUsize,
 	closed: AtomicBool,
+	empty: AtomicBool,
 	phantom: PhantomData<T>
 }
 
@@ -308,18 +306,8 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 			list: SpinMutex::new(LinkedList::new().pin_box()),
 			count: AtomicUsize::new(0),
 			closed: AtomicBool::new(false),
+			empty: AtomicBool::new(false),
 			phantom: PhantomData
-		}
-	}
-
-	fn list(&self) -> SpinMutexGuard<'_, Pinned<Box<LinkedList>>> {
-		match self.list.lock() {
-			Ok(list) => list,
-			Err(err) => {
-				self.list.clear_poison();
-
-				err.into_inner()
-			}
 		}
 	}
 
@@ -335,7 +323,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		#[cancel]
 		fn cancel(&self, waiter: MutPtr<Waiter<T>>, request: _) -> Result<()> {
 			#[allow(clippy::unwrap_used)]
-			let list = self.list();
+			let list = self.list.lock();
 
 			/* Safety: guaranteed by future's contract */
 			let waiter = unsafe { waiter.as_ref() };
@@ -362,14 +350,18 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 
 		waiter.request = request;
 
-		let list = self.list();
-
-		if !should_block() {
-			return Progress::Done(Err(WaitError::Cancelled));
-		}
+		let list = self.list.lock();
 
 		if self.closed.load(Relaxed) {
 			return Progress::Done(Err(WaitError::Closed));
+		}
+
+		self.empty.store(false, SeqCst);
+
+		if !should_block() {
+			self.empty.store(list.is_empty(), Relaxed);
+
+			return Progress::Done(Err(WaitError::Cancelled));
 		}
 
 		/* Safety: guaranteed by caller */
@@ -396,7 +388,11 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 	}
 
 	pub fn wake_one(&self, value: T) -> bool {
-		let Some(node) = self.list().pop_front() else {
+		if self.empty.load(SeqCst) {
+			return false;
+		}
+
+		let Some(node) = self.list.lock().pop_front() else {
 			return false;
 		};
 
@@ -408,7 +404,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 
 	pub fn wake_all(&self, value: T) -> usize {
 		let count = self.count.load(Relaxed);
-		let list = self.list();
+		let list = self.list.lock();
 
 		while let Some(node) = list.pop_front() {
 			/*

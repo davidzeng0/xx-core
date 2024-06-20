@@ -1,17 +1,13 @@
 #![warn(unsafe_code)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::{
-	io::{IoSlice, IoSliceMut, SeekFrom},
-	mem::{take, transmute},
-	str::from_utf8
-};
+use std::io::{IoSlice, IoSliceMut, SeekFrom};
+use std::mem::{take, transmute};
+use std::str::from_utf8;
 
 use super::*;
-use crate::{
-	macros::{macro_each, seal_trait},
-	opt::hint::*
-};
+use crate::macros::{macro_each, seal_trait};
+use crate::opt::hint::*;
 
 macro_each!(seal_trait, Read, BufRead, Write);
 

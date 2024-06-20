@@ -1,6 +1,8 @@
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
+use std::time::Duration;
 
-use xx_core::{async_std::sync::RcNotify, error::Result};
+use xx_core::async_std::sync::RcNotify;
+use xx_core::error::Result;
 use xx_pulse::*;
 
 #[asynchronous]
