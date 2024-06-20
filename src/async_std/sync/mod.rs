@@ -10,4 +10,6 @@ pub mod mutex;
 pub mod notify;
 
 #[doc(inline)]
-pub use {channel::*, mutex::*, notify::*};
+pub use mutex::{Mutex, MutexGuard};
+#[doc(inline)]
+pub use {channel::*, notify::*};

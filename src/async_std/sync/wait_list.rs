@@ -1,6 +1,7 @@
 #![allow(unreachable_pub, clippy::module_name_repetitions)]
 
 use std::marker::PhantomData;
+use std::mem::forget;
 use std::result;
 use std::sync::atomic::Ordering::*;
 use std::sync::atomic::*;
@@ -13,7 +14,7 @@ use crate::impls::Cell;
 use crate::macros::container_of;
 use crate::pointer::AtomicPtr;
 use crate::runtime::{catch_unwind_safe, join, MaybePanic};
-use crate::sync::SpinMutex;
+use crate::sync::{SpinMutex, SpinMutexGuard};
 
 #[errors]
 pub enum WaitError {
@@ -274,8 +275,10 @@ impl<T> Pin for RawWaitList<T> {
 	}
 }
 
+type PinBoxList = Pinned<Box<LinkedList>>;
+
 pub struct ThreadSafeWaitList<T = ()> {
-	list: SpinMutex<Pinned<Box<LinkedList>>>,
+	list: SpinMutex<PinBoxList>,
 	count: AtomicUsize,
 	closed: AtomicBool,
 	empty: AtomicBool,
@@ -285,7 +288,7 @@ pub struct ThreadSafeWaitList<T = ()> {
 struct Counter<'a>(&'a AtomicUsize);
 
 impl<'a> Counter<'a> {
-	pub fn new(count: &'a AtomicUsize) -> Self {
+	fn new(count: &'a AtomicUsize) -> Self {
 		count.fetch_add(1, Relaxed);
 
 		Self(count)
@@ -295,6 +298,25 @@ impl<'a> Counter<'a> {
 impl Drop for Counter<'_> {
 	fn drop(&mut self) {
 		self.0.fetch_sub(1, Relaxed);
+	}
+}
+
+struct Empty<'a> {
+	list: &'a SpinMutexGuard<'a, PinBoxList>,
+	empty: &'a AtomicBool
+}
+
+impl<'a> Empty<'a> {
+	fn new(list: &'a SpinMutexGuard<'a, PinBoxList>, empty: &'a AtomicBool) -> Self {
+		empty.store(false, SeqCst);
+
+		Self { list, empty }
+	}
+}
+
+impl Drop for Empty<'_> {
+	fn drop(&mut self) {
+		self.empty.store(self.list.is_empty(), Relaxed);
 	}
 }
 
@@ -356,13 +378,13 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 			return Progress::Done(Err(WaitError::Closed));
 		}
 
-		self.empty.store(false, SeqCst);
+		let empty = Empty::new(&list, &self.empty);
 
 		if !should_block() {
-			self.empty.store(list.is_empty(), Relaxed);
-
 			return Progress::Done(Err(WaitError::Cancelled));
 		}
+
+		forget(empty);
 
 		/* Safety: guaranteed by caller */
 		unsafe { list.append(&waiter.node) };

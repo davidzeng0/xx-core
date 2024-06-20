@@ -1,14 +1,26 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::fmt;
 use std::hint::spin_loop;
 use std::ops::{Deref, DerefMut};
 use std::panic::*;
 use std::sync::atomic::*;
 use std::sync::*;
+use std::{fmt, result};
 
 use super::*;
 use crate::sync::poison::*;
+
+#[errors]
+pub enum LockError<T> {
+	#[error("Poisoned lock: another task failed inside")]
+	Poisoned(#[from] PoisonError<T>),
+
+	#[kind = ErrorKind::Interrupted]
+	#[error("Lock failed: the current task is interrupted")]
+	Interrupted
+}
+
+pub type LockResult<T> = result::Result<T, LockError<T>>;
 
 pub struct MutexGuard<'a, T: ?Sized> {
 	lock: &'a Mutex<T>,
@@ -127,19 +139,20 @@ impl<T: ?Sized> Mutex<T> {
 	}
 
 	#[cold]
-	async fn lock_contended(&self) {
+	async fn lock_contended(&self) -> bool {
 		loop {
 			let prev_state = self.try_spin_lock();
 
 			if prev_state == State::Unlocked as u8 {
-				break;
+				break true;
+			}
+
+			if is_interrupted().await {
+				break false;
 			}
 
 			let should_block = || self.state.load(Ordering::Relaxed) == State::Contended as u8;
 			let _ = self.wait_list.notified(should_block).await;
-
-			#[allow(clippy::unwrap_used)]
-			check_interrupt().await.unwrap();
 		}
 	}
 
@@ -147,13 +160,17 @@ impl<T: ?Sized> Mutex<T> {
 	/// If the lock needs to wait and current worker is interrupted
 	pub async fn lock(&self) -> LockResult<MutexGuard<'_, T>> {
 		if !self.try_lock_internal() {
-			self.lock_contended().await;
+			let locked = self.lock_contended().await;
+
+			if !locked {
+				return Err(LockError::Interrupted);
+			}
 		}
 
 		/* Safety: guaranteed by caller */
 		let guard = unsafe { MutexGuard::new(self) };
 
-		self.poison.map(guard)
+		self.poison.map(guard).map_err(Into::into)
 	}
 
 	pub fn try_lock(&self) -> TryLockResult<MutexGuard<'_, T>> {
@@ -179,11 +196,11 @@ impl<T: ?Sized> Mutex<T> {
 	where
 		T: Sized
 	{
-		self.poison.map(self.value.into_inner())
+		self.poison.map(self.value.into_inner()).map_err(Into::into)
 	}
 
 	pub fn get_mut(&mut self) -> LockResult<&mut T> {
-		self.poison.map(self.value.get_mut())
+		self.poison.map(self.value.get_mut()).map_err(Into::into)
 	}
 }
 
