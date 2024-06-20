@@ -1,4 +1,4 @@
-use std::panic::catch_unwind;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::thread;
 
@@ -11,6 +11,12 @@ fn test_poison() {
 	*mutex.lock() = 7;
 
 	assert!(*mutex.lock() == 7);
+
+	catch_unwind(AssertUnwindSafe(|| {
+		*mutex.lock() = 1;
+
+		panic!()
+	}));
 
 	assert!(*mutex.lock() == 1);
 
