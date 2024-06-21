@@ -1,23 +1,63 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::hint::spin_loop;
+use std::mem::discriminant;
 use std::ops::{Deref, DerefMut};
 use std::panic::*;
 use std::sync::atomic::*;
 use std::sync::*;
-use std::{fmt, result};
+use std::{error, fmt, result};
 
 use super::*;
 use crate::sync::poison::*;
 
-#[errors]
 pub enum LockError<T> {
-	#[error("Poisoned lock: another task failed inside")]
-	Poisoned(#[from] PoisonError<T>),
-
-	#[kind = ErrorKind::Interrupted]
-	#[error("Lock failed: the current task is interrupted")]
+	Poisoned(PoisonError<T>),
 	Interrupted
+}
+
+impl<T> fmt::Debug for LockError<T> {
+	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Poisoned(f0) => fmt::Debug::fmt(f0, fmt),
+			Self::Interrupted => fmt.write_str("Interrupted")
+		}
+	}
+}
+
+impl<T> fmt::Display for LockError<T> {
+	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Poisoned(f0) => fmt::Display::fmt(f0, fmt),
+			Self::Interrupted => fmt.write_str("Lock failed: the current task is interrupted")
+		}
+	}
+}
+
+impl<T> From<PoisonError<T>> for LockError<T> {
+	fn from(value: PoisonError<T>) -> Self {
+		Self::Poisoned(value)
+	}
+}
+
+impl<T> PartialEq for LockError<T> {
+	fn eq(&self, other: &Self) -> bool {
+		discriminant(self) == discriminant(other)
+	}
+}
+
+impl<T> error::Error for LockError<T> {}
+
+impl<T> crate::error::internal::ErrorImpl for LockError<T>
+where
+	Self: Send + Sync + 'static
+{
+	fn kind(&self) -> ErrorKind {
+		match self {
+			Self::Poisoned(_) => ErrorKind::Other,
+			Self::Interrupted => ErrorKind::Interrupted
+		}
+	}
 }
 
 pub type LockResult<T> = result::Result<T, LockError<T>>;
@@ -100,7 +140,7 @@ impl<T: ?Sized> Mutex<T> {
 	}
 
 	unsafe fn unlock(&self) {
-		let state = self.state.swap(State::Unlocked as u8, Ordering::Release);
+		let state = self.state.swap(State::Unlocked as u8, Ordering::SeqCst);
 
 		if state == State::Contended as u8 {
 			self.wait_list.wake_one(());
@@ -151,7 +191,7 @@ impl<T: ?Sized> Mutex<T> {
 				break false;
 			}
 
-			let should_block = || self.state.load(Ordering::Relaxed) == State::Contended as u8;
+			let should_block = || self.state.load(Ordering::SeqCst) == State::Contended as u8;
 			let _ = self.wait_list.notified(should_block).await;
 		}
 	}

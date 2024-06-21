@@ -79,10 +79,11 @@ impl TransformAsync {
 
 		let (attrs, base) = (&inner.attrs, inner.base.as_ref());
 		let ident = Context::ident();
+		let run = Ident::new("run", inner.await_token.span());
 
-		parse_quote_spanned! { inner.await_token.span() =>
+		parse_quote! {
 			#(#attrs)*
-			::xx_core::coroutines::Context::run(#ident, #base)
+			::xx_core::coroutines::Context::#run(#ident, #base)
 		}
 	}
 

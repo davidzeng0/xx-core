@@ -58,7 +58,7 @@ macro_rules! common_impl {
 						let result = counter.compare_exchange_weak(
 							pos,
 							pos.wrapping_add(1),
-							Ordering::Relaxed,
+							Ordering::SeqCst,
 							Ordering::Relaxed
 						);
 
@@ -84,46 +84,50 @@ macro_rules! common_impl {
 			}
 
 			pub fn try_send(&self, value: T) -> result::Result<(), T> {
-				let result = self.next_slot(
+				self.next_slot(
 					&self.tail,
 					value,
 					|pos| (pos, pos.wrapping_add(1)),
 					|slot, value| {
+						self.wake_recv();
+
 						/* Safety: exclusive access */
 						unsafe { ptr!(slot.data=>write(value)) };
 					}
-				);
-
-				if result.is_ok() {
-					self.wake_recv();
-				}
-
-				result
+				)
 			}
 
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
 			pub fn try_recv(&self) -> Option<T> {
-				let result = self.next_slot(
+				self.next_slot(
 					&self.head,
 					(),
 					|pos| (pos.wrapping_add(1), pos.wrapping_add(self.slots.len())),
-					/* Safety: exclusive access. this value was initialized earlier */
-					|slot, ()| unsafe { ptr!(slot.data=>assume_init_read()) }
-				);
+					|slot, ()| {
+						self.wake_send();
 
-				if result.is_ok() {
-					self.wake_send();
-				}
-
-				result.ok()
+						/* Safety: exclusive access. this value was initialized earlier */
+						unsafe { ptr!(slot.data=>assume_init_read()) }
+					}
+				).ok()
 			}
 
 			fn can_send(&self) -> bool {
+				let tail = self.tail.load(Ordering::SeqCst);
+
 				/* lock held, relaxed is ok */
-				let head = self.head.load(Ordering::Relaxed);
-				let tail = self.tail.load(Ordering::Relaxed);
+				let head = self.head.load(Ordering::SeqCst);
 
 				tail != head.wrapping_add(self.slots.len())
+			}
+
+			fn can_recv(&self) -> bool {
+				let head = self.head.load(Ordering::SeqCst);
+
+				/* lock held, relaxed is ok */
+				let tail = self.tail.load(Ordering::SeqCst);
+
+				tail != head
 			}
 
 			fn wake_send(&self) {
@@ -222,14 +226,6 @@ impl<T> MCChannel<T> {
 		}
 	}
 
-	fn can_recv(&self) -> bool {
-		/* lock held, relaxed is ok */
-		let head = self.head.load(Ordering::Relaxed);
-		let tail = self.tail.load(Ordering::Relaxed);
-
-		tail != head
-	}
-
 	fn wake_recv(&self) {
 		self.rx_waiters.wake_one(());
 	}
@@ -295,11 +291,11 @@ impl<T> SCChannel<T> {
 	}
 
 	pub fn is_recv_closed(&self) -> bool {
-		self.rx_waiter.is_closed()
+		self.rx_waiter.is_closed(Ordering::Relaxed)
 	}
 
 	pub fn close_recv(&self) {
-		self.rx_waiter.close(());
+		self.rx_waiter.close((), Ordering::Relaxed);
 	}
 
 	#[allow(clippy::unused_self)]
@@ -310,7 +306,12 @@ impl<T> SCChannel<T> {
 	}
 
 	pub async fn recv_notified(&self) {
-		let _ = self.rx_waiter.notified_thread_safe().await;
+		/* Safety: callback does not unwind */
+		let _ = unsafe {
+			self.rx_waiter
+				.notified_thread_safe_check(Ordering::SeqCst, || !self.can_recv())
+				.await
+		};
 	}
 }
 

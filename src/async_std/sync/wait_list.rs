@@ -50,22 +50,32 @@ impl<T> AtomicWaiter<T> {
 		Self { waiter: AtomicPtr::new(ReqPtr::null()) }
 	}
 
-	fn set_waiter(&self, request: ReqPtr<WaitResult<T>>) -> ReqPtr<WaitResult<T>> {
-		let result = self.waiter.fetch_update(Relaxed, Relaxed, |prev| {
+	fn set_waiter(
+		&self, request: ReqPtr<WaitResult<T>>, ordering: Ordering
+	) -> ReqPtr<WaitResult<T>> {
+		let result = self.waiter.fetch_update(ordering, Relaxed, |prev| {
 			(prev != closed()).then_some(request)
 		});
 
 		result.unwrap_or_else(|err| err)
 	}
 
+	fn cancel_wait(
+		&self, request: ReqPtr<WaitResult<T>>
+	) -> result::Result<ReqPtr<WaitResult<T>>, ReqPtr<WaitResult<T>>> {
+		self.waiter
+			.compare_exchange(request, Ptr::null(), Relaxed, Relaxed)
+	}
+
 	#[future]
-	fn wait(&self, request: _) -> WaitResult<T> {
+	unsafe fn wait<F>(&self, ordering: Ordering, should_block: F, request: _) -> WaitResult<T>
+	where
+		F: FnOnce() -> bool
+	{
 		#[cancel]
 		fn cancel(&self, request: _) -> Result<()> {
 			/* wake may already be in progress */
-			let result = self
-				.waiter
-				.compare_exchange(request, Ptr::null(), Relaxed, Relaxed);
+			let result = self.cancel_wait(request);
 
 			if result.is_ok() {
 				/* Safety: we took ownership of waking up the task. send the cancellation */
@@ -75,32 +85,63 @@ impl<T> AtomicWaiter<T> {
 			Ok(())
 		}
 
-		let prev = self.set_waiter(request);
+		let mut error = None;
+		let prev = self.set_waiter(request, ordering);
 
-		if !prev.is_null() {
-			if prev == closed() {
-				return Progress::Done(Err(WaitError::Closed));
+		if !should_block() {
+			/* wake may already be in progress */
+			if self.cancel_wait(request).is_ok() {
+				error = Some(WaitError::Cancelled);
 			}
-
-			/* Safety: we took ownership of waking up the task. send the cancellation */
-			unsafe { Request::complete(prev, Err(WaitError::Cancelled)) };
 		}
 
-		Progress::Pending(cancel(self, request))
+		if !prev.is_null() {
+			if prev != closed() {
+				/* Safety: we took ownership of waking up the task. send the cancellation */
+				unsafe { Request::complete(prev, Err(WaitError::Cancelled)) };
+			} else {
+				error = Some(WaitError::Closed);
+			}
+		}
+
+		match error {
+			None => Progress::Pending(cancel(self, request)),
+			Some(err) => Progress::Done(Err(err))
+		}
 	}
 
 	pub async fn notified(&self) -> WaitResult<T> {
 		check_interrupt().await?;
-		block_on(self.wait()).await
+
+		/* Safety: callback doesn't unwind */
+		block_on(unsafe { self.wait(Relaxed, || true) }).await
 	}
 
 	pub async fn notified_thread_safe(&self) -> WaitResult<T> {
 		check_interrupt().await?;
-		block_on_thread_safe(self.wait()).await
+
+		/* Safety: callback doesn't unwind */
+		block_on_thread_safe(unsafe { self.wait(Relaxed, || true) }).await
 	}
 
-	fn wake_internal(&self, new_waiter: ReqPtr<WaitResult<T>>, value: T) -> bool {
-		let prev = self.set_waiter(new_waiter);
+	/// # Safety
+	/// `should_block` must never unwind
+	pub async unsafe fn notified_thread_safe_check<F>(
+		&self, ordering: Ordering, should_block: F
+	) -> WaitResult<T>
+	where
+		F: FnOnce() -> bool
+	{
+		check_interrupt().await?;
+
+		/* Safety: guaranteed by caller */
+		block_on_thread_safe(unsafe { self.wait(ordering, should_block) }).await
+	}
+
+	fn wake_internal(
+		&self, new_waiter: ReqPtr<WaitResult<T>>, value: T, ordering: Ordering
+	) -> bool {
+		let prev = self.set_waiter(new_waiter, ordering);
 
 		if prev.is_null() || prev == closed() {
 			return false;
@@ -113,15 +154,15 @@ impl<T> AtomicWaiter<T> {
 	}
 
 	pub fn wake(&self, value: T) -> bool {
-		self.wake_internal(Ptr::null(), value)
+		self.wake_internal(Ptr::null(), value, Relaxed)
 	}
 
-	pub fn close(&self, value: T) -> bool {
-		self.wake_internal(closed(), value)
+	pub fn close(&self, value: T, ordering: Ordering) -> bool {
+		self.wake_internal(closed(), value, ordering)
 	}
 
-	pub fn is_closed(&self) -> bool {
-		self.waiter.load(Relaxed) == closed()
+	pub fn is_closed(&self, ordering: Ordering) -> bool {
+		self.waiter.load(ordering) == closed()
 	}
 }
 

@@ -29,8 +29,8 @@ impl<T> Channel<T> {
 	}
 
 	fn close(&self) {
-		self.tx_waiter.close(());
-		self.rx_waiter.close(());
+		self.tx_waiter.close((), Ordering::SeqCst);
+		self.rx_waiter.close((), Ordering::Relaxed);
 	}
 }
 
@@ -49,12 +49,14 @@ impl<T> Receiver<T> {
 	pub fn try_recv(&mut self) -> RecvResult<T> {
 		match self.channel.try_consume_value() {
 			Some(value) => {
-				self.channel.tx_waiter.close(());
+				self.channel.tx_waiter.close((), Ordering::Relaxed);
 
 				Ok(value)
 			}
 
-			None => Err(RecvError::new(self.channel.tx_waiter.is_closed()))
+			None => Err(RecvError::new(
+				self.channel.tx_waiter.is_closed(Ordering::Relaxed)
+			))
 		}
 	}
 
@@ -80,7 +82,7 @@ impl<T> Task for Receiver<T> {
 
 impl<T> Drop for Receiver<T> {
 	fn drop(&mut self) {
-		self.channel.tx_waiter.close(());
+		self.channel.tx_waiter.close((), Ordering::SeqCst);
 
 		/* the value may already be sent. try a read here to prevent leaking */
 		let _ = self.channel.try_consume_value();
@@ -98,9 +100,9 @@ impl<T> Sender<T> {
 		unsafe { ptr!(self.channel.value=>write(value)) };
 
 		self.channel.sent.store(true, Ordering::SeqCst);
-		self.channel.rx_waiter.close(());
+		self.channel.rx_waiter.close((), Ordering::SeqCst);
 
-		if !self.channel.tx_waiter.is_closed() {
+		if !self.channel.tx_waiter.is_closed(Ordering::SeqCst) {
 			return Ok(());
 		}
 
@@ -115,7 +117,7 @@ impl<T> Sender<T> {
 
 	#[must_use]
 	pub fn is_closed(&self) -> bool {
-		self.channel.tx_waiter.is_closed()
+		self.channel.tx_waiter.is_closed(Ordering::Relaxed)
 	}
 
 	pub async fn closed(&mut self) -> bool {
