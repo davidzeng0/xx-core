@@ -13,6 +13,7 @@ num-traits = "0.2.19"
 paste = "1.0.15"
 lazy_static = "1.4.0"
 static_assertions = "1.1.0"
+xx-proc-macro-support = { git = "https://github.com/davidzeng0/xx-proc-macro-support.git" }
 xx-core-macros = { path = "macros" }
 
 [features]

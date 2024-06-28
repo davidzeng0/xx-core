@@ -9,6 +9,7 @@ proc-macro2 = "1.0.84"
 quote = "1.0.36"
 syn = { version = "2.0.66", features = ["full", "visit-mut"] }
 xx-macro-support = { git = "https://github.com/davidzeng0/xx-macro-support.git" }
+xx-proc-macro-support = { git = "https://github.com/davidzeng0/xx-proc-macro-support.git" }
 
 [lib]
 proc-macro = true
