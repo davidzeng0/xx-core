@@ -16,40 +16,19 @@ use traits::*;
 use transform::*;
 
 fn get_lang(attrs: &mut Vec<Attribute>) -> Result<Option<(Lang, Span)>> {
-	let mut lang = None;
+	let Some(attr) = remove_attr_name_value(attrs, "lang") else {
+		return Ok(None);
+	};
 
-	if let Some(attr) = remove_attr_name_value(attrs, "lang") {
-		let Expr::Lit(ExprLit { lit: Lit::Str(str), .. }) = &attr.value else {
-			return Err(Error::new_spanned(attr.value, "Expected a str"));
-		};
+	let Expr::Lit(ExprLit { lit: Lit::Str(str), .. }) = &attr.value else {
+		return Err(Error::new_spanned(attr.value, "Expected a string"));
+	};
 
-		lang = Some((
-			match str.value().as_ref() {
-				"get_context" => Lang::GetContext,
-				"task_wrap" => Lang::TaskWrap,
-				"task_closure" => Lang::TaskClosure,
-				"async_closure" => Lang::AsyncClosure,
-				_ => return Err(Error::new_spanned(str, "Unknown lang item"))
-			},
-			attr.span()
-		));
-	}
-
-	Ok(lang)
-}
-
-fn get_context_lifetime(attrs: &mut Vec<Attribute>) -> Result<Option<Lifetime>> {
-	let mut lifetime = None;
-
-	if let Some(attr) = remove_attr_list(attrs, "context") {
-		let Ok(lt) = parse2(attr.tokens.clone()) else {
-			return Err(Error::new_spanned(attr.tokens, "Expected a lifetime"));
-		};
-
-		lifetime = Some(lt);
-	}
-
-	Ok(lifetime)
+	let lang = str
+		.value()
+		.parse()
+		.map_err(|()| Error::new_spanned(str, "Unknown lang item"))?;
+	Ok(Some((lang, attr.span())))
 }
 
 fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> {
@@ -64,26 +43,6 @@ fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> 
 	removed
 }
 
-fn parse_attrs(attrs: TokenStream) -> Result<AttributeArgs> {
-	let mut parsed = AttributeArgs::new(AsyncKind::Default, attrs.span());
-
-	let options = Punctuated::<Ident, Token![,]>::parse_terminated.parse2(attrs)?;
-
-	for option in &options {
-		if parsed.async_kind.0 != AsyncKind::Default {
-			let message = "Invalid combination of options";
-
-			return Err(Error::new_spanned(options, message));
-		}
-
-		let kind = AsyncKind::from_str(&option.to_string())
-			.ok_or_else(|| Error::new_spanned(option, "Unknown option"))?;
-		parsed.async_kind = (kind, option.span());
-	}
-
-	Ok(parsed)
-}
-
 fn language_impl(attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStream> {
 	let (lang, span) = attrs.language.unwrap();
 	let use_lang = quote_spanned! { span =>
@@ -91,16 +50,15 @@ fn language_impl(attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStream> {
 		use ::xx_core::coroutines::lang;
 	};
 
-	match (lang, item) {
-		(Lang::TaskWrap, AsyncItem::Struct(item)) => Ok(task_lang_impl(use_lang, item, &[])),
-		(Lang::TaskClosure, AsyncItem::Struct(item)) => Ok(task_lang_impl(
-			use_lang,
-			item,
-			&[parse_quote! { #[inline(always)] }]
-		)),
-		(Lang::AsyncClosure, AsyncItem::Struct(item)) => Ok(async_closure_impl(use_lang, item)),
-		_ => Err(Error::new(span, "Invalid language item"))
-	}
+	Ok(match (lang, item) {
+		(Lang::TaskWrap, AsyncItem::Struct(item)) => task_lang_impl(use_lang, item, &[]),
+		(Lang::TaskClosure, AsyncItem::Struct(item)) => {
+			task_lang_impl(use_lang, item, &[parse_quote! { #[inline(always)] }])
+		}
+
+		(Lang::AsyncClosure, AsyncItem::Struct(item)) => async_closure_impl(use_lang, item),
+		_ => return Err(Error::new(span, "Invalid language item"))
+	})
 }
 
 fn async_items(item: Functions) -> Result<TokenStream> {
@@ -127,23 +85,10 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 	}
 
 	match &mut item {
-		AsyncItem::Struct(item) => {
-			attrs.parse(&mut item.attrs)?;
-		}
-
-		AsyncItem::Trait(item) => {
-			attrs.parse(&mut item.attrs)?;
-		}
-
-		AsyncItem::Impl(imp) => {
-			attrs.parse(&mut imp.attrs)?;
-		}
-
+		AsyncItem::Struct(item) => attrs.parse_additional(&mut item.attrs)?,
+		AsyncItem::Trait(item) => attrs.parse_additional(&mut item.attrs)?,
+		AsyncItem::Impl(imp) => attrs.parse_additional(&mut imp.attrs)?,
 		_ => ()
-	}
-
-	if let Some(lt) = &attrs.context_lifetime {
-		return Err(Error::new_spanned(lt, "Context lifetime not allowed here"));
 	}
 
 	if attrs.language.is_some() {
@@ -189,7 +134,7 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 
 pub fn asynchronous(attrs: TokenStream, item: TokenStream) -> TokenStream {
 	try_expand(|| {
-		let attrs = parse_attrs(attrs)?;
+		let attrs = AttributeArgs::parse(attrs)?;
 
 		try_transform(attrs, item)
 	})

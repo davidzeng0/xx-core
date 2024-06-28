@@ -8,6 +8,7 @@ use std::cell::Cell;
 use std::mem::replace;
 
 use super::*;
+use crate::impls::OptionExt;
 
 /// # Safety
 /// the future must be in progress
@@ -19,7 +20,7 @@ where
 	let result = catch_unwind_safe(|| unsafe { cancel.run() });
 
 	match &result {
-		Ok(Err(err)) => debug!("Cancel was not successful: {:?}", err),
+		Ok(Err(err)) => debug!("Cancel failed: {:?}", err),
 		Err(_) => warn!("Cancel panicked"),
 		_ => ()
 	}
@@ -167,13 +168,11 @@ impl<F: Future> FutureHandle<F> {
 	/// `this` may become dangling after the function call
 	unsafe fn cancel(this: MutPtr<Self>) -> MaybePanic<Result<()>> {
 		/* Safety: guaranteed by caller */
-		let cancel = unsafe { ptr!(this=>take_cancel()) };
+		unsafe {
+			let cancel =
+				ptr!(this=>take_cancel()).expect_unchecked("`FutureHandle::cancel` called twice");
 
-		match cancel {
-			/* Safety: guaranteed by caller */
-			Some(cancel) => unsafe { run_cancel(cancel) },
-			/* Safety: guaranteed by caller */
-			None => unsafe { unreachable_unchecked!("`FutureHandle::cancel` called twice") }
+			run_cancel(cancel)
 		}
 	}
 }
@@ -193,9 +192,7 @@ impl<O1, O2> BranchOutput<MaybePanic<O1>, MaybePanic<O2>> {
 			}
 		}
 
-		let BranchOutput(is_first, a, b) = self;
-
-		BranchOutput(is_first, a.map(flatten), b.map(flatten))
+		BranchOutput(self.0, self.1.map(flatten), self.2.map(flatten))
 	}
 }
 
@@ -304,7 +301,7 @@ impl<
 		/* Safety: guaranteed by future's contract */
 		let this = unsafe { this.as_mut() };
 
-		/* it's insufficient to cancel directly
+		/* cancelling directly can lead to UB
 		 * future 1: pending
 		 * future 2: done
 		 *

@@ -16,9 +16,7 @@ where
 	I: Clone,
 	P: Parser<I, O, E>
 {
-	if choices.is_empty() {
-		panic!();
-	}
+	assert!(!choices.is_empty());
 
 	move |input| {
 		let mut error = None;

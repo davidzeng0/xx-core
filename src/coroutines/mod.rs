@@ -3,12 +3,12 @@ use crate::fiber::*;
 use crate::future::closure::*;
 use crate::future::{self, future, Cancel, Complete, Future, Progress, ReqPtr, Request};
 use crate::impls::async_fn::*;
-use crate::macros::{assert_unsafe_precondition, panic_nounwind, unreachable_unchecked};
+use crate::macros::{assert_unsafe_precondition, unreachable_unchecked};
 pub use crate::macros::{asynchronous, join, select};
 use crate::opt::hint::*;
 use crate::pointer::*;
 use crate::runtime::{self, call_no_unwind, catch_unwind_safe, MaybePanic};
-use crate::{debug, warn};
+use crate::{debug, trace, warn};
 
 mod lang {}
 
@@ -82,8 +82,8 @@ impl<T: Task> TaskExtensions for T {}
 /// as such cannot be returned from the function
 ///
 /// To return a lifetime referencing the context, add
-/// `#[context('ctx)]` to the function's attributes,
-/// and use `'ctx` to reference the lifetime
+/// `#[cx]` to the lifetime you wish to use,
+/// as the lifetime of the context
 ///
 /// See also [`scoped`]
 #[asynchronous]
@@ -194,8 +194,7 @@ pub async fn check_interrupt_take() -> Result<()> {
 /// While this guard is held, any attempt to interrupt
 /// the current context will be ignored
 #[asynchronous]
-#[context('current)]
-pub async fn interrupt_guard() -> InterruptGuard<'current> {
+pub async fn interrupt_guard<#[cx] 'current>() -> InterruptGuard<'current> {
 	/* Safety: we are in an async function */
 	InterruptGuard::new(unsafe { get_context().await })
 }

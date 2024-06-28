@@ -27,7 +27,7 @@ macro_rules! ptr {
 		({
 			const fn as_non_null<T>(ptr: $crate::pointer::Ptr<T>) -> $crate::pointer::NonNull<T> {
 				/* Safety: reference of a value is always non null */
-				unsafe { $crate::pointer::NonNull::new_unchecked(ptr) }
+				unsafe { ptr.cast_nonnull() }
 			}
 
 			as_non_null::<_>
@@ -38,7 +38,7 @@ macro_rules! ptr {
 		({
 			const fn as_non_null<T>(ptr: $crate::pointer::MutPtr<T>) -> $crate::pointer::MutNonNull<T> {
 				/* Safety: reference of a value is always non null */
-				unsafe { $crate::pointer::MutNonNull::new_unchecked(ptr) }
+				unsafe { ptr.cast_nonnull() }
 			}
 
 			as_non_null::<_>

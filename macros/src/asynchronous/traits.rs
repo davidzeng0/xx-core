@@ -1,7 +1,7 @@
 use super::*;
 
 fn format_fn_ident(ident: &Ident) -> Ident {
-	format_ident!("async_trait_{}", ident)
+	format_ident!("__xx_async_impl{}", ident)
 }
 
 fn format_trait_ident(ident: &Ident) -> Ident {
@@ -14,7 +14,7 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 	ext.ident = format_trait_ident(&name);
 
 	let (_, type_generics, where_clause) = ext.generics.split_for_impl();
-	let super_trait: TypeParamBound = parse_quote_spanned! { name.span() => #name #type_generics };
+	let super_trait: TypeParamBound = parse_quote! { #name #type_generics };
 
 	ext.supertraits.push(super_trait.clone());
 	attrs.async_kind.0 = AsyncKind::TraitExt;
@@ -27,7 +27,7 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 		let mut call = Vec::new();
 		let ident = format_fn_ident(&func.sig.ident);
 
-		call.push(quote_spanned! { func.sig.span() => <Self as #super_trait>::#ident });
+		call.push(quote! { <Self as #super_trait>::#ident });
 
 		if !func.sig.generics.params.is_empty() {
 			let mut generics = func.sig.generics.clone();
@@ -50,7 +50,7 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 			args.push(parse_quote! { #context });
 		}
 
-		call.push(quote_spanned! { args.span() => (#args) });
+		call.push(quote! { (#args) });
 		func.default = Some(parse_quote! {{ #(#call)* }});
 
 		RemoveModifiers {}.visit_signature_mut(&mut func.sig);

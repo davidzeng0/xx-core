@@ -57,14 +57,44 @@ impl Parse for WrapperFunctions {
 
 		while !input.is_empty() {
 			let attrs = input.call(Attribute::parse_outer)?;
-			let ident: Option<Ident> = input.parse()?;
-
-			if ident.is_some() {
-				input.parse::<Token![=]>()?;
-			}
 
 			let vis: Visibility = input.parse()?;
-			let sig: Signature = input.parse()?;
+			let sig: Signature;
+			let mut ident: Option<Ident> = None;
+
+			if let Ok(fn_token) = input.parse::<Token![fn]>() {
+				let sig_ident: Ident = input.parse()?;
+
+				ident = Some(sig_ident.clone());
+
+				if input.parse::<Option<Token![=]>>()?.is_some() {
+					sig = input.parse()?;
+				} else {
+					let mut generics: Generics = input.parse()?;
+
+					let content;
+					let paren_token = parenthesized!(content in input);
+					let inputs = Punctuated::<FnArg, Token![,]>::parse_terminated(&content)?;
+					let output = input.parse()?;
+
+					generics.where_clause = input.parse()?;
+					sig = Signature {
+						constness: None,
+						asyncness: None,
+						unsafety: None,
+						abi: None,
+						fn_token,
+						ident: sig_ident,
+						generics,
+						paren_token,
+						inputs,
+						variadic: None,
+						output
+					};
+				}
+			} else {
+				sig = input.parse()?;
+			}
 
 			let ident = ident.unwrap_or_else(|| sig.ident.clone());
 

@@ -7,8 +7,10 @@ pub enum ClosureType {
 	Trait
 }
 
+#[strings(defaults, lowercase)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum AsyncKind {
+	#[omit]
 	Default,
 	TraitFn,
 	TraitExt,
@@ -27,18 +29,9 @@ impl AsyncKind {
 			Self::Sync => ClosureType::None
 		}
 	}
-
-	pub fn from_str(str: &str) -> Option<Self> {
-		Some(match str {
-			"traitfn" => Self::TraitFn,
-			"traitext" => Self::TraitExt,
-			"task" => Self::Task,
-			"sync" => Self::Sync,
-			_ => return None
-		})
-	}
 }
 
+#[strings(defaults, snake)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Lang {
 	GetContext,
@@ -50,22 +43,37 @@ pub enum Lang {
 #[derive(Clone)]
 pub struct AttributeArgs {
 	pub async_kind: (AsyncKind, Span),
-	pub language: Option<(Lang, Span)>,
-	pub context_lifetime: Option<Lifetime>
+	pub language: Option<(Lang, Span)>
 }
 
 impl AttributeArgs {
 	pub const fn new(async_kind: AsyncKind, span: Span) -> Self {
-		Self {
-			async_kind: (async_kind, span),
-			language: None,
-			context_lifetime: None
-		}
+		Self { async_kind: (async_kind, span), language: None }
 	}
 
-	pub fn parse(&mut self, attrs: &mut Vec<Attribute>) -> Result<()> {
+	pub fn parse(args: TokenStream) -> Result<Self> {
+		let mut this = Self::new(AsyncKind::Default, args.span());
+		let options = Punctuated::<Ident, Token![,]>::parse_terminated.parse2(args)?;
+
+		for option in &options {
+			if this.async_kind.0 != AsyncKind::Default {
+				let message = "Invalid combination of options";
+
+				return Err(Error::new_spanned(options, message));
+			}
+
+			let kind = option
+				.to_string()
+				.parse()
+				.map_err(|()| Error::new_spanned(option, "Unknown option"))?;
+			this.async_kind = (kind, option.span());
+		}
+
+		Ok(this)
+	}
+
+	pub fn parse_additional(&mut self, attrs: &mut Vec<Attribute>) -> Result<()> {
 		self.language = get_lang(attrs)?;
-		self.context_lifetime = get_context_lifetime(attrs)?;
 
 		Ok(())
 	}

@@ -1,6 +1,6 @@
 use super::error::result_from_libc;
 use super::*;
-use crate::macros::panic_nounwind;
+use crate::impls::OptionExt;
 
 define_struct! {
 	pub struct TimeVal {
@@ -115,5 +115,5 @@ pub fn nanotime(clock: ClockId) -> Result<u64> {
 		.and_then(|nanos| -> Option<u64> { nanos.try_into().ok() });
 
 	/* time on linux fits into a u64 */
-	Ok(nanos.unwrap_or_else(|| panic_nounwind!("Failed to read the clock")))
+	Ok(nanos.expect_nounwind("Failed to get the time"))
 }

@@ -191,10 +191,8 @@ pub trait Read {
 			match self.read(&mut probe).await {
 				Ok(0) => break,
 				Ok(n) => {
-					#[allow(clippy::arithmetic_side_effects)]
-					(len += length_check(&probe, n));
-
 					buf.extend_from_slice(&probe[0..n]);
+					len = buf.len();
 				}
 
 				Err(err) if err.is_interrupted() => break,

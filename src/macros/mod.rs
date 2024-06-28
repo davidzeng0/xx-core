@@ -1,4 +1,5 @@
 pub use xx_core_macros::*;
+pub use xx_proc_macro_support::*;
 
 pub mod pointer;
 pub mod runtime;

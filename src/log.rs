@@ -11,7 +11,6 @@ use lazy_static::lazy_static;
 pub use log::{max_level as get_max_level, set_max_level, Level, LevelFilter};
 use log::{set_boxed_logger, Log, Metadata, Record};
 
-use crate::macros::panic_nounwind;
 use crate::pointer::*;
 
 lazy_static! {
@@ -242,9 +241,9 @@ fn panic_hook(info: &PanicInfo<'_>) {
 #[cfg(feature = "log")]
 #[ctor]
 fn init() {
-	if set_boxed_logger(Box::new(Logger)).is_err() {
-		panic_nounwind!("Failed to initialize logger");
-	}
+	use crate::impls::ResultExt;
+
+	set_boxed_logger(Box::new(Logger)).expect_nounwind("Failed to initialize logger");
 
 	#[cfg(feature = "panic-log")]
 	set_hook(Box::new(panic_hook));

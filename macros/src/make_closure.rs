@@ -1,14 +1,10 @@
 use super::*;
 
-fn closure_lifetime() -> TokenStream {
-	quote! { '__xx_internal_closure_lifetime }
-}
-
-fn closure_lifetime_parsed<R>() -> R
+fn closure_lifetime<R>() -> R
 where
 	R: Parse
 {
-	parse2(closure_lifetime()).unwrap()
+	parse_quote! { '__xx_internal_closure_lifetime }
 }
 
 const SELF_IDENT: &str = "this";
@@ -19,8 +15,6 @@ impl VisitMut for ReplaceSelf {
 	fn visit_item_mut(&mut self, _: &mut Item) {}
 
 	fn visit_fn_arg_mut(&mut self, arg: &mut FnArg) {
-		visit_fn_arg_mut(self, arg);
-
 		let FnArg::Receiver(rec) = arg else { return };
 
 		let (attrs, mut mutability, ty) = (&rec.attrs, rec.mutability, &rec.ty);
@@ -37,8 +31,6 @@ impl VisitMut for ReplaceSelf {
 	}
 
 	fn visit_ident_mut(&mut self, ident: &mut Ident) {
-		visit_ident_mut(self, ident);
-
 		if ident == "self" {
 			*ident = Ident::new(SELF_IDENT, Span::mixed_site());
 		}
@@ -75,11 +67,15 @@ impl AddLifetime {
 impl AddLifetime {
 	fn next_lifetime(&mut self, span: Span) -> Lifetime {
 		if self.annotations == LifetimeAnnotations::Closure {
-			return closure_lifetime_parsed();
+			return closure_lifetime();
 		}
 
 		let lifetime = Lifetime::new(
-			&format!("{}_{}", closure_lifetime(), self.added_lifetimes.len() + 1),
+			&format!(
+				"{}_{}",
+				closure_lifetime::<TokenStream>(),
+				self.added_lifetimes.len() + 1
+			),
 			span
 		);
 
@@ -107,8 +103,6 @@ impl VisitMut for AddLifetime {
 	}
 
 	fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
-		visit_lifetime_mut(self, lifetime);
-
 		if lifetime.ident == "_" {
 			*lifetime = self.next_lifetime(lifetime.span());
 		} else {
@@ -172,7 +166,7 @@ fn capture_lifetimes(sig: &Signature, env_generics: Option<&Generics>) -> TokenS
 		addl_bounds.push(parse_quote! { ::xx_core::impls::Captures<#lifetime> });
 	}
 
-	addl_bounds.push(closure_lifetime_parsed());
+	addl_bounds.push(closure_lifetime());
 
 	quote! { #addl_bounds }
 }
@@ -192,7 +186,7 @@ fn add_lifetimes(
 		return quote! {};
 	}
 
-	let closure_lifetime = closure_lifetime();
+	let closure_lt = closure_lifetime::<TokenStream>();
 
 	let clause = sig
 		.generics
@@ -209,9 +203,7 @@ fn add_lifetimes(
 				GenericParam::Type(ty) => {
 					let ident = &ty.ident;
 
-					clause
-						.predicates
-						.push(parse_quote! { #ident: #closure_lifetime });
+					clause.predicates.push(parse_quote! { #ident: #closure_lt });
 				}
 
 				GenericParam::Lifetime(param) => {
@@ -219,7 +211,7 @@ fn add_lifetimes(
 
 					clause
 						.predicates
-						.push(parse_quote! { #lifetime: #closure_lifetime });
+						.push(parse_quote! { #lifetime: #closure_lt });
 				}
 			}
 		}
@@ -231,7 +223,7 @@ fn add_lifetimes(
 		add_bounds(&generics.params);
 	}
 
-	sig.generics.params.push(closure_lifetime_parsed());
+	sig.generics.params.push(closure_lifetime());
 
 	for lifetime in &op.added_lifetimes {
 		sig.generics.params.push(parse_quote! { #lifetime });
@@ -244,7 +236,7 @@ fn add_lifetimes(
 	{
 		clause
 			.predicates
-			.push(parse_quote! { #lifetime: #closure_lifetime });
+			.push(parse_quote! { #lifetime: #closure_lt });
 	}
 
 	let lifetimes = capture_lifetimes(sig, env_generics);
@@ -252,7 +244,7 @@ fn add_lifetimes(
 	quote! { + #lifetimes }
 }
 
-pub fn make_tuple_of_types<T>(data: Vec<T>) -> TokenStream
+pub fn join_tuple<T>(data: Vec<T>) -> TokenStream
 where
 	T: ToTokens
 {
@@ -271,9 +263,9 @@ fn build_tuples(
 	let data: Vec<(Type, Pat, Pat)> = inputs.iter_mut().map(map).collect();
 
 	(
-		make_tuple_of_types(data.iter().map(|tp| tp.0.clone()).collect()),
-		make_tuple_of_types(data.iter().map(|tp| tp.1.clone()).collect()),
-		make_tuple_of_types(data.iter().map(|tp| tp.2.clone()).collect())
+		join_tuple(data.iter().map(|tp| tp.0.clone()).collect()),
+		join_tuple(data.iter().map(|tp| tp.1.clone()).collect()),
+		join_tuple(data.iter().map(|tp| tp.2.clone()).collect())
 	)
 }
 
@@ -389,7 +381,7 @@ pub fn make_opaque_closure(
 
 		OpaqueClosureType::Fn() => (
 			parse_quote_spanned! { closure_return_type.span() =>
-				impl FnOnce( #args_types ) -> #closure_return_type
+				impl ::std::ops::FnOnce( #args_types ) -> #closure_return_type
 			},
 			None
 		)

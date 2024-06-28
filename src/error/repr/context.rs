@@ -94,7 +94,7 @@ impl<C: Context> ContextError<C> {
 		}
 
 		/* Safety: drop the rest. guaranteed by caller. downcast_owned never panics */
-		drop(unsafe { Box::from_raw(this.as_mut_ptr()) });
+		drop(unsafe { this.into_box() });
 
 		true
 	}
@@ -116,7 +116,7 @@ impl<C: Context> ContextError<C> {
 		let this = this.cast::<DynError<Self>>();
 
 		/* Safety: guaranteed by caller */
-		drop(unsafe { Box::from_raw(this.as_mut_ptr()) });
+		drop(unsafe { this.into_box() });
 	}
 
 	fn vtable() -> &'static ErrorVTable {

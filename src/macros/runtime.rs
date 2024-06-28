@@ -10,6 +10,7 @@ pub use panic_nounwind;
 #[macro_export]
 macro_rules! unreachable_unchecked {
 	($($arg: tt)*) => {{
+		#[cfg(debug_assertions)]
 		$crate::macros::require_unsafe!();
 
 		#[cfg(debug_assertions)]
@@ -17,6 +18,11 @@ macro_rules! unreachable_unchecked {
 			"Entered unreachable code: {}",
 			::std::format_args!($($arg)*)
 		);
+
+		#[cfg(not(debug_assertions))]
+		let _ = || {
+			::std::format_args!($($arg)*);
+		};
 
 		#[cfg(not(debug_assertions))]
 		$crate::opt::hint::unreachable_unchecked();

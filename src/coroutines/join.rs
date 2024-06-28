@@ -3,6 +3,7 @@
 use std::result;
 
 use super::*;
+use crate::impls::OptionExt;
 
 #[derive(Debug)]
 pub struct Join<O1, O2>(pub O1, pub O2);
@@ -28,11 +29,11 @@ impl<O1, O2> Join<O1, O2> {
 		let BranchOutput(_, a, b) = branch;
 		let result = Join(a.transpose(), b.transpose()).flatten();
 
-		match runtime::join(result).flatten() {
-			Some(result) => result,
-
-			/* Safety: both tasks must run to completion */
-			_ => unsafe { unreachable_unchecked!("Branch failed") }
+		/* Safety: both tasks must run to completion */
+		unsafe {
+			runtime::join(result)
+				.flatten()
+				.expect_unchecked("Branch failed")
 		}
 	}
 }

@@ -1,5 +1,182 @@
 use super::*;
 
+#[derive(Default)]
+struct Attributes {
+	from: Option<Attribute>,
+	source: Option<(Attribute, usize)>
+}
+
+impl Attributes {
+	fn get_attrs(&mut self, field: &mut Field, index: usize) {
+		if self.from.is_none() {
+			self.from = remove_attr_path(&mut field.attrs, "from");
+		}
+
+		if self.source.is_none() {
+			let attr = remove_attr_path(&mut field.attrs, "source");
+
+			self.source = attr.map(|source| (source, index));
+		}
+	}
+}
+
+struct VariantFields {
+	attributes: Attributes,
+	members: Vec<(Member, Type)>,
+	named: bool
+}
+
+impl VariantFields {
+	fn new(fields: &mut Fields) -> Self {
+		let mut attributes = Attributes::default();
+		let mut members = Vec::new();
+
+		match fields {
+			Fields::Named(fields) => {
+				for (index, field) in fields.named.iter_mut().enumerate() {
+					attributes.get_attrs(field, index);
+
+					let ident = field.ident.clone().unwrap();
+
+					members.push((Member::Named(ident), field.ty.clone()));
+				}
+			}
+
+			Fields::Unnamed(fields) => {
+				for (index, field) in fields.unnamed.iter_mut().enumerate() {
+					attributes.get_attrs(field, index);
+
+					#[allow(clippy::cast_possible_truncation)]
+					let index = Index { index: index as u32, span: field.ty.span() };
+
+					members.push((Member::Unnamed(index), field.ty.clone()));
+				}
+			}
+
+			Fields::Unit => ()
+		}
+
+		Self {
+			attributes,
+			members,
+			named: !matches!(fields, Fields::Unnamed(_))
+		}
+	}
+}
+
+fn member_as_ident(member: &Member) -> Ident {
+	match member {
+		Member::Named(ident) => ident.clone(),
+		Member::Unnamed(index) => format_ident!("f{}", index.index)
+	}
+}
+
+struct Variant {
+	display: Option<(TokenStream, bool)>,
+	kind: Option<Expr>,
+	ident: Ident,
+	fields: VariantFields
+}
+
+impl Variant {
+	fn new(attrs: &mut Vec<Attribute>, ident: &Ident, fields: &mut Fields) -> Result<Self> {
+		let display = remove_attr_list(attrs, "error").map(|attr| attr.tokens);
+		let kind = remove_attr_name_value(attrs, "kind").map(|attr| attr.value);
+
+		let mut this = Self {
+			display: display.map(|display| (display, false)),
+			kind,
+			ident: ident.clone(),
+			fields: VariantFields::new(fields)
+		};
+
+		if let Some((display, is_transparent)) = &mut this.display {
+			*is_transparent =
+				parse2::<Ident>(display.clone()).is_ok_and(|ident| ident == "transparent");
+		}
+
+		if this.fields.members.len() == 1 {
+			return Ok(this);
+		}
+
+		if let Some((display, is_transparent)) = &this.display {
+			if *is_transparent {
+				let msg = "#[error(transparent)] requires exactly one field";
+
+				return Err(Error::new_spanned(display, msg));
+			}
+		}
+
+		if let Some(from) = &this.fields.attributes.from {
+			let msg = "#[from] requires exactly one field";
+
+			return Err(Error::new_spanned(from, msg));
+		}
+
+		Ok(this)
+	}
+
+	fn matcher(&self) -> TokenStream {
+		let ident = &self.ident;
+		let mut fields = Punctuated::<Ident, Token![,]>::new();
+
+		for (member, _) in &self.fields.members {
+			fields.push(member_as_ident(member));
+		}
+
+		if self.fields.named {
+			quote! { #ident { #fields } }
+		} else {
+			quote! { #ident ( #fields ) }
+		}
+	}
+
+	fn display(&self, base: &Option<TokenStream>, fmt: &Ident) -> Option<TokenStream> {
+		let (display, is_transparent) = self.display.as_ref()?;
+		let write = if *is_transparent {
+			let field = member_as_ident(&self.fields.members[0].0);
+
+			quote! { ::std::fmt::Display::fmt(#field, #fmt) }
+		} else {
+			quote! { ::std::write!(#fmt, #display) }
+		};
+
+		let matcher = self.matcher();
+
+		Some(quote! { #base #matcher => #write })
+	}
+
+	fn kind(&self, base: &Option<TokenStream>) -> Option<TokenStream> {
+		let kind = self.kind.as_ref()?;
+		let matcher = self.matcher();
+
+		Some(quote! { #base #matcher => #kind })
+	}
+
+	fn from(&self, base: &Option<TokenStream>) -> Option<(TokenStream, &Type)> {
+		let _ = self.fields.attributes.from.as_ref()?;
+
+		let ident = &self.ident;
+		let (member, ty) = &self.fields.members[0];
+
+		Some((quote! { #base #ident { #member: value } }, ty))
+	}
+
+	fn source(&self, base: &Option<TokenStream>) -> Option<TokenStream> {
+		let (_, index) = self.fields.attributes.source.as_ref()?;
+
+		let matcher = self.matcher();
+		let member = member_as_ident(&self.fields.members[*index].0);
+
+		Some(quote! { #base #matcher => Some(#member) })
+	}
+}
+
+enum Repr {
+	Struct(Variant),
+	Enum(Vec<Variant>)
+}
+
 fn add_bounds(
 	generics: &Generics, where_clause: Option<&WhereClause>, bounds: &[TypeParamBound]
 ) -> WhereClause {
@@ -17,237 +194,12 @@ fn add_bounds(
 	clause
 }
 
-#[derive(Default)]
-struct Attributes {
-	from: Option<Attribute>,
-	source: Option<(Attribute, usize)>
-}
-
-impl Attributes {
-	fn get_attrs(&mut self, field: &mut Field, index: usize) {
-		if self.from.is_none() {
-			if let Some(from) = remove_attr_path(&mut field.attrs, "from") {
-				self.from = Some(from);
-			}
-		}
-
-		if self.source.is_none() {
-			if let Some(source) = remove_attr_path(&mut field.attrs, "source") {
-				self.source = Some((source, index));
-			}
-		}
-	}
-}
-
-enum VariantFields {
-	Named(Attributes, Punctuated<Ident, Token![,]>, Vec<Type>),
-	Unnamed(Attributes, Punctuated<Index, Token![,]>, Vec<Type>),
-	Unit
-}
-
-impl VariantFields {
-	fn new(fields: &mut Fields) -> Self {
-		match fields {
-			Fields::Named(fields) => {
-				let mut attributes = Attributes::default();
-				let mut named = Punctuated::new();
-				let mut types = Vec::new();
-
-				for (index, field) in fields.named.iter_mut().enumerate() {
-					attributes.get_attrs(field, index);
-					named.push(field.ident.clone().unwrap());
-					types.push(field.ty.clone());
-				}
-
-				Self::Named(attributes, named, types)
-			}
-
-			Fields::Unnamed(fields) => {
-				let mut attributes = Attributes::default();
-				let mut unnamed = Punctuated::new();
-				let mut types = Vec::new();
-
-				for (index, field) in fields.unnamed.iter_mut().enumerate() {
-					attributes.get_attrs(field, index);
-					types.push(field.ty.clone());
-
-					#[allow(clippy::cast_possible_truncation)]
-					unnamed.push(Index { index: index as u32, span: field.ty.span() });
-				}
-
-				Self::Unnamed(attributes, unnamed, types)
-			}
-
-			Fields::Unit => Self::Unit
-		}
-	}
-}
-
-struct Variant {
-	display: Option<TokenStream>,
-	kind: Option<Expr>,
-	ident: Ident,
-	fields: VariantFields
-}
-
-impl Variant {
-	fn new(attrs: &mut Vec<Attribute>, ident: &Ident, fields: &mut Fields) -> Self {
-		let display = remove_attr_list(attrs, "error").map(|attr| attr.tokens);
-		let kind = remove_attr_name_value(attrs, "kind").map(|attr| attr.value);
-
-		Self {
-			display,
-			kind,
-			ident: ident.clone(),
-			fields: VariantFields::new(fields)
-		}
-	}
-
-	fn len(&self) -> usize {
-		match &self.fields {
-			VariantFields::Named(_, fields, _) => fields.len(),
-			VariantFields::Unnamed(_, fields, _) => fields.len(),
-			VariantFields::Unit => 0
-		}
-	}
-
-	fn matcher(&self) -> TokenStream {
-		let ident = &self.ident;
-
-		let fields = match &self.fields {
-			VariantFields::Named(_, fields, _) => {
-				quote! { { #fields } }
-			}
-
-			VariantFields::Unnamed(_, fields, _) => {
-				let names: Punctuated<_, Token![,]> = fields
-					.iter()
-					.map(|index| format_ident!("f{}", index.index))
-					.collect();
-
-				quote! { (#names) }
-			}
-
-			VariantFields::Unit => quote! {}
-		};
-
-		quote! { #ident #fields }
-	}
-
-	fn display(&self, base: &Option<TokenStream>, fmt: &Ident) -> Result<Option<TokenStream>> {
-		let Some(display) = self.display.as_ref() else {
-			return Ok(None);
-		};
-
-		let write = if parse2::<Ident>(display.clone()).is_ok_and(|ident| ident == "transparent") {
-			if self.len() != 1 {
-				return Err(Error::new_spanned(
-					display,
-					"#[error(transparent)] requires exactly one field"
-				));
-			}
-
-			let field = match &self.fields {
-				VariantFields::Named(_, fields, _) => fields[0].clone(),
-				VariantFields::Unnamed(_, fields, _) => format_ident!("f{}", fields[0].index),
-				VariantFields::Unit => unreachable!()
-			};
-
-			quote! { ::std::fmt::Display::fmt(#field, #fmt) }
-		} else {
-			quote! { ::std::write!(#fmt, #display) }
-		};
-
-		let matcher = self.matcher();
-
-		Ok(Some(quote! { #base #matcher => #write }))
-	}
-
-	fn kind(&self, base: &Option<TokenStream>) -> Result<Option<TokenStream>> {
-		let Some(kind) = self.kind.as_ref() else {
-			return Ok(None);
-		};
-
-		let matcher = self.matcher();
-
-		Ok(Some(quote! { #base #matcher => #kind }))
-	}
-
-	fn from(&self, base: &Option<TokenStream>) -> Result<Option<(TokenStream, Type)>> {
-		let from = match &self.fields {
-			VariantFields::Named(attrs, ..) => attrs.from.as_ref(),
-			VariantFields::Unnamed(attrs, ..) => attrs.from.as_ref(),
-			VariantFields::Unit => None
-		};
-
-		let Some(attr) = from else {
-			return Ok(None);
-		};
-
-		if self.len() != 1 {
-			return Err(Error::new_spanned(
-				attr,
-				"#[from] requires exactly one field"
-			));
-		}
-
-		let (field, ty) = match &self.fields {
-			VariantFields::Named(_, fields, types) => (Member::Named(fields[0].clone()), &types[0]),
-			VariantFields::Unnamed(_, fields, types) => {
-				(Member::Unnamed(fields[0].clone()), &types[0])
-			}
-
-			VariantFields::Unit => unreachable!()
-		};
-
-		let ident = &self.ident;
-
-		Ok(Some((
-			quote! { #base #ident { #field: value } },
-			ty.clone()
-		)))
-	}
-
-	fn source(&self, base: &Option<TokenStream>) -> Result<Option<TokenStream>> {
-		let from = match &self.fields {
-			VariantFields::Named(attrs, ..) => attrs.source.as_ref(),
-			VariantFields::Unnamed(attrs, ..) => attrs.source.as_ref(),
-			VariantFields::Unit => None
-		};
-
-		let Some((_, index)) = from else {
-			return Ok(None);
-		};
-
-		let field = match &self.fields {
-			VariantFields::Named(_, fields, _) => fields[*index].clone(),
-			VariantFields::Unnamed(_, fields, _) => format_ident!("f{}", fields[*index].index),
-			VariantFields::Unit => unreachable!()
-		};
-
-		let matcher = self.matcher();
-
-		Ok(Some(quote! { #base #matcher => Some(#field) }))
-	}
-}
-
-enum Repr {
-	Struct(Variant),
-	Enum(Vec<Variant>)
-}
-
 struct Input {
 	input: DeriveInput,
 	repr: Repr
 }
 
 impl Input {
-	fn parse_struct(
-		attrs: &mut Vec<Attribute>, ident: &Ident, item: &mut DataStruct
-	) -> Result<Variant> {
-		Ok(Variant::new(attrs, ident, &mut item.fields))
-	}
-
 	fn parse_enum(item: &mut DataEnum) -> Result<Vec<Variant>> {
 		let mut variants = Vec::new();
 
@@ -256,7 +208,7 @@ impl Input {
 				&mut variant.attrs,
 				&variant.ident,
 				&mut variant.fields
-			));
+			)?);
 		}
 
 		Ok(variants)
@@ -274,9 +226,11 @@ impl Input {
 		});
 
 		let repr = match &mut input.data {
-			Data::Struct(data) => {
-				Repr::Struct(Self::parse_struct(&mut input.attrs, &input.ident, data)?)
-			}
+			Data::Struct(data) => Repr::Struct(Variant::new(
+				&mut input.attrs,
+				&input.ident,
+				&mut data.fields
+			)?),
 
 			Data::Enum(data) => Repr::Enum(Self::parse_enum(data)?),
 			Data::Union(_) => return Err(Error::new_spanned(input, "Unions are not supported"))
@@ -299,19 +253,19 @@ impl Input {
 
 		let eq = match &self.repr {
 			Repr::Struct(variant) => {
-				if let Some(display) = variant.display(&None, &fmt)? {
+				if let Some(display) = variant.display(&None, &fmt) {
 					displays.push(display);
 				}
 
-				if let Some(kind) = variant.kind(&None)? {
+				if let Some(kind) = variant.kind(&None) {
 					kinds.push(kind);
 				}
 
-				if let Some(from) = variant.from(&None)? {
+				if let Some(from) = variant.from(&None) {
 					froms.push(from);
 				}
 
-				if let Some(source) = variant.source(&None)? {
+				if let Some(source) = variant.source(&None) {
 					sources.push(source);
 				}
 
@@ -323,7 +277,7 @@ impl Input {
 
 				for variant in variants {
 					if has_display {
-						let Some(display) = variant.display(&base, &fmt)? else {
+						let Some(display) = variant.display(&base, &fmt) else {
 							return Err(Error::new_spanned(
 								&variant.ident,
 								"Missing #[error(..)] display attribute"
@@ -333,15 +287,15 @@ impl Input {
 						displays.push(display);
 					}
 
-					if let Some(kind) = variant.kind(&base)? {
+					if let Some(kind) = variant.kind(&base) {
 						kinds.push(kind);
 					}
 
-					if let Some(from) = variant.from(&base)? {
+					if let Some(from) = variant.from(&base) {
 						froms.push(from);
 					}
 
-					if let Some(source) = variant.source(&base)? {
+					if let Some(source) = variant.source(&base) {
 						sources.push(source);
 					}
 				}
@@ -388,6 +342,7 @@ impl Input {
 
 		Ok(quote! {
 			#display
+
 			#(#from_impls)*
 
 			impl #impl_generics ::std::cmp::PartialEq for #name #type_generics #where_clause {
@@ -411,7 +366,7 @@ impl Input {
 			impl #impl_generics ::xx_core::error::internal::ErrorImpl for #name #type_generics #where_clause
 			where
 				Self: ::std::error::Error + ::std::marker::Send
-					+::std::marker::Sync + 'static
+					+ ::std::marker::Sync + 'static
 			{
 				fn kind(&self) -> ::xx_core::error::ErrorKind {
 					#[allow(unused_variables)]
@@ -424,7 +379,9 @@ impl Input {
 	}
 }
 
-fn expand(item: TokenStream) -> Result<TokenStream> {
+fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
+	ensure_empty(attr)?;
+
 	let input = Input::parse(item)?;
 	let orig = &input.input;
 	let expansion = input.expand()?;
@@ -435,6 +392,6 @@ fn expand(item: TokenStream) -> Result<TokenStream> {
 	})
 }
 
-pub fn error(_: TokenStream, item: TokenStream) -> TokenStream {
-	try_expand(|| expand(item))
+pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {
+	try_expand(|| expand(attr, item))
 }

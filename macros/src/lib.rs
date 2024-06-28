@@ -9,6 +9,7 @@ use xx_macro_support::attribute::*;
 use xx_macro_support::fallible::*;
 use xx_macro_support::function::*;
 use xx_macro_support::visit_macro::*;
+use xx_proc_macro_support::*;
 
 mod asynchronous;
 mod duration;

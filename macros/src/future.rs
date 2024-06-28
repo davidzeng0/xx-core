@@ -15,8 +15,7 @@ fn transform_last_arg(inputs: &mut Punctuated<FnArg, Token![,]>, return_type: &T
 	let msg = "The last argument must be `request: _`";
 
 	let Some(FnArg::Typed(req)) = inputs.last_mut() else {
-		#[allow(clippy::needless_borrows_for_generic_args)]
-		return Err(Error::new_spanned(&inputs, msg));
+		return Err(Error::new_spanned(inputs, msg));
 	};
 
 	let Pat::Ident(PatIdent { ident, subpat: None, .. }) = req.pat.as_ref() else {
@@ -52,7 +51,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 			types.insert(0, quote! { #ty });
 		}
 
-		let default_cancel_capture = make_tuple_of_types(types);
+		let default_cancel_capture = join_tuple(types);
 
 		quote! { ::xx_core::future::closure::CancelClosure<#default_cancel_capture> }
 	};
@@ -153,8 +152,12 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 	Ok(())
 }
 
-pub fn future(_: TokenStream, item: TokenStream) -> TokenStream {
-	transform_fn(item, transform_func, |item| {
-		!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
+pub fn future(attr: TokenStream, item: TokenStream) -> TokenStream {
+	try_expand(|| {
+		ensure_empty(attr)?;
+
+		Ok(transform_fn(item, transform_func, |item| {
+			!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
+		}))
 	})
 }

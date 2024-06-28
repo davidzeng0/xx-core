@@ -6,7 +6,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use static_assertions::const_assert;
 
 use super::*;
-use crate::impls::Cell;
+use crate::impls::{Cell, OptionExt};
 
 /// The environment for an async worker
 ///
@@ -97,10 +97,9 @@ impl Canceller {
 		unsafe {
 			let cancel = ptr!(arg.cast::<Option<C>>()=>take());
 
-			match cancel {
-				Some(cancel) => cancel.run(),
-				None => unreachable_unchecked!("Fatal error: cancel is missing")
-			}
+			cancel
+				.expect_unchecked("Fatal error: cancel is missing")
+				.run()
 		}
 	}
 
@@ -378,12 +377,12 @@ pub struct InterruptGuard<'ctx> {
 impl<'ctx> InterruptGuard<'ctx> {
 	fn update_guard_count(&self, rel: i32) {
 		self.context.data.guards.update(|guards| {
-			guards.checked_add_signed(rel).unwrap_or_else(|| {
+			guards
+				.checked_add_signed(rel)
 				/* this can never happen unless memory corruption. useful to check anyway as
 				 * it doesn't have to be fast
 				 */
-				panic_nounwind!("Interrupt guards count overflowed")
-			})
+				.expect_nounwind("Interrupt guards count overflowed")
 		});
 	}
 

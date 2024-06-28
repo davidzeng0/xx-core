@@ -4,7 +4,6 @@ use std::mem::replace;
 use std::rc::Rc;
 
 use super::*;
-use crate::{trace, warn};
 
 #[allow(clippy::module_name_repetitions)]
 pub type SpawnResult<T> = MaybePanic<T>;
@@ -342,7 +341,7 @@ impl<Output> JoinHandle<Output> {
 		let result = self.request_cancel();
 
 		if let Err(err) = &result {
-			warn!(target: &self, ">> Cancel failed: {:?}", err);
+			debug!(target: &self, ">> Cancel failed: {:?}", err);
 		}
 
 		self.await

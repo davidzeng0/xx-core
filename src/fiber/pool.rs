@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use crate::fiber::*;
+use crate::impls::OptionExt;
 use crate::trace;
 
 struct Data {
@@ -36,7 +37,7 @@ impl Pool {
 			data.active = data
 				.active
 				.checked_add(1)
-				.unwrap_or_else(|| panic_nounwind!("Fatal error: fiber count overflow"));
+				.expect_nounwind("Fatal error: fiber count overflow");
 			data.pool.pop()
 		};
 
@@ -78,7 +79,7 @@ impl Pool {
 		data.active = data
 			.active
 			.checked_sub(1)
-			.unwrap_or_else(|| panic_nounwind!("Fatal error: fiber count overflow"));
+			.expect_nounwind("Fatal error: fiber count overflow");
 
 		let ideal = Self::calculate_ideal(data.active);
 

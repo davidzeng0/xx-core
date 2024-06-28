@@ -66,7 +66,7 @@ impl<E> CustomError<E> {
 		unsafe { ptr!(out=>write(error)) };
 
 		/* Safety: drop the rest. guaranteed by caller */
-		drop(unsafe { Box::from_raw(this.as_mut_ptr()) });
+		drop(unsafe { this.into_box() });
 
 		true
 	}
@@ -85,7 +85,7 @@ impl<E> CustomError<E> {
 		let this = this.cast::<DynError<Self>>();
 
 		/* Safety: guaranteed by caller */
-		drop(unsafe { Box::from_raw(this.as_mut_ptr()) });
+		drop(unsafe { this.into_box() });
 	}
 
 	fn into_dyn(self, vtable: &'static ErrorVTable) -> MutNonNull<DynError<()>> {

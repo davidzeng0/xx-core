@@ -14,6 +14,7 @@ where
 
 #[track_caller]
 #[cold]
+#[inline(never)]
 pub fn panic_nounwind(fmt: Arguments<'_>) -> ! {
 	print_panic(None, fmt);
 	print_fatal(format_args!("Non unwinding panic, aborting"));

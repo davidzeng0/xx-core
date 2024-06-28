@@ -48,7 +48,7 @@ fn tuple_args(args: &mut Punctuated<Pat, Token![,]>) {
 		}
 	}
 
-	let (pats, tys) = (make_tuple_of_types(pats), make_tuple_of_types(tys));
+	let (pats, tys) = (join_tuple(pats), join_tuple(tys));
 
 	args.push(Pat::Type(parse_quote! { #pats: #tys }));
 }
@@ -62,11 +62,10 @@ impl TransformAsync {
 		let (attrs, capture, block) = (&inner.attrs, &inner.capture, inner.block.clone());
 		let context = Context::new();
 
-		parse_quote_spanned! { inner.span() =>
+		parse_quote_spanned! { inner.async_token.span() =>
 			#(#attrs)*
 			::xx_core::coroutines::internal::as_task(
-				::xx_core::coroutines::closure::OpaqueClosure
-					::new(
+				::xx_core::coroutines::closure::OpaqueClosure::new(
 					#capture
 					|#context| #block
 				)
@@ -79,11 +78,10 @@ impl TransformAsync {
 
 		let (attrs, base) = (&inner.attrs, inner.base.as_ref());
 		let ident = Context::ident();
-		let run = Ident::new("run", inner.await_token.span());
 
-		parse_quote! {
+		parse_quote_spanned! { inner.await_token.span() =>
 			#(#attrs)*
-			::xx_core::coroutines::Context::#run(#ident, #base)
+			::xx_core::coroutines::Context::run(#ident, #base)
 		}
 	}
 
@@ -194,25 +192,30 @@ fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
 		let run = Ident::new("run", ident.span());
 
 		quote! {
-			struct XXInternalAsyncSupportWrap<F, Output>(F, std::marker::PhantomData<Output>);
+			struct XXInternalAsyncSupportWrap<F, Output>(F, ::std::marker::PhantomData<Output>);
 
-			impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> Output, Output>
-				XXInternalAsyncSupportWrap<F, Output> {
-				#[inline(always)]
-				pub const fn #new(func: F) -> Self {
-					Self(func, std::marker::PhantomData)
+			const _: () = {
+				use ::std::ops::FnOnce;
+				use ::std::marker::PhantomData;
+				use ::xx_core::coroutines::{Context, Task};
+
+				impl<F: FnOnce(&Context) -> Output, Output> XXInternalAsyncSupportWrap<F, Output> {
+					#[inline(always)]
+					pub const fn #new(func: F) -> Self {
+						Self(func, PhantomData)
+					}
 				}
-			}
 
-			unsafe impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> Output, Output>
-				::xx_core::coroutines::Task for XXInternalAsyncSupportWrap<F, Output> {
-				type Output<'ctx> = Output;
+				unsafe impl<F: FnOnce(&Context) -> Output, Output> Task
+					for XXInternalAsyncSupportWrap<F, Output> {
+					type Output<'ctx> = Output;
 
-				#(#attrs)*
-				fn #run(self, context: &::xx_core::coroutines::Context) -> Output {
-					self.0(context)
+					#(#attrs)*
+					fn #run(self, context: &Context) -> Output {
+						self.0(context)
+					}
 				}
-			}
+			};
 		}
 	}
 }
@@ -225,23 +228,27 @@ fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 	quote! {
 		struct XXInternalAsyncSupportWrap<F>(F);
 
-		impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> #ret>
-			XXInternalAsyncSupportWrap<F> {
-			#[inline(always)]
-			pub const fn new(func: F) -> Self {
-				Self(func)
-			}
-		}
+		const _: () = {
+			use ::std::ops::FnOnce;
+			use ::std::marker::PhantomData;
+			use ::xx_core::coroutines::{Context, Task};
 
-		unsafe impl<F: ::std::ops::FnOnce(&::xx_core::coroutines::Context) -> #ret>
-			::xx_core::coroutines::Task for XXInternalAsyncSupportWrap<F> {
-			type Output<#lt> = #output;
-
-			#[inline(always)]
-			fn run(self, context: &::xx_core::coroutines::Context) -> #ret {
-				self.0(context)
+			impl<F: FnOnce(&Context) -> #ret> XXInternalAsyncSupportWrap<F> {
+				#[inline(always)]
+				pub const fn new(func: F) -> Self {
+					Self(func)
+				}
 			}
-		}
+
+			unsafe impl<F: FnOnce(&Context) -> #ret> Task for XXInternalAsyncSupportWrap<F> {
+				type Output<#lt> = #output;
+
+				#[inline(always)]
+				fn run(self, context: &::xx_core::coroutines::Context) -> #ret {
+					self.0(context)
+				}
+			}
+		};
 	}
 }
 
@@ -258,9 +265,9 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 
 	let closure_type = attrs.async_kind.0.closure_type();
 
-	attrs.parse(func.attrs)?;
+	attrs.parse_additional(func.attrs)?;
 
-	let func_attrs = remove_attrs(func.attrs, &["inline", "must_use", "hot", "cold"]);
+	let func_attrs = remove_attrs(func.attrs, &["inline", "must_use", "cold"]);
 
 	let lang = match &attrs.language {
 		Some((lang, span)) => {
@@ -296,31 +303,39 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 		None => None
 	};
 
-	let lifetime = if let Some(lifetime) = &attrs.context_lifetime {
-		if lang.is_some() {
-			return Err(Error::new(
-				lifetime.span(),
-				"Context lifetime forbidden in lang items"
-			));
-		}
+	let mut context_lifetime = None;
 
-		if !func.sig.generics.params.is_empty() {
+	if func.sig.generics.params.len() != 1 {
+		for param in &mut func.sig.generics.params {
+			let attrs = match param {
+				GenericParam::Lifetime(param) => &mut param.attrs,
+				GenericParam::Type(param) => &mut param.attrs,
+				GenericParam::Const(param) => &mut param.attrs
+			};
+
+			if remove_attr_path(attrs, "cx").is_none() {
+				continue;
+			}
+
 			// TODO: temporary limitation
 			return Err(Error::new_spanned(
 				&func.sig.generics,
 				"Generics not allowed here"
 			));
 		}
+	} else if let GenericParam::Lifetime(param) = func.sig.generics.params.first_mut().unwrap() {
+		context_lifetime = remove_attr_path(&mut param.attrs, "cx").map(|_| param.lifetime.clone());
 
-		if let Some(lt) = func
-			.sig
-			.generics
-			.lifetimes()
-			.find(|lt| lt.lifetime.ident == lifetime.ident)
-		{
+		if context_lifetime.is_some() {
+			func.sig.generics.params.clear();
+		}
+	}
+
+	let lifetime = if let Some(lifetime) = &context_lifetime {
+		if lang.is_some() {
 			return Err(Error::new_spanned(
-				lt,
-				"The context lifetime must not appear in the generics"
+				lifetime,
+				"Context lifetime forbidden in lang items"
 			));
 		}
 
@@ -332,16 +347,13 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 		}
 
 		lifetime.clone()
-	} else {
-		#[allow(clippy::collapsible_else_if)]
-		if lang == Some(&Lang::GetContext) {
-			let lt: Lifetime = parse_quote! { 'current };
+	} else if lang == Some(&Lang::GetContext) {
+		let lt: Lifetime = parse_quote! { 'current };
 
-			attrs.context_lifetime = Some(lt.clone());
-			lt
-		} else {
-			parse_quote! { '__xx_internal_current_context }
-		}
+		context_lifetime = Some(lt.clone());
+		lt
+	} else {
+		parse_quote! { '__xx_internal_current_context }
 	};
 
 	if let Some(block) = &mut func.block {
@@ -351,45 +363,45 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 	let context = Context::new();
 	let return_type = get_return_type(&func.sig.output);
 
-	match closure_type {
-		ClosureType::None => {
-			func.sig.inputs.push(parse_quote! { #context });
-		}
+	if closure_type == ClosureType::None {
+		func.sig.inputs.push(parse_quote! { #context });
+	} else {
+		let map_return_type = |rt: &mut Type| {
+			let return_type = rt.to_token_stream();
 
-		_ => {
-			make_opaque_closure(
-				func,
-				&[(context.ident, context.ty)],
-				|rt| {
-					let return_type = rt.to_token_stream();
+			if let Some(lt) = &context_lifetime {
+				ReplaceLifetime(lt).visit_type_mut(rt);
+			}
 
-					if let Some(lt) = &attrs.context_lifetime {
-						ReplaceLifetime(lt).visit_type_mut(rt);
-					}
+			return_type
+		};
 
-					return_type
+		let impl_type = |rt: TokenStream| {
+			(
+				quote_spanned! { rt.span() =>
+					for<#lifetime> ::xx_core::coroutines::Task<Output<#lifetime> = #rt>
 				},
-				OpaqueClosureType::Custom(|rt: TokenStream| {
-					(
-						quote_spanned! { rt.span() =>
-							for<#lifetime> ::xx_core::coroutines::Task<
-								Output<#lifetime> = #rt
-							>
-						},
-						quote! { XXInternalAsyncSupportWrap }
-					)
-				}),
-				if closure_type != ClosureType::Trait && lang.is_none() {
-					LifetimeAnnotations::Auto
-				} else {
-					LifetimeAnnotations::None
-				}
-			)?;
-		}
+				quote! { XXInternalAsyncSupportWrap }
+			)
+		};
+
+		let annotations = if closure_type != ClosureType::Trait && lang.is_none() {
+			LifetimeAnnotations::Auto
+		} else {
+			LifetimeAnnotations::None
+		};
+
+		make_opaque_closure(
+			func,
+			&[(context.ident, context.ty)],
+			map_return_type,
+			OpaqueClosureType::Custom(impl_type),
+			annotations
+		)?;
 	}
 
 	if let Some(block) = &mut func.block {
-		let task_impl = if let Some(lt) = &attrs.context_lifetime {
+		let task_impl = if let Some(lt) = &context_lifetime {
 			lending_task_impl(lt, &return_type)
 		} else {
 			task_impl(&func_attrs, &func.sig.ident)

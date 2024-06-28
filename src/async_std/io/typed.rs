@@ -199,7 +199,7 @@ where
 	T: VInt<N>
 {
 	if unlikely(size == 0 || size > N) {
-		assert!(size == 0, "Invalid size ({}) for variably sized type", size);
+		assert!(size == 0, "Invalid size ({}) for variably sized int", size);
 
 		return Ok(Some(T::ZERO));
 	}
@@ -216,7 +216,7 @@ where
 	T: VInt<N>
 {
 	if unlikely(size == 0 || size > N) {
-		assert!(size == 0, "Invalid size ({}) for variably sized type", size);
+		assert!(size == 0, "Invalid size ({}) for variably sized int", size);
 
 		return Ok(Some(T::ZERO));
 	}
@@ -276,7 +276,7 @@ macro_rules! read_vfloat_impl {
 			} else if size == size_of::<f64>() {
 				self.try_read_f64_le().await
 			} else {
-				panic!("Invalid size ({}) for variably sized type", size);
+				panic!("Invalid size ({}) for variably sized float", size);
 			}
 		}
 
@@ -288,7 +288,7 @@ macro_rules! read_vfloat_impl {
 			} else if size == size_of::<f64>() {
 				self.try_read_f64_be().await
 			} else {
-				panic!("Invalid size ({}) for variably sized type", size);
+				panic!("Invalid size ({}) for variably sized float", size);
 			}
 		}
 

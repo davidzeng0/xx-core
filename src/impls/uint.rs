@@ -1,6 +1,10 @@
-use crate::macros::macro_each;
+#![allow(clippy::module_name_repetitions)]
 
-pub trait UIntExtensions: Sized {
+use crate::macros::{macro_each, seal_trait};
+
+seal_trait!();
+
+pub trait UintExt: Sealed + Sized {
 	type Signed;
 
 	#[must_use = "This returns the result of the operation without modifying the original"]
@@ -27,8 +31,10 @@ pub trait UIntExtensions: Sized {
 
 macro_rules! uint_impl {
 	(($type:ty, $signed:ty)) => {
+		impl Sealed for $type {}
+
 		#[allow(clippy::cast_sign_loss)]
-		impl UIntExtensions for $type {
+		impl UintExt for $type {
 			type Signed = $signed;
 
 			fn overflowing_signed_diff(self, rhs: Self) -> ($signed, bool) {

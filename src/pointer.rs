@@ -200,6 +200,14 @@ impl<T, const MUT: bool> Pointer<T, MUT> {
 	pub const fn null() -> Self {
 		Self { ptr: null_mut() }
 	}
+
+	/// # Safety
+	/// `self` must not be null
+	#[must_use]
+	pub const unsafe fn cast_nonnull(self) -> NonNullPtr<T, MUT> {
+		/* Safety: guaranteed by caller */
+		unsafe { NonNullPtr::new_unchecked(self) }
+	}
 }
 
 impl<T: ?Sized> Ptr<T> {
@@ -548,6 +556,14 @@ impl<T: ?Sized> MutNonNull<T> {
 	pub fn from_box(ptr: Box<T>) -> Self {
 		/* Safety: Box::into_raw is always non null */
 		unsafe { Self::new_unchecked(Box::into_raw(ptr).into()) }
+	}
+
+	/// # Safety
+	/// See [`Box::from_raw`]
+	#[must_use]
+	pub unsafe fn into_box(self) -> Box<T> {
+		/* Safety: Box::into_raw is always non null */
+		unsafe { Box::from_raw(self.as_mut_ptr()) }
 	}
 }
 

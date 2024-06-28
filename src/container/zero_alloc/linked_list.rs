@@ -172,10 +172,6 @@ impl LinkedList {
 	/// # Safety
 	/// This list must be pinned, Node must be pinned and live while it's in the
 	/// list, and not already be in a list
-	///
-	/// The reference to the node is considered borrowed until it is unlinked
-	/// from the list any usages of mutable references to the node is considered
-	/// UB
 	pub unsafe fn append(&self, node: &Node) {
 		/* Safety: node is only ever added to one list at a time, so we have
 		 * exclusive access to the node. The list now has the right to create a
@@ -194,12 +190,12 @@ impl LinkedList {
 	/// # Safety
 	/// The new list must be pinned, empty, and live as long as it has nodes
 	pub unsafe fn move_elements(&self, other: &Self) {
+		/* Safety: guaranteed by caller */
+		unsafe { assert_unsafe_precondition!(other.is_empty()) };
+
 		if self.is_empty() {
 			return;
 		}
-
-		/* Safety: guaranteed by caller */
-		unsafe { assert_unsafe_precondition!(other.is_empty()) };
 
 		let (prev, next) = (self.base.prev.get(), self.base.next.get());
 

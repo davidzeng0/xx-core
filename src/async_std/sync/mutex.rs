@@ -29,7 +29,9 @@ impl<T> fmt::Display for LockError<T> {
 	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			Self::Poisoned(f0) => fmt::Display::fmt(f0, fmt),
-			Self::Interrupted => fmt.write_str("Lock failed: the current task is interrupted")
+			Self::Interrupted => fmt.write_str(
+				"Lock failed: the operation would block and the current task is interrupted"
+			)
 		}
 	}
 }

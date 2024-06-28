@@ -16,8 +16,8 @@ impl Parse for SyscallImpl {
 
 		let mut out = None;
 		let mut num = None;
-		let mut args = None;
-		let mut clobber = None;
+		let mut args = Vec::new();
+		let mut clobber = Vec::new();
 
 		while !input.is_empty() {
 			let kind = input.parse::<Ident>()?;
@@ -31,38 +31,30 @@ impl Parse for SyscallImpl {
 
 			let kind_str = kind.to_string();
 
-			match kind_str.as_ref() {
-				kind @ ("out" | "num") if regs.len() != 1 => {
-					let msg = format!("There can only be one `{}` register", kind);
+			if matches!(kind_str.as_ref(), "out" | "num") && regs.len() != 1 {
+				let msg = format!("There can only be one `{}` register", kind_str);
 
-					return Err(Error::new_spanned(kind, msg));
-				}
-
-				_ => ()
+				return Err(Error::new_spanned(kind, msg));
 			}
 
-			match kind.to_string().as_ref() {
+			match kind_str.as_ref() {
 				"out" => out = Some(regs[0].clone()),
 				"num" => num = Some(regs[0].clone()),
-				"arg" => args = Some(regs),
-				"clobber" => clobber = Some(regs),
+				"arg" => args = regs,
+				"clobber" => clobber = regs,
 
 				_ => {
-					return Err(Error::new_spanned(
-						kind,
-						"Unknown kind, expected one of `out`, `num`, `arg`, or `clobber`"
-					))
+					let msg = "Unknown kind, expected one of `out`, `num`, `arg`, or `clobber`";
+
+					return Err(Error::new_spanned(kind, msg));
 				}
 			}
 		}
 
-		Ok(Self {
-			instruction,
-			out: out.ok_or_else(|| input.error("Expected an output register `out = reg`"))?,
-			num: num.ok_or_else(|| input.error("Expected a number register `num = reg`"))?,
-			regs: args.unwrap_or(Vec::new()),
-			clobber: clobber.unwrap_or(Vec::new())
-		})
+		let out = out.ok_or_else(|| input.error("Expected an output register `out = reg`"))?;
+		let num = num.ok_or_else(|| input.error("Expected a number register `num = reg`"))?;
+
+		Ok(Self { instruction, out, num, regs: args, clobber })
 	}
 }
 

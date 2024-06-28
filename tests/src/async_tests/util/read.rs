@@ -33,9 +33,7 @@ impl Seek for Sequential {
 			SeekFrom::End(rel) => self.0 = self.1.checked_add_signed(rel).unwrap()
 		}
 
-		if self.0 > self.1 {
-			panic!();
-		}
+		assert!(self.0 <= self.1);
 
 		Ok(self.0)
 	}

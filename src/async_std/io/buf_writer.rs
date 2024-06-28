@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use super::*;
-use crate::impls::UIntExtensions;
+use crate::impls::UintExt;
 
 /// The async equivalent of [`std::io::BufWriter`]
 pub struct BufWriter<W: ?Sized> {
@@ -30,7 +30,7 @@ impl<W: Write + ?Sized> BufWriter<W> {
 		(self.buffered.end += read);
 
 		#[cfg(feature = "tracing")]
-		crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), buf.len());
+		crate::trace!(target: &*self, "## write(buf = &[u8; {}]) = Buffered({})", buf.len(), read);
 
 		read
 	}
@@ -226,9 +226,8 @@ impl<W: Write + Seek + ?Sized> BufWriter<W> {
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
 		let stream_pos = self.stream_position().await?;
-		let (rel, overflow) = abs.overflowing_signed_diff(stream_pos);
 
-		if !overflow {
+		if let Some(rel) = abs.checked_signed_diff(stream_pos) {
 			self.seek_relative(rel).await
 		} else {
 			self.seek_inner(seek).await
@@ -266,26 +265,17 @@ impl<W: Write + Seek + ?Sized> Seek for BufWriter<W> {
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		match seek {
 			SeekFrom::Current(pos) => self.seek_relative(pos).await,
-			SeekFrom::Start(pos) => {
-				if self.stream_position_fast() {
-					self.seek_abs(pos, seek).await
-				} else {
-					self.seek_inner(seek).await
-				}
-			}
-
+			_ if !self.stream_position_fast() => self.seek_inner(seek).await,
+			SeekFrom::Start(pos) => self.seek_abs(pos, seek).await,
+			_ if !self.stream_len_fast() => self.seek_inner(seek).await,
 			SeekFrom::End(pos) => {
-				if self.stream_len_fast() && self.stream_position_fast() {
-					let new_pos = self
-						.stream_len()
-						.await?
-						.checked_add_signed(pos)
-						.expect("Overflow occured calculating absolute offset");
+				let new_pos = self
+					.stream_len()
+					.await?
+					.checked_add_signed(pos)
+					.expect("Overflow occured calculating absolute offset");
 
-					self.seek_abs(new_pos, seek).await
-				} else {
-					self.seek_inner(seek).await
-				}
+				self.seek_abs(new_pos, seek).await
 			}
 		}
 	}

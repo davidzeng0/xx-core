@@ -50,10 +50,8 @@ impl<T> AtomicWaiter<T> {
 		Self { waiter: AtomicPtr::new(ReqPtr::null()) }
 	}
 
-	fn set_waiter(
-		&self, request: ReqPtr<WaitResult<T>>, ordering: Ordering
-	) -> ReqPtr<WaitResult<T>> {
-		let result = self.waiter.fetch_update(ordering, Relaxed, |prev| {
+	fn set_waiter(&self, request: ReqPtr<WaitResult<T>>) -> ReqPtr<WaitResult<T>> {
+		let result = self.waiter.fetch_update(SeqCst, Relaxed, |prev| {
 			(prev != closed()).then_some(request)
 		});
 
@@ -68,7 +66,7 @@ impl<T> AtomicWaiter<T> {
 	}
 
 	#[future]
-	unsafe fn wait<F>(&self, ordering: Ordering, should_block: F, request: _) -> WaitResult<T>
+	unsafe fn wait<F>(&self, should_block: F, request: _) -> WaitResult<T>
 	where
 		F: FnOnce() -> bool
 	{
@@ -86,7 +84,7 @@ impl<T> AtomicWaiter<T> {
 		}
 
 		let mut error = None;
-		let prev = self.set_waiter(request, ordering);
+		let prev = self.set_waiter(request);
 
 		if !should_block() {
 			/* wake may already be in progress */
@@ -114,34 +112,30 @@ impl<T> AtomicWaiter<T> {
 		check_interrupt().await?;
 
 		/* Safety: callback doesn't unwind */
-		block_on(unsafe { self.wait(Relaxed, || true) }).await
+		block_on(unsafe { self.wait(|| true) }).await
 	}
 
 	pub async fn notified_thread_safe(&self) -> WaitResult<T> {
 		check_interrupt().await?;
 
 		/* Safety: callback doesn't unwind */
-		block_on_thread_safe(unsafe { self.wait(Relaxed, || true) }).await
+		block_on_thread_safe(unsafe { self.wait(|| true) }).await
 	}
 
 	/// # Safety
 	/// `should_block` must never unwind
-	pub async unsafe fn notified_thread_safe_check<F>(
-		&self, ordering: Ordering, should_block: F
-	) -> WaitResult<T>
+	pub async unsafe fn notified_thread_safe_check<F>(&self, should_block: F) -> WaitResult<T>
 	where
 		F: FnOnce() -> bool
 	{
 		check_interrupt().await?;
 
 		/* Safety: guaranteed by caller */
-		block_on_thread_safe(unsafe { self.wait(ordering, should_block) }).await
+		block_on_thread_safe(unsafe { self.wait(should_block) }).await
 	}
 
-	fn wake_internal(
-		&self, new_waiter: ReqPtr<WaitResult<T>>, value: T, ordering: Ordering
-	) -> bool {
-		let prev = self.set_waiter(new_waiter, ordering);
+	fn wake_internal(&self, new_waiter: ReqPtr<WaitResult<T>>, value: T) -> bool {
+		let prev = self.set_waiter(new_waiter);
 
 		if prev.is_null() || prev == closed() {
 			return false;
@@ -154,15 +148,15 @@ impl<T> AtomicWaiter<T> {
 	}
 
 	pub fn wake(&self, value: T) -> bool {
-		self.wake_internal(Ptr::null(), value, Relaxed)
+		self.wake_internal(Ptr::null(), value)
 	}
 
-	pub fn close(&self, value: T, ordering: Ordering) -> bool {
-		self.wake_internal(closed(), value, ordering)
+	pub fn close(&self, value: T) -> bool {
+		self.wake_internal(closed(), value)
 	}
 
-	pub fn is_closed(&self, ordering: Ordering) -> bool {
-		self.waiter.load(ordering) == closed()
+	pub fn is_closed(&self) -> bool {
+		self.waiter.load(SeqCst) == closed()
 	}
 }
 
@@ -415,7 +409,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 
 		let list = self.list.lock();
 
-		if self.closed.load(Relaxed) {
+		if self.is_closed() {
 			return Progress::Done(Err(WaitError::Closed));
 		}
 
@@ -466,6 +460,10 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 	}
 
 	pub fn wake_all(&self, value: T) -> usize {
+		if self.empty.load(SeqCst) {
+			return 0;
+		}
+
 		let count = self.count.load(Relaxed);
 		let list = self.list.lock();
 

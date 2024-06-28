@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use super::*;
-use crate::impls::UIntExtensions;
+use crate::impls::UintExt;
 
 /// The async equivalent of [`std::io::BufReader`]
 pub struct BufReader<R: ?Sized> {
@@ -15,6 +15,15 @@ impl<R: Read + ?Sized> BufReader<R> {
 	/// Reads from our internal buffer into `buf`
 	fn read_into(&mut self, buf: &mut [u8]) -> usize {
 		let len = read_into_slice(buf, self.buffer());
+
+		#[cfg(feature = "tracing")]
+		crate::trace!(
+			target: &*self,
+			"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
+			buf.len(),
+			len,
+			self.buffer().len()
+		);
 
 		#[allow(clippy::arithmetic_side_effects)]
 		(self.buffered.start += len);
@@ -150,21 +159,7 @@ impl<R: Read + ?Sized> BufReader<R> {
 impl<R: Read + ?Sized> Read for BufReader<R> {
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		if !self.buffer().is_empty() {
-			let read = self.read_into(buf);
-
-			#[cfg(feature = "tracing")]
-			crate::trace!(
-				target: &*self,
-				"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
-				buf.len(),
-				read,
-				{
-					#[allow(clippy::arithmetic_side_effects)]
-					(self.buffer().len() + read)
-				}
-			);
-
-			return Ok(read);
+			return Ok(self.read_into(buf));
 		}
 
 		if buf.len() >= self.capacity() {
@@ -176,25 +171,11 @@ impl<R: Read + ?Sized> Read for BufReader<R> {
 			return Ok(read);
 		}
 
-		if self.fill_buf().await? != 0 {
-			let read = self.read_into(buf);
-
-			#[cfg(feature = "tracing")]
-			crate::trace!(
-				target: &*self,
-				"## read(buf = &mut [u8; {}]) = Buffered({} / {})",
-				buf.len(),
-				read,
-				{
-					#[allow(clippy::arithmetic_side_effects)]
-					(self.buffer().len() + read)
-				}
-			);
-
-			Ok(read)
+		Ok(if self.fill_buf().await? != 0 {
+			self.read_into(buf)
 		} else {
-			Ok(0)
-		}
+			0
+		})
 	}
 }
 
@@ -216,7 +197,7 @@ impl<R: Read + ?Sized> BufRead for BufReader<R> {
 		if end > self.capacity() {
 			end = amount;
 
-			if self.buffer().is_empty() {
+			if self.buffered.is_empty() {
 				/* try not to discard existing data if read returns EOF, assuming the read
 				 * impl doesn't write junk even when returning zero */
 				start = 0;
@@ -272,7 +253,7 @@ impl<R: Read + ?Sized> BufRead for BufReader<R> {
 			.buffered
 			.start
 			.checked_sub(count)
-			.expect("`count` > `self.pos`");
+			.expect("`count` > `self.position()`");
 	}
 
 	fn discard(&mut self) {
@@ -318,9 +299,9 @@ impl<R: Read + Seek + ?Sized> BufReader<R> {
 			}
 		}
 
-		self.discard();
-
 		let pos = self.reader.seek(seek).await;
+
+		self.discard();
 
 		#[cfg(feature = "tracing")]
 		crate::trace!(target: &*self, "## seek_inner(seek = {:?}) = {:?}", seek, pos);
@@ -330,9 +311,8 @@ impl<R: Read + Seek + ?Sized> BufReader<R> {
 
 	async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
 		let stream_pos = self.stream_position().await?;
-		let (rel, overflow) = abs.overflowing_signed_diff(stream_pos);
 
-		if !overflow {
+		if let Some(rel) = abs.checked_signed_diff(stream_pos) {
 			self.seek_relative(rel).await
 		} else {
 			self.seek_inner(seek).await
@@ -370,26 +350,17 @@ impl<R: Read + Seek + ?Sized> Seek for BufReader<R> {
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		match seek {
 			SeekFrom::Current(pos) => self.seek_relative(pos).await,
-			SeekFrom::Start(pos) => {
-				if self.stream_position_fast() {
-					self.seek_abs(pos, seek).await
-				} else {
-					self.seek_inner(seek).await
-				}
-			}
-
+			_ if !self.stream_position_fast() => self.seek_inner(seek).await,
+			SeekFrom::Start(pos) => self.seek_abs(pos, seek).await,
+			_ if !self.stream_len_fast() => self.seek_inner(seek).await,
 			SeekFrom::End(pos) => {
-				if self.stream_len_fast() && self.stream_position_fast() {
-					let new_pos = self
-						.stream_len()
-						.await?
-						.checked_add_signed(pos)
-						.expect("Overflow occured calculating absolute offset");
+				let new_pos = self
+					.stream_len()
+					.await?
+					.checked_add_signed(pos)
+					.expect("Overflow occured calculating absolute offset");
 
-					self.seek_abs(new_pos, seek).await
-				} else {
-					self.seek_inner(seek).await
-				}
+				self.seek_abs(new_pos, seek).await
 			}
 		}
 	}

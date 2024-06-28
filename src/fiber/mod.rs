@@ -3,7 +3,7 @@
 use std::arch::global_asm;
 use std::mem::{zeroed, ManuallyDrop};
 
-use super::macros::{assert_unsafe_precondition, import_sysdeps, panic_nounwind};
+use super::macros::{assert_unsafe_precondition, import_sysdeps};
 use super::opt::hint::unreachable_unchecked;
 use super::os::mman::*;
 use super::os::resource::*;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::macros::panic_nounwind;
+use crate::impls::ResultExt;
 
 define_enum! {
 	#[bitflags]
@@ -346,7 +346,6 @@ impl Drop for Map<'_> {
 		}
 
 		/* Safety: owner dropped us, so we own the range */
-		unsafe { munmap(self.section()) }
-			.unwrap_or_else(|err| panic_nounwind!("Failed to unmap memory: {:?}", err));
+		unsafe { munmap(self.section()) }.expect_nounwind("Failed to unmap memory");
 	}
 }

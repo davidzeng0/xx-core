@@ -306,7 +306,7 @@ pub async fn test_over_consume() {
 
 #[main]
 #[test]
-#[should_panic = "`count` > `self.pos`"]
+#[should_panic = "`count` > `self.position()`"]
 pub async fn test_over_unconsume() {
 	let mut reader = BufReader::new(Sequential::new());
 

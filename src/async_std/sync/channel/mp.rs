@@ -1,5 +1,7 @@
 #![allow(unreachable_pub)]
 
+use std::mem::forget;
+
 use super::*;
 
 struct Slot<T> {
@@ -114,8 +116,6 @@ macro_rules! common_impl {
 
 			fn can_send(&self) -> bool {
 				let tail = self.tail.load(Ordering::SeqCst);
-
-				/* lock held, relaxed is ok */
 				let head = self.head.load(Ordering::SeqCst);
 
 				tail != head.wrapping_add(self.slots.len())
@@ -123,8 +123,6 @@ macro_rules! common_impl {
 
 			fn can_recv(&self) -> bool {
 				let head = self.head.load(Ordering::SeqCst);
-
-				/* lock held, relaxed is ok */
 				let tail = self.tail.load(Ordering::SeqCst);
 
 				tail != head
@@ -161,27 +159,46 @@ macro_rules! common_impl {
 			pub async fn send_closed(&self) -> result::Result<(), WaitError> {
 				self.tx_waiters.notified(|| true).await
 			}
-		}
 
-		impl<T> Drop for $channel<T> {
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
-			fn drop(&mut self) {
+			fn drop_all(&mut self) {
 				let mut head = *self.head.get_mut();
 				let tail = *self.tail.get_mut();
-				let len = tail.wrapping_sub(head);
 
 				#[allow(clippy::arithmetic_side_effects)]
 				let mask = self.slots.len() - 1;
 
-				for _ in 0..len {
+				while head != tail {
 					/* Safety: masked */
 					let slot = unsafe { self.slots.get_unchecked_mut(head & mask) };
 
+					head = head.wrapping_add(1);
+
+					*self.head.get_mut() = head;
+
 					/* Safety: this slot was initialized */
 					unsafe { ptr!(slot.data=>assume_init_drop()) };
-
-					head = head.wrapping_add(1);
 				}
+			}
+		}
+
+		impl<T> Drop for $channel<T> {
+			fn drop(&mut self) {
+				struct Guard<'a, T> {
+					this: &'a mut $channel<T>
+				}
+
+				impl<T> Drop for Guard<'_, T> {
+					fn drop(&mut self) {
+						self.this.drop_all();
+					}
+				}
+
+				let guard = Guard { this: self };
+
+				guard.this.drop_all();
+
+				forget(guard);
 			}
 		}
 
@@ -252,66 +269,6 @@ impl<T> MCChannel<T> {
 
 	pub async fn recv_notified(&self) {
 		let _ = self.rx_waiters.notified(|| !self.can_recv()).await;
-	}
-}
-
-pub struct SCChannel<T> {
-	/* only accessed by receivers */
-	head: CachePadded<AtomicUsize>,
-
-	/* only accessed by senders */
-	tail: CachePadded<AtomicUsize>,
-
-	/* accessed by both */
-	slots: Box<[Slot<T>]>,
-	tx_waiters: ThreadSafeWaitList,
-	rx_waiter: AtomicWaiter,
-	tx_count: AtomicUsize
-}
-
-common_impl!(SCChannel);
-
-#[asynchronous]
-impl<T> SCChannel<T> {
-	#[allow(clippy::expect_used)]
-	pub fn new(size: usize) -> Self {
-		Self {
-			head: CachePadded(AtomicUsize::new(0)),
-			tail: CachePadded(AtomicUsize::new(0)),
-
-			slots: create_slots(size),
-			tx_waiters: ThreadSafeWaitList::new(),
-			rx_waiter: AtomicWaiter::new(),
-			tx_count: AtomicUsize::new(0)
-		}
-	}
-
-	fn wake_recv(&self) {
-		self.rx_waiter.wake(());
-	}
-
-	pub fn is_recv_closed(&self) -> bool {
-		self.rx_waiter.is_closed(Ordering::Relaxed)
-	}
-
-	pub fn close_recv(&self) {
-		self.rx_waiter.close((), Ordering::Relaxed);
-	}
-
-	#[allow(clippy::unused_self)]
-	pub const fn new_receiver(&self) {}
-
-	pub fn drop_receiver(&self) {
-		self.close_send();
-	}
-
-	pub async fn recv_notified(&self) {
-		/* Safety: callback does not unwind */
-		let _ = unsafe {
-			self.rx_waiter
-				.notified_thread_safe_check(Ordering::SeqCst, || !self.can_recv())
-				.await
-		};
 	}
 }
 

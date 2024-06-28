@@ -1,4 +1,4 @@
-use xx_core::impls::UIntExtensions;
+use xx_core::impls::UintExt;
 
 #[test]
 fn test_overflowing_signed_difference() {
