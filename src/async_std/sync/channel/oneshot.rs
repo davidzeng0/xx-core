@@ -59,7 +59,7 @@ impl<T> Receiver<T> {
 	}
 
 	pub async fn recv(&mut self) -> RecvResult<T> {
-		let _ = self.channel.rx_waiter.notified_thread_safe().await;
+		let _ = self.channel.rx_waiter.wait_thread_safe().await;
 
 		self.try_recv()
 	}
@@ -119,7 +119,7 @@ impl<T> Sender<T> {
 	}
 
 	pub async fn closed(&mut self) -> bool {
-		let _ = self.channel.tx_waiter.notified_thread_safe().await;
+		let _ = self.channel.tx_waiter.wait_thread_safe().await;
 
 		self.is_closed()
 	}

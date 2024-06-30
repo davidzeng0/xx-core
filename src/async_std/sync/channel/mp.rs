@@ -152,12 +152,12 @@ macro_rules! common_impl {
 				self.tx_waiters.close(());
 			}
 
-			pub async fn send_notified(&self) {
-				let _ = self.tx_waiters.notified(|| !self.can_send()).await;
+			pub async fn send_wait(&self) {
+				let _ = self.tx_waiters.wait(|| !self.can_send()).await;
 			}
 
 			pub async fn send_closed(&self) -> result::Result<(), WaitError> {
-				self.tx_waiters.notified(|| true).await
+				self.tx_waiters.wait(|| true).await
 			}
 
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
@@ -267,8 +267,8 @@ impl<T> MCChannel<T> {
 		}
 	}
 
-	pub async fn recv_notified(&self) {
-		let _ = self.rx_waiters.notified(|| !self.can_recv()).await;
+	pub async fn recv_wait(&self) {
+		let _ = self.rx_waiters.wait(|| !self.can_recv()).await;
 	}
 }
 
@@ -304,7 +304,7 @@ macro_rules! channel_impl {
 					}
 
 					if backoff.is_completed() {
-						self.channel.recv_notified().await;
+						self.channel.recv_wait().await;
 
 						backoff.reset();
 					} else {
@@ -355,7 +355,7 @@ macro_rules! channel_impl {
 					}
 
 					if backoff.is_completed() {
-						self.channel.send_notified().await;
+						self.channel.send_wait().await;
 
 						backoff.reset();
 					} else {

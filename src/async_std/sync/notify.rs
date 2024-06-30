@@ -13,8 +13,8 @@ pub struct RawNotify<T = ()> {
 
 impl<T: Clone> RawNotify<T> {
 	#[asynchronous]
-	pub async fn notified(&self) -> Result<T> {
-		self.waiters.notified().await.map_err(Into::into)
+	pub async fn wait(&self) -> Result<T> {
+		self.waiters.wait().await.map_err(Into::into)
 	}
 
 	pub fn notify(&self, value: T) -> usize {
@@ -57,7 +57,7 @@ impl<T: Clone> RcNotify<T> {
 		inner = self.0;
 
 		#[asynchronous]
-		pub async fn notified(&self) -> Result<T>;
+		pub async fn wait(&self) -> Result<T>;
 
 		pub fn notify(&self, value: T) -> usize;
 	}
@@ -88,8 +88,8 @@ impl<T: Clone> Notify<T> {
 	}
 
 	#[asynchronous]
-	pub async fn notified(&self) -> Result<T> {
-		self.waiters.notified(|| true).await.map_err(Into::into)
+	pub async fn wait(&self) -> Result<T> {
+		self.waiters.wait(|| true).await.map_err(Into::into)
 	}
 
 	pub fn notify(&self, value: T) -> usize {

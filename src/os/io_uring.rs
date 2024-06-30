@@ -1,7 +1,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::error::OsError;
-use super::signal::{SignalMask, SIGRTMAX};
+use super::signal::{SignalMask, SIGSET_SIZE};
 use super::time::TimeSpec;
 use super::*;
 
@@ -624,8 +624,6 @@ define_enum! {
 		SIOCOUTQ
 	}
 }
-
-pub const SIGSET_SIZE: usize = SIGRTMAX as usize / 8;
 
 /// # Safety
 /// the entries to be submitted indicated by `submit` and the sqring's `head`

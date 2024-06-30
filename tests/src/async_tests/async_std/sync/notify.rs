@@ -7,12 +7,12 @@ use xx_pulse::*;
 
 #[asynchronous]
 async fn waiter(notify: RcNotify) -> Result<()> {
-	notify.notified().await
+	notify.wait().await
 }
 
 #[asynchronous]
 async fn canceller(notify: RcNotify) -> Result<()> {
-	match select(notify.notified(), sleep(Duration::from_secs(1))).await {
+	match select(notify.wait(), sleep(Duration::from_secs(1))).await {
 		Select::First(f, _) => f,
 		Select::Second(_, f) => f.unwrap()
 	}
@@ -20,7 +20,7 @@ async fn canceller(notify: RcNotify) -> Result<()> {
 
 #[asynchronous]
 async fn nested_cancel(notify: RcNotify) {
-	match select(notify.notified(), waiter(notify.clone())).await {
+	match select(notify.wait(), waiter(notify.clone())).await {
 		Select::First(success, error) => (success.unwrap(), error.unwrap().unwrap_err()),
 		Select::Second(..) => panic!("Order failed")
 	};
@@ -33,14 +33,14 @@ async fn expect_success(notify: RcNotify) {
 
 #[asynchronous]
 async fn spawn_within(notify: RcNotify) -> JoinHandle<()> {
-	notify.notified().await.unwrap();
+	notify.wait().await.unwrap();
 
 	spawn(expect_success(notify.clone())).await
 }
 
 #[asynchronous]
 async fn notify_within(notify: RcNotify) {
-	notify.notified().await.unwrap();
+	notify.wait().await.unwrap();
 
 	for _ in 0..30 {
 		spawn(expect_success(notify.clone())).await;

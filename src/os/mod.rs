@@ -145,7 +145,7 @@ impl<'buf, T> From<&'buf mut T> for MutRawBuf<'buf> {
 
 macro_rules! define_into_raw_repr {
 	($name: ident #[repr($repr:ty)] $(#$rest:tt)*) => {
-		impl $crate::os::syscall::IntoRaw for $name {
+		impl IntoRaw for $name {
 			type Raw = $repr;
 
 			fn into_raw(self) -> $repr {

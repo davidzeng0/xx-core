@@ -197,7 +197,7 @@ impl<T: Clone> Receiver<T> {
 
 			if backoff.is_completed() {
 				let should_block = || self.channel.tail.load(Ordering::SeqCst) == self.pos;
-				let _ = self.channel.rx_waiters.notified(should_block).await;
+				let _ = self.channel.rx_waiters.wait(should_block).await;
 
 				backoff.reset();
 			} else {

@@ -194,7 +194,7 @@ impl<T: ?Sized> Mutex<T> {
 			}
 
 			let should_block = || self.state.load(Ordering::SeqCst) == State::Contended as u8;
-			let _ = self.wait_list.notified(should_block).await;
+			let _ = self.wait_list.wait(should_block).await;
 		}
 	}
 

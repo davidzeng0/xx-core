@@ -66,7 +66,7 @@ impl<T> AtomicWaiter<T> {
 	}
 
 	#[future]
-	unsafe fn wait<F>(&self, should_block: F, request: _) -> WaitResult<T>
+	unsafe fn suspend<F>(&self, should_block: F, request: _) -> WaitResult<T>
 	where
 		F: FnOnce() -> bool
 	{
@@ -108,30 +108,30 @@ impl<T> AtomicWaiter<T> {
 		}
 	}
 
-	pub async fn notified(&self) -> WaitResult<T> {
+	pub async fn wait(&self) -> WaitResult<T> {
 		check_interrupt().await?;
 
 		/* Safety: callback doesn't unwind */
-		block_on(unsafe { self.wait(|| true) }).await
+		block_on(unsafe { self.suspend(|| true) }).await
 	}
 
-	pub async fn notified_thread_safe(&self) -> WaitResult<T> {
+	pub async fn wait_thread_safe(&self) -> WaitResult<T> {
 		check_interrupt().await?;
 
 		/* Safety: callback doesn't unwind */
-		block_on_thread_safe(unsafe { self.wait(|| true) }).await
+		block_on_thread_safe(unsafe { self.suspend(|| true) }).await
 	}
 
 	/// # Safety
 	/// `should_block` must never unwind
-	pub async unsafe fn notified_thread_safe_check<F>(&self, should_block: F) -> WaitResult<T>
+	pub async unsafe fn wait_thread_safe_check<F>(&self, should_block: F) -> WaitResult<T>
 	where
 		F: FnOnce() -> bool
 	{
 		check_interrupt().await?;
 
 		/* Safety: guaranteed by caller */
-		block_on_thread_safe(unsafe { self.wait(should_block) }).await
+		block_on_thread_safe(unsafe { self.suspend(should_block) }).await
 	}
 
 	fn wake_internal(&self, new_waiter: ReqPtr<WaitResult<T>>, value: T) -> bool {
@@ -205,7 +205,7 @@ impl<T: Clone> RawWaitList<T> {
 	/// # Safety
 	/// Waiter must be pinned, unlinked, and live until it's waked
 	#[future]
-	unsafe fn wait(&self, waiter: &mut Waiter<T>, request: _) -> WaitResult<MaybePanic<T>> {
+	unsafe fn suspend(&self, waiter: &mut Waiter<T>, request: _) -> WaitResult<MaybePanic<T>> {
 		#[cancel]
 		fn cancel(waiter: MutPtr<Waiter<T>>, request: _) -> Result<()> {
 			/* Safety: we linked this node earlier */
@@ -235,7 +235,7 @@ impl<T: Clone> RawWaitList<T> {
 		Progress::Pending(cancel(ptr!(waiter), request))
 	}
 
-	pub async fn notified(&self) -> WaitResult<T> {
+	pub async fn wait(&self) -> WaitResult<T> {
 		if self.closed.get() {
 			return Err(WaitError::Closed);
 		}
@@ -249,7 +249,7 @@ impl<T: Clone> RawWaitList<T> {
 		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
 
 		/* Safety: waiter is new, pinned, and lives until it completes */
-		let result = block_on(unsafe { self.wait(&mut waiter) }).await;
+		let result = block_on(unsafe { self.suspend(&mut waiter) }).await;
 
 		#[allow(clippy::arithmetic_side_effects)]
 		self.count.update(|count| count - 1);
@@ -371,7 +371,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 	/// # Safety
 	/// Waiter must be pinned, unlinked, and live until it's waked
 	#[future]
-	unsafe fn wait<F>(
+	unsafe fn suspend<F>(
 		&self, waiter: &mut Waiter<T>, should_block: F, request: _
 	) -> WaitResult<MaybePanic<T>>
 	where
@@ -427,7 +427,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		Progress::Pending(cancel(self, ptr!(waiter), request))
 	}
 
-	pub async fn notified<F>(&self, should_block: F) -> WaitResult<T>
+	pub async fn wait<F>(&self, should_block: F) -> WaitResult<T>
 	where
 		F: FnOnce() -> bool
 	{
@@ -437,7 +437,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
 
 		/* Safety: waiter is new, pinned, and lives until it completes */
-		let result = block_on_thread_safe(unsafe { self.wait(&mut waiter, should_block) }).await;
+		let result = block_on_thread_safe(unsafe { self.suspend(&mut waiter, should_block) }).await;
 
 		drop(counter);
 

@@ -37,7 +37,7 @@ pub mod internal {
 		type Target = *mut T;
 
 		fn as_pointer(&self) -> *mut T {
-			self.ptr
+			self.ptr()
 		}
 	}
 
@@ -115,7 +115,7 @@ pub mod internal {
 
 #[repr(transparent)]
 pub struct Pointer<T: ?Sized, const MUT: bool> {
-	ptr: *mut T
+	ptr: *const T
 }
 
 pub type Ptr<T> = Pointer<T, false>;
@@ -126,6 +126,10 @@ impl<T: ?Sized, const MUT: bool> Pointer<T, MUT> {
 		inner = self.ptr;
 
 		pub fn is_null(self) -> bool;
+	}
+
+	const fn ptr(self) -> *mut T {
+		self.ptr.cast_mut()
 	}
 
 	#[must_use]
@@ -219,7 +223,7 @@ impl<T: ?Sized> Ptr<T> {
 
 impl<T: ?Sized> MutPtr<T> {
 	wrapper_functions! {
-		inner = self.ptr;
+		inner = self.ptr();
 
 		pub unsafe fn drop_in_place(self);
 	}
@@ -231,7 +235,7 @@ impl<T: ?Sized> MutPtr<T> {
 
 	#[must_use]
 	pub const fn as_mut_ptr(self) -> *mut T {
-		self.ptr
+		self.ptr()
 	}
 
 	/// # Safety
@@ -242,13 +246,13 @@ impl<T: ?Sized> MutPtr<T> {
 		unsafe { assert_unsafe_precondition!(!self.is_null()) };
 
 		/* Safety: guaranteed by caller */
-		unsafe { &mut *self.ptr }
+		unsafe { &mut *self.ptr() }
 	}
 }
 
 impl<T> MutPtr<T> {
 	wrapper_functions! {
-		inner = self.ptr;
+		inner = self.ptr();
 
 		pub unsafe fn write_bytes(self, val: u8, count: usize);
 		pub unsafe fn write(self, value: T);
@@ -313,7 +317,7 @@ impl<T, const MUT: bool> Pointer<[T], MUT> {
 
 	#[must_use]
 	pub fn slice_from_raw_parts(data: Pointer<T, MUT>, len: usize) -> Self {
-		Self { ptr: slice_from_raw_parts_mut(data.ptr, len) }
+		Self { ptr: slice_from_raw_parts_mut(data.ptr(), len) }
 	}
 
 	/// # Safety
@@ -422,14 +426,14 @@ impl<T: ?Sized, const MUT: bool> NonNullPtr<T, MUT> {
 	#[must_use]
 	pub const unsafe fn new_unchecked(ptr: Pointer<T, MUT>) -> Self {
 		/* Safety: guaranteed by caller */
-		let ptr = unsafe { ptr::NonNull::new_unchecked(ptr.ptr) };
+		let ptr = unsafe { ptr::NonNull::new_unchecked(ptr.ptr()) };
 
 		Self { ptr }
 	}
 
 	#[must_use]
 	pub fn new(ptr: Pointer<T, MUT>) -> Option<Self> {
-		ptr::NonNull::new(ptr.ptr).map(|ptr| Self { ptr })
+		ptr::NonNull::new(ptr.ptr()).map(|ptr| Self { ptr })
 	}
 
 	#[must_use]
@@ -814,7 +818,7 @@ pub type AtomicPtr<T> = AtomicPointer<T, false>;
 impl<T, const MUT: bool> AtomicPointer<T, MUT> {
 	#[must_use]
 	pub const fn new(value: Pointer<T, MUT>) -> Self {
-		Self { ptr: atomic::AtomicPtr::new(value.ptr) }
+		Self { ptr: atomic::AtomicPtr::new(value.ptr()) }
 	}
 
 	pub fn get_mut(&mut self) -> &mut Pointer<T, MUT> {
@@ -834,11 +838,11 @@ impl<T, const MUT: bool> AtomicPointer<T, MUT> {
 	}
 
 	pub fn store(&self, value: Pointer<T, MUT>, order: atomic::Ordering) {
-		self.ptr.store(value.ptr, order);
+		self.ptr.store(value.ptr(), order);
 	}
 
 	pub fn swap(&self, value: Pointer<T, MUT>, order: atomic::Ordering) -> Pointer<T, MUT> {
-		Pointer { ptr: self.ptr.swap(value.ptr, order) }
+		Pointer { ptr: self.ptr.swap(value.ptr(), order) }
 	}
 
 	pub fn compare_exchange(
@@ -847,7 +851,7 @@ impl<T, const MUT: bool> AtomicPointer<T, MUT> {
 	) -> result::Result<Pointer<T, MUT>, Pointer<T, MUT>> {
 		match self
 			.ptr
-			.compare_exchange(current.ptr, new.ptr, success, failure)
+			.compare_exchange(current.ptr(), new.ptr(), success, failure)
 		{
 			Ok(ptr) => Ok(Pointer { ptr }),
 			Err(ptr) => Err(Pointer { ptr })
@@ -860,7 +864,7 @@ impl<T, const MUT: bool> AtomicPointer<T, MUT> {
 	) -> result::Result<Pointer<T, MUT>, Pointer<T, MUT>> {
 		match self
 			.ptr
-			.compare_exchange_weak(current.ptr, new.ptr, success, failure)
+			.compare_exchange_weak(current.ptr(), new.ptr(), success, failure)
 		{
 			Ok(ptr) => Ok(Pointer { ptr }),
 			Err(ptr) => Err(Pointer { ptr })
@@ -874,7 +878,7 @@ impl<T, const MUT: bool> AtomicPointer<T, MUT> {
 		F: FnMut(Pointer<T, MUT>) -> Option<Pointer<T, MUT>>
 	{
 		match self.ptr.fetch_update(set_order, fetch_order, |ptr| {
-			update(Pointer { ptr }).map(|ptr| ptr.ptr)
+			update(Pointer { ptr }).map(Pointer::ptr)
 		}) {
 			Ok(ptr) => Ok(Pointer { ptr }),
 			Err(ptr) => Err(Pointer { ptr })
