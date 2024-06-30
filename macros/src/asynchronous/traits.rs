@@ -1,7 +1,7 @@
 use super::*;
 
 fn format_fn_ident(ident: &Ident) -> Ident {
-	format_ident!("__xx_async_impl{}", ident)
+	format_ident!("__xx_async_impl_{}", ident)
 }
 
 fn format_trait_ident(ident: &Ident) -> Ident {

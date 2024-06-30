@@ -11,7 +11,7 @@ use crate::future::*;
 use crate::os::signal::*;
 use crate::os::unistd::{get_system_configuration, SystemConfiguration};
 use crate::pointer::*;
-use crate::{container_of, warn};
+use crate::{container_of, debug, error, trace, warn};
 
 pub struct WorkContext {
 	cancelled: AtomicBool
@@ -250,7 +250,7 @@ impl ThreadPool {
 		let thread = worker.thread.load(Ordering::Relaxed);
 
 		if let Err(err) = pthread_signal(thread, INTERRUPT_SIGNAL) {
-			warn!(target: self, ">> Failed to interrupt worker {:?}", err);
+			warn!(target: self, "== Failed to interrupt worker {:?}", err);
 		}
 	}
 
@@ -286,20 +286,28 @@ impl ThreadPool {
 		let mut this = Self {
 			workers: threads.into_boxed_slice(),
 			queue,
-			interruptible: false
+			interruptible: true
 		};
 
 		if let Err(err) = Self::install_interrupt_handler() {
-			warn!(target: &this, ">> Failed to set interrupt handler: {:?}\n>> Cancel requests may not be possible", err);
-		} else {
-			this.interruptible = true;
+			warn!(
+				target: &this,
+				"== Failed to set interrupt handler: {:?}\n== Cancel requests may not be possible",
+				err
+			);
+
+			this.interruptible = false;
 		}
 
 		if let Some(err) = error {
+			error!(target: &this, "== Failed to create thread pool {:?}", err);
+
 			this.close();
 
 			return Err(err.into());
 		}
+
+		debug!(target: &this, "++ Created thread pool with {} workers", max_workers);
 
 		Ok(this)
 	}
@@ -335,7 +343,9 @@ impl ThreadPool {
 			work_queue.append(&ptr!(work=>node));
 		}
 
-		self.queue.notify.notify_one();
+		if self.queue.idle_count.load(Ordering::Relaxed) != 0 {
+			self.queue.notify.notify_one();
+		}
 
 		CancelWork(work.cast())
 	}
@@ -355,6 +365,8 @@ impl ThreadPool {
 		let work = unsafe { cancel.0.as_mut() };
 
 		if work.node.linked() {
+			trace!(target: self, "## cancel_direct: SyncCancel");
+
 			/* Safety: the node is linked */
 			unsafe { work.node.unlink_unchecked() };
 
@@ -373,7 +385,11 @@ impl ThreadPool {
 
 				drop(work_queue);
 
+				trace!(target: self, "## cancel_direct: AsyncCancel(interrupted = {})", self.interruptible);
+
 				self.interrupt_worker(worker);
+			} else {
+				trace!(target: self, "## cancel_direct: AlreadyCompleted");
 			}
 		}
 	}

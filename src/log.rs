@@ -241,6 +241,10 @@ fn panic_hook(info: &PanicInfo<'_>) {
 #[cfg(feature = "log")]
 #[ctor]
 fn init() {
+	use std::env::var;
+	use std::str::FromStr;
+
+	use super::{error, trace};
 	use crate::impls::ResultExt;
 
 	set_boxed_logger(Box::new(Logger)).expect_nounwind("Failed to initialize logger");
@@ -248,7 +252,29 @@ fn init() {
 	#[cfg(feature = "panic-log")]
 	set_hook(Box::new(panic_hook));
 
-	set_max_level(LevelFilter::Info);
+	let level = match var("XX_LOG") {
+		Ok(level) => LevelFilter::from_str(&level).map_err(|_| Some(level)),
+		Err(_) => Err(None)
+	};
+
+	match level {
+		Ok(level) => {
+			set_max_level(level);
+
+			trace!(
+				"== Log level to {} by environment variables",
+				level.as_str()
+			);
+		}
+
+		Err(input) => {
+			set_max_level(LevelFilter::Info);
+
+			if let Some(input) = input {
+				error!("== Invalid log level {}", input);
+			}
+		}
+	}
 }
 
 macro_rules! get_thread_name {
