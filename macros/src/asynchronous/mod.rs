@@ -43,20 +43,21 @@ fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> 
 	removed
 }
 
-fn language_impl(attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStream> {
-	let (lang, span) = attrs.language.unwrap();
+fn language_impl(mut attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStream> {
+	let (lang, span) = attrs.language.take().unwrap();
 	let use_lang = quote_spanned! { span =>
 		#[allow(unused_imports)]
 		use ::xx_core::coroutines::lang;
 	};
 
 	Ok(match (lang, item) {
-		(Lang::TaskWrap, AsyncItem::Struct(item)) => task_lang_impl(use_lang, item, &[]),
+		(Lang::TaskWrap, AsyncItem::Struct(item)) => task_wrap_impl(use_lang, item, &[]),
 		(Lang::TaskClosure, AsyncItem::Struct(item)) => {
-			task_lang_impl(use_lang, item, &[parse_quote! { #[inline(always)] }])
+			task_wrap_impl(use_lang, item, &[parse_quote! { #[inline(always)] }])
 		}
 
 		(Lang::AsyncClosure, AsyncItem::Struct(item)) => async_closure_impl(use_lang, item),
+		(Lang::Task, AsyncItem::Trait(task)) => task_impl(attrs, use_lang, task)?,
 		_ => return Err(Error::new(span, "Invalid language item"))
 	})
 }
@@ -77,13 +78,6 @@ fn async_items(item: Functions) -> Result<TokenStream> {
 fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStream> {
 	let mut item = parse2::<AsyncItem>(item)?;
 
-	if attrs.async_kind.0 == AsyncKind::Task {
-		if let AsyncItem::Impl(imp) = &mut item {
-			/* hides the context pointer from the user, so this is safe */
-			imp.unsafety = Some(Default::default());
-		}
-	}
-
 	match &mut item {
 		AsyncItem::Struct(item) => attrs.parse_additional(&mut item.attrs)?,
 		AsyncItem::Trait(item) => attrs.parse_additional(&mut item.attrs)?,
@@ -95,13 +89,38 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 		return language_impl(attrs, item);
 	}
 
-	let item = match item {
+	let mut item = match item {
 		AsyncItem::Fn(item) => Functions::Fn(item),
 		AsyncItem::TraitFn(item) => Functions::TraitFn(item),
 		AsyncItem::Trait(item) => Functions::Trait(item),
 		AsyncItem::Impl(item) => Functions::Impl(item),
 		AsyncItem::Struct(item) => return Err(Error::new_spanned(item, "Unexpected declaration"))
 	};
+
+	#[allow(clippy::never_loop)]
+	loop {
+		if attrs.async_kind.0 != AsyncKind::Task {
+			break;
+		}
+
+		let Functions::Impl(imp) = &mut item else {
+			break;
+		};
+
+		let Some(ImplItem::Fn(run)) = imp.items.iter_mut().find(|item| match item {
+			ImplItem::Fn(func) => func.sig.ident == "run",
+			_ => false
+		}) else {
+			break;
+		};
+
+		if run.sig.unsafety.is_none() {
+			/* caller must ensure we're allowed to suspend */
+			run.sig.unsafety = Some(Default::default());
+		}
+
+		break;
+	}
 
 	let transform_functions = |attrs: AttributeArgs| {
 		item.clone().transform_all(

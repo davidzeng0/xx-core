@@ -1,3 +1,4 @@
+pub mod dirent;
 pub mod epoll;
 pub mod error;
 pub mod eventfd;
@@ -18,9 +19,11 @@ pub mod tcp;
 pub mod time;
 pub mod unistd;
 
+use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
-use std::mem::{size_of, size_of_val, transmute};
+use std::mem::{size_of, size_of_val, transmute, MaybeUninit};
 use std::os::fd::*;
+use std::path::Path;
 use std::time::Duration;
 
 use enumflags2::*;
@@ -192,6 +195,26 @@ macro_rules! define_struct {
 	(
 		$(#$attrs: tt)*
 		$vis: vis
+		struct $name: ident<$generic:ident: ?Sized>
+		$($rest: tt)*
+	) => {
+		#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+		#[repr(C)]
+		$(#$attrs)*
+		$vis struct $name<$generic: ?Sized> $($rest)*
+
+		#[allow(deprecated)]
+		impl<$generic> ::std::default::Default for $name<$generic> {
+			fn default() -> Self {
+				/* Safety: repr(C) */
+				unsafe { ::std::mem::zeroed() }
+			}
+		}
+	};
+
+	(
+		$(#$attrs: tt)*
+		$vis: vis
 		struct $name: ident
 		$($rest: tt)*
 	) => {
@@ -207,7 +230,7 @@ macro_rules! define_struct {
 				unsafe { ::std::mem::zeroed() }
 			}
 		}
-	}
+	};
 }
 
 use define_struct;
@@ -249,3 +272,46 @@ macro_rules! define_union {
 }
 
 use define_union;
+
+#[cold]
+#[inline(never)]
+fn allocate_cstr<F, Output>(bytes: &[u8], func: F) -> Result<Output>
+where
+	F: FnOnce(&CStr) -> Result<Output>
+{
+	let str = CString::new(bytes).map_err(|_| ErrorKind::invalid_cstr())?;
+
+	func(&str)
+}
+
+#[allow(clippy::impl_trait_in_params, clippy::multiple_unsafe_ops_per_block)]
+pub fn with_path_as_cstr<F, Output>(path: impl AsRef<Path>, func: F) -> Result<Output>
+where
+	F: FnOnce(&CStr) -> Result<Output>
+{
+	const MAX_STACK_ALLOCATION: usize = 384;
+
+	let bytes = path.as_ref().as_os_str().as_encoded_bytes();
+
+	if bytes.len() >= MAX_STACK_ALLOCATION {
+		allocate_cstr(bytes, func)
+	} else {
+		let mut buf = MaybeUninit::<[u8; MAX_STACK_ALLOCATION]>::uninit();
+		let ptr = MutPtr::from(buf.as_mut_ptr()).cast();
+
+		#[allow(clippy::arithmetic_side_effects)]
+		let buf_ptr = MutPtr::slice_from_raw_parts(ptr, bytes.len() + 1);
+
+		/* Safety: bytes len is in range */
+		unsafe {
+			buf_ptr.copy_from_nonoverlapping(bytes.as_ptr().into(), bytes.len());
+			ptr.add(bytes.len()).write(0);
+		}
+
+		/* Safety: data is initialized */
+		let str = CStr::from_bytes_with_nul(unsafe { buf_ptr.as_ref() })
+			.map_err(|_| ErrorKind::invalid_cstr())?;
+
+		func(str)
+	}
+}

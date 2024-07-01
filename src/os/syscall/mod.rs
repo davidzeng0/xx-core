@@ -50,7 +50,7 @@ macro_each!(
 #[cfg(target_pointer_width = "64")]
 macro_each!(impl_from_primitive, u64, i64);
 
-impl<T, const MUT: bool> From<Pointer<T, MUT>> for SyscallParameter {
+impl<T: ?Sized, const MUT: bool> From<Pointer<T, MUT>> for SyscallParameter {
 	fn from(value: Pointer<T, MUT>) -> Self {
 		value.addr().into()
 	}
@@ -59,7 +59,7 @@ impl<T, const MUT: bool> From<Pointer<T, MUT>> for SyscallParameter {
 macro_rules! impl_pointer {
 	($type:ty) => {
 		#[allow(unused_parens)]
-		impl<T> From<$type> for SyscallParameter {
+		impl<T: ?Sized> From<$type> for SyscallParameter {
 			fn from(value: $type) -> Self {
 				Pointer::from(value).into()
 			}

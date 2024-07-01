@@ -37,7 +37,8 @@ pub enum Lang {
 	GetContext,
 	TaskWrap,
 	TaskClosure,
-	AsyncClosure
+	AsyncClosure,
+	Task
 }
 
 #[derive(Clone)]

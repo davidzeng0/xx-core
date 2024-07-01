@@ -51,7 +51,7 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 		}
 
 		call.push(quote! { (#args) });
-		func.default = Some(parse_quote! {{ #(#call)* }});
+		func.default = Some(parse_quote! {{ unsafe { #(#call)* } }});
 
 		RemoveModifiers {}.visit_signature_mut(&mut func.sig);
 
@@ -85,21 +85,25 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 	})
 }
 
+fn async_impl_fn(attrs: AttributeArgs, func: &mut Function<'_>) -> Result<()> {
+	func.is_root = false;
+	func.sig.ident = format_fn_ident(&func.sig.ident);
+
+	if func.sig.asyncness.is_some() && func.sig.unsafety.is_none() {
+		/* caller must ensure we're allowed to suspend */
+		func.sig.unsafety = Some(Default::default());
+	}
+
+	transform_async(attrs, func)
+}
+
 pub fn async_trait(mut attrs: AttributeArgs, item: ItemTrait) -> Result<TokenStream> {
 	let ext = trait_ext(attrs.clone(), item.clone())?;
 
 	attrs.async_kind.0 = AsyncKind::TraitFn;
 
 	let functions = Functions::Trait(item);
-	let item = functions.transform_all(
-		|func| {
-			func.is_root = false;
-			func.sig.ident = format_fn_ident(&func.sig.ident);
-
-			transform_async(attrs.clone(), func)
-		},
-		|_| true
-	)?;
+	let item = functions.transform_all(|func| async_impl_fn(attrs.clone(), func), |_| true)?;
 
 	Ok(quote! { #item #ext })
 }
@@ -108,12 +112,7 @@ pub fn async_impl(mut attrs: AttributeArgs, item: Functions) -> Result<TokenStre
 	attrs.async_kind.0 = AsyncKind::TraitFn;
 
 	item.transform_all(
-		|func| {
-			func.is_root = false;
-			func.sig.ident = format_fn_ident(&func.sig.ident);
-
-			transform_async(attrs.clone(), func)
-		},
+		|func| async_impl_fn(attrs.clone(), func),
 		|item| matches!(item, Functions::Fn(_) | Functions::Impl(_))
 	)
 }

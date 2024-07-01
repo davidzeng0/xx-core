@@ -503,13 +503,11 @@ pub trait WriteTyped: WriteSealed {
 	where
 		Self: Sized
 	{
-		/* Safety: we are in an async function */
-		#[allow(unsafe_code, clippy::multiple_unsafe_ops_per_block)]
-		unsafe {
-			let mut adapter = FmtAdapter::new(self, get_context().await);
+		let mut adapter = FmtAdapter::new(self, get_context().await);
 
-			adapter.write_args(args).await
-		}
+		/* Safety: we are in an async function */
+		#[allow(unsafe_code)]
+		(unsafe { adapter.write_args(args).await })
 	}
 
 	/// Attempts to write the entire string, returning the number of bytes

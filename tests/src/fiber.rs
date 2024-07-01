@@ -17,7 +17,7 @@ unsafe extern "C" fn start(arg: Ptr<()>) {
 fn test_fibers() {
 	unsafe {
 		let mut data = (Fiber::main(), Fiber::new(), 0i32);
-		let data = MutPtr::from(&mut data);
+		let data = ptr!(&mut data);
 
 		data.as_mut()
 			.1

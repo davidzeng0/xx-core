@@ -78,7 +78,8 @@ impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWork
 		 */
 		unsafe { ptr!(this=>data = data) };
 
-		let result = catch_unwind_safe(|| context.run(task));
+		/* Safety: this is an async function */
+		let result = catch_unwind_safe(|| unsafe { context.run(task) });
 
 		if is_async {
 			/* Safety: only called once

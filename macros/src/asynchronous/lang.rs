@@ -1,6 +1,32 @@
 use super::*;
 
-pub fn task_lang_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribute]) -> TokenStream {
+pub fn task_impl(
+	mut attrs: AttributeArgs, use_lang: TokenStream, item: ItemTrait
+) -> Result<TokenStream> {
+	attrs.async_kind.0 = AsyncKind::Task;
+
+	let item = Functions::Trait(item).transform_all(
+		|func| {
+			if func.sig.ident == "run" && func.sig.unsafety.is_none() {
+				/* caller must ensure we're allowed to suspend */
+				func.sig.unsafety = Some(Default::default());
+			}
+
+			transform_async(attrs.clone(), func)
+		},
+		|_| true
+	)?;
+
+	Ok(quote! {
+		const _: () = {
+			#use_lang
+		};
+
+		#item
+	})
+}
+
+pub fn task_wrap_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribute]) -> TokenStream {
 	let ident = &item.ident;
 	let context = Context::new();
 	let context_ident = &context.ident;
@@ -22,11 +48,11 @@ pub fn task_lang_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribut
 				}
 			}
 
-			unsafe impl<F: FnOnce(&Context) -> Output, Output> Task for #ident<F, Output> {
+			impl<F: FnOnce(&Context) -> Output, Output> Task for #ident<F, Output> {
 				type Output<'ctx> = Output;
 
 				#(#attrs)*
-				fn run(self, #context) -> Output {
+				unsafe fn run(self, #context) -> Output {
 					self.0(#context_ident)
 				}
 			}
@@ -59,7 +85,7 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				#[asynchronous(traitext)]
 				#[inline(always)]
 				async fn call_once(self, args: Args) -> Output {
-					self.0(args, unsafe { get_context().await })
+					self.0(args, get_context().await)
 				}
 			}
 
@@ -69,7 +95,7 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				#[asynchronous(traitext)]
 				#[inline(always)]
 				async fn call_mut(&mut self, args: Args) -> Output {
-					self.0(args, unsafe { get_context().await })
+					self.0(args, get_context().await)
 				}
 			}
 
@@ -79,7 +105,7 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				#[asynchronous(traitext)]
 				#[inline(always)]
 				async fn call(&self, args: Args) -> Output {
-					self.0(args, unsafe { get_context().await })
+					self.0(args, get_context().await)
 				}
 			}
 		};

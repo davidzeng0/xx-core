@@ -81,7 +81,7 @@ impl TransformAsync {
 
 		parse_quote_spanned! { inner.await_token.span() =>
 			#(#attrs)*
-			::xx_core::coroutines::Context::run(#ident, #base)
+			::xx_core::coroutines::internal::unsafe_stub_do_not_use(#ident, #base)
 		}
 	}
 
@@ -115,6 +115,8 @@ impl TransformAsync {
 
 				break;
 			}
+
+			TransformItems {}.visit_expr_closure_mut(closure);
 
 			return Expr::Closure(closure.clone());
 		}
@@ -206,12 +208,12 @@ fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
 					}
 				}
 
-				unsafe impl<F: FnOnce(&Context) -> Output, Output> Task
+				impl<F: FnOnce(&Context) -> Output, Output> Task
 					for XXInternalAsyncSupportWrap<F, Output> {
 					type Output<'ctx> = Output;
 
 					#(#attrs)*
-					fn #run(self, context: &Context) -> Output {
+					unsafe fn #run(self, context: &Context) -> Output {
 						self.0(context)
 					}
 				}
@@ -222,6 +224,7 @@ fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
 
 fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 	let mut ret = output.clone();
+	let context = Context::ty();
 
 	ReplaceLifetime(lt).visit_type_mut(&mut ret);
 
@@ -240,11 +243,11 @@ fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 				}
 			}
 
-			unsafe impl<F: FnOnce(&Context) -> #ret> Task for XXInternalAsyncSupportWrap<F> {
+			impl<F: FnOnce(&Context) -> #ret> Task for XXInternalAsyncSupportWrap<F> {
 				type Output<#lt> = #output;
 
 				#[inline(always)]
-				fn run(self, context: &::xx_core::coroutines::Context) -> #ret {
+				unsafe fn run(self, context: #context) -> #ret {
 					self.0(context)
 				}
 			}

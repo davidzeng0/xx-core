@@ -200,19 +200,20 @@ fn get_raw_args(
 		});
 
 		let options = parse_options(&array.meta)?;
-		let length_type = options.len;
-		let into_length_type = length_type.as_ref().map(|len| {
-			quote_spanned! { len.span() => .try_into().unwrap() }
-		});
 
 		into_raw.push(parse_quote! { (#pat_ident).0 });
-		into_raw.push(parse_quote! { (#pat_ident).1#into_length_type });
+
+		if options.len.is_some() {
+			into_raw.push(parse_quote! { TryInto::try_into((#pat_ident).1).unwrap() });
+		} else {
+			into_raw.push(parse_quote! { (#pat_ident).1 });
+		}
 
 		vars.push(parse_quote_spanned! { pat_ident.span() =>
 			let #pat_ident = IntoRawArray::into_raw_array(#pat_ident);
 		});
 
-		if let Some(expr) = &length_type {
+		if let Some(expr) = &options.len {
 			len.ty = Box::new(parse_quote! { #expr });
 		}
 

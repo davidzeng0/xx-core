@@ -257,6 +257,20 @@ impl<T> MutPtr<T> {
 		pub unsafe fn write_bytes(self, val: u8, count: usize);
 		pub unsafe fn write(self, value: T);
 	}
+
+	/// # Safety
+	/// See [`std::ptr::copy`]
+	pub unsafe fn copy_from(self, src: Ptr<T>, count: usize) {
+		/* Safety: guaranteed by caller */
+		unsafe { self.ptr().copy_from(src.ptr, count) }
+	}
+
+	/// # Safety
+	/// See [`std::ptr::copy`]
+	pub unsafe fn copy_from_nonoverlapping(self, src: Ptr<T>, count: usize) {
+		/* Safety: guaranteed by caller */
+		unsafe { self.ptr().copy_from_nonoverlapping(src.ptr, count) }
+	}
 }
 
 pub struct PointerIterator<T, const MUT: bool> {
@@ -330,6 +344,22 @@ impl<T, const MUT: bool> Pointer<[T], MUT> {
 		let end = unsafe { start.add(self.len()) };
 
 		PointerIterator { start, end }
+	}
+}
+
+impl<T> MutPtr<[T]> {
+	/// # Safety
+	/// See [`std::ptr::copy`]
+	pub unsafe fn copy_from(self, src: Ptr<T>, count: usize) {
+		/* Safety: guaranteed by caller */
+		unsafe { self.cast::<T>().copy_from(src, count) }
+	}
+
+	/// # Safety
+	/// See [`std::ptr::copy`]
+	pub unsafe fn copy_from_nonoverlapping(self, src: Ptr<T>, count: usize) {
+		/* Safety: guaranteed by caller */
+		unsafe { self.cast::<T>().copy_from_nonoverlapping(src, count) }
 	}
 }
 

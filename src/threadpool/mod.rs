@@ -8,10 +8,12 @@ use std::thread;
 use crate::container::zero_alloc::linked_list::*;
 use crate::error::*;
 use crate::future::*;
+use crate::macros::container_of;
 use crate::os::signal::*;
 use crate::os::unistd::{get_system_configuration, SystemConfiguration};
 use crate::pointer::*;
-use crate::{container_of, debug, error, trace, warn};
+use crate::runtime::call_no_unwind;
+use crate::{debug, error, trace, warn};
 
 pub struct WorkContext {
 	cancelled: AtomicBool
@@ -50,7 +52,7 @@ impl<'a> Callback<'a> {
 		F: FnOnce(&WorkContext)
 	{
 		Self {
-			func: MutPtr::from(&mut *func).cast(),
+			func: ptr!(&mut *func).cast(),
 			call_once: fn_call_once::<F>,
 			phantom: PhantomData
 		}
@@ -206,7 +208,7 @@ impl Worker {
 			drop(work_queue);
 
 			/* Safety: guaranteed by caller */
-			unsafe { callback.call_once(&self.context) };
+			call_no_unwind(|| unsafe { callback.call_once(&self.context) });
 
 			/* Safety: send the completion */
 			unsafe { Request::complete(request, true) };
@@ -343,9 +345,13 @@ impl ThreadPool {
 			work_queue.append(&ptr!(work=>node));
 		}
 
-		if self.queue.idle_count.load(Ordering::Relaxed) != 0 {
+		let notify = self.queue.idle_count.load(Ordering::Relaxed) != 0;
+
+		if notify {
 			self.queue.notify.notify_one();
 		}
+
+		trace!(target: self, "## submit_direct(work = {:?}): notified = {}", work, notify);
 
 		CancelWork(work.cast())
 	}
@@ -365,7 +371,7 @@ impl ThreadPool {
 		let work = unsafe { cancel.0.as_mut() };
 
 		if work.node.linked() {
-			trace!(target: self, "## cancel_direct: SyncCancel");
+			trace!(target: self, "## cancel_direct(work = {:?}) = SyncCancel", cancel.0);
 
 			/* Safety: the node is linked */
 			unsafe { work.node.unlink_unchecked() };
@@ -385,11 +391,11 @@ impl ThreadPool {
 
 				drop(work_queue);
 
-				trace!(target: self, "## cancel_direct: AsyncCancel(interrupted = {})", self.interruptible);
+				trace!(target: self, "## cancel_direct(work = {:?}) = AsyncCancel(interrupted = {})", cancel.0, self.interruptible);
 
 				self.interrupt_worker(worker);
 			} else {
-				trace!(target: self, "## cancel_direct: AlreadyCompleted");
+				trace!(target: self, "## cancel_direct(work = {:?}) = AlreadyCompleted", cancel.0);
 			}
 		}
 	}

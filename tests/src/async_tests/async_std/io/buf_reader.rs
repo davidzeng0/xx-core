@@ -8,7 +8,7 @@ use crate::async_tests::util::read::*;
 #[main]
 #[test]
 pub async fn test_buf_reader() -> Result<()> {
-	let context = unsafe { get_context().await };
+	let context = get_context().await;
 	let mut reader = BufReader::new(Sequential::new());
 	let mut buf = [0u8; 20];
 	let mut stream_pos = 0;

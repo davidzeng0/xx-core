@@ -37,7 +37,8 @@ pub unsafe trait Environment: 'static {
 	///
 	/// # Safety
 	/// the environment and the contained context must be alive while it's
-	/// executing this function is unsafe so that Context::run may be safe
+	/// executing this function is unsafe so that Context::run doesn't need
+	/// these guarantees
 	unsafe fn clone(&self) -> Self;
 
 	/// Returns the executor
@@ -202,7 +203,8 @@ pub struct Context {
 impl Context {
 	/// # Safety
 	/// the context must be alive while it's executing
-	/// this function is unsafe so that Context::run may be safe
+	/// this function is unsafe so that Context::run doesn't need
+	/// these guarantees
 	///
 	/// must call `set_worker`
 	#[must_use]
@@ -225,12 +227,16 @@ impl Context {
 	}
 
 	/// Runs async task `T`
+	///
+	/// # Safety
+	/// See [`scoped`]
 	#[inline(always)]
-	pub fn run<T>(&self, task: T) -> T::Output<'_>
+	pub unsafe fn run<T>(&self, task: T) -> T::Output<'_>
 	where
 		T: Task
 	{
-		task.run(self)
+		/* Safety: guaranteed by caller */
+		unsafe { task.run(self) }
 	}
 
 	/// Safety: same as Worker::suspend
@@ -250,7 +256,7 @@ impl Context {
 	/// # Panics
 	/// If a thread safe block was requested and isn't supported
 	#[inline]
-	pub fn block_on<F>(&self, future: F, thread_safe: bool) -> F::Output
+	pub(super) unsafe fn block_on<F>(&self, future: F, thread_safe: bool) -> F::Output
 	where
 		F: Future
 	{
@@ -296,11 +302,11 @@ impl Context {
 		}
 	}
 
-	pub fn current_budget(&self) -> u16 {
+	pub(super) fn current_budget(&self) -> u16 {
 		self.data.budget.get()
 	}
 
-	pub fn decrease_budget(&self, amount: u16) -> Option<u16> {
+	pub(super) fn decrease_budget(&self, amount: u16) -> Option<u16> {
 		let result = self.data.budget.get().checked_sub(amount);
 
 		self.data.budget.set(result.unwrap_or(0));
@@ -347,13 +353,13 @@ impl Context {
 	/// Returns true if the worker is being interrupted
 	///
 	/// In the presence of interrupt guards, this returns false
-	pub fn interrupted(&self) -> bool {
+	pub(super) fn interrupted(&self) -> bool {
 		self.data.guards.get() == 0 && self.data.interrupted.get()
 	}
 
 	/// Clears any interrupts or pending interrupts (due to guards) on the
 	/// current worker
-	pub fn clear_interrupt(&self) {
+	pub(super) fn clear_interrupt(&self) {
 		self.data.interrupted.set(false);
 	}
 

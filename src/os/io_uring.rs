@@ -524,11 +524,17 @@ define_struct! {
 	}
 }
 
-#[repr(C)]
-pub struct Probe {
-	pub probe: ProbeReg,
-	pub ops: [ProbeOp]
+define_struct! {
+	pub struct ProbeDef<T: ?Sized> {
+		pub probe: ProbeReg,
+		pub ops: T
+	}
 }
+
+pub const PROBE_OPS_COUNT: usize = 256;
+
+pub type ProbeUnsized = ProbeDef<[ProbeOp]>;
+pub type Probe = ProbeDef<[ProbeOp; PROBE_OPS_COUNT]>;
 
 define_enum! {
 	pub enum RestrictionOpCode {
@@ -871,14 +877,6 @@ const REGISTER_MAP: &[(RegisterOp, u32)] = &[
 
 #[allow(clippy::missing_panics_doc)]
 pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
-	const OPS_COUNT: usize = 256;
-
-	#[repr(C)]
-	struct Probe {
-		probe: ProbeReg,
-		ops: [ProbeOp; OPS_COUNT]
-	}
-
 	let mut params = Parameters { sq_entries: 1, ..Default::default() };
 
 	let fd = match io_uring_setup(params.sq_entries, &mut params) {
@@ -889,10 +887,7 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 		}
 	};
 
-	let mut probe = Probe {
-		probe: ProbeReg::default(),
-		ops: [ProbeOp::default(); OPS_COUNT]
-	};
+	let mut probe = Probe::default();
 
 	/* Safety: valid probe object */
 	let probe_result = unsafe {
@@ -901,7 +896,7 @@ pub fn io_uring_detect_features() -> OsResult<Option<IoRingFeatures>> {
 			RegisterOp::RegisterProbe,
 			ptr!(&mut probe).cast(),
 			#[allow(clippy::cast_possible_truncation)]
-			(OPS_COUNT as u32)
+			(PROBE_OPS_COUNT as u32)
 		)
 	};
 

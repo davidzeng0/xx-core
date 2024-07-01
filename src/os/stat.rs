@@ -1,3 +1,8 @@
+use num_traits::FromPrimitive;
+
+use super::dirent::FileType;
+use super::fcntl::AtFlag;
+use super::openat::into_raw_dirfd;
 use super::*;
 
 define_enum! {
@@ -73,4 +78,40 @@ impl Statx {
 	pub fn mask(&self) -> BitFlags<StatxMask> {
 		BitFlags::from_bits_truncate(self.mask)
 	}
+
+	#[must_use]
+	pub fn file_type(&self) -> Option<FileType> {
+		if !self.mask().intersects(StatxMask::Mode) {
+			return None;
+		}
+
+		FileType::from_u16(self.mode >> 12)
+	}
+}
+
+pub mod internal {
+	use super::*;
+
+	#[syscall_define(Statx)]
+	pub fn statx(
+		dirfd: RawFd, pathname: &CStr, flags: u32, mask: u32, statx: &mut Statx
+	) -> OsResult<()>;
+}
+
+pub fn statx(
+	dirfd: Option<BorrowedFd<'_>>, pathname: &CStr, flags: u32, mask: u32, statx: &mut Statx
+) -> OsResult<()> {
+	let dirfd = into_raw_dirfd(dirfd);
+
+	internal::statx(dirfd, pathname, flags, mask, statx)
+}
+
+pub fn statx_fd(fd: BorrowedFd<'_>, flags: u32, mask: u32, statx: &mut Statx) -> OsResult<()> {
+	internal::statx(
+		fd.as_raw_fd(),
+		c"",
+		flags | (AtFlag::EmptyPath as u32),
+		mask,
+		statx
+	)
 }
