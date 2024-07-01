@@ -42,10 +42,6 @@ pub const DEFAULT_BUDGET: u32 = 128;
 pub trait Task {
 	type Output<'ctx>;
 
-	/// # Safety
-	/// The task must be able to suspend
-	///
-	/// See [`scoped`] for more information
 	async fn run(self) -> Self::Output<'_>;
 }
 
