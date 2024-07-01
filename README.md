@@ -17,3 +17,4 @@ Core modules.
 - Optimization hints
 - Error handling
 - Synchronization
+- Thread pool
