@@ -106,10 +106,7 @@ impl<C: Context> ContextError<C> {
 		let bt = unsafe { ptr!(this=>backtrace.as_ref()) };
 
 		/* Safety: valid ptr */
-		let bt = bt.or_else(|| unsafe { ptr!(this=>error.backtrace()) });
-
-		/* Safety: guaranteed by caller */
-		unsafe { transmute(bt) }
+		bt.or_else(|| unsafe { ptr!(this=>error.backtrace()) })
 	}
 
 	unsafe fn drop(this: MutNonNull<()>) {

@@ -75,10 +75,7 @@ impl<E> CustomError<E> {
 		let this = this.cast::<Self>();
 
 		/* Safety: valid ptr */
-		let bt = unsafe { ptr!(this=>backtrace.as_ref()) };
-
-		/* Safety: guaranteed by caller */
-		unsafe { transmute(bt) }
+		unsafe { ptr!(this=>backtrace.as_ref()) }
 	}
 
 	unsafe fn drop(this: MutNonNull<()>) {
