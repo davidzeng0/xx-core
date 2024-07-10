@@ -103,7 +103,7 @@ pub enum RecvError {
 	Lagged(usize)
 }
 
-#[errors]
+#[errors(?Debug + ?Display)]
 #[error("Channel closed")]
 pub struct SendError<T>(pub T);
 

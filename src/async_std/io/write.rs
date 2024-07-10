@@ -32,7 +32,7 @@ where
 /// The async equivalent of [`std::io::Write`]
 ///
 /// This trait is object safe
-#[asynchronous]
+#[asynchronous(impl(mut, box))]
 pub trait Write {
 	/// Write from `buf`, returning the amount of bytes wrote
 	///

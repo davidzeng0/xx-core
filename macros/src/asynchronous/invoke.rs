@@ -41,33 +41,114 @@ pub enum Lang {
 	Task
 }
 
+#[derive(Default, Clone)]
+pub struct ImplGen {
+	pub impl_ref: Option<Span>,
+	pub impl_mut: Option<Span>,
+	pub impl_box: Option<Span>
+}
+
+struct Ident(proc_macro2::Ident);
+
+impl Parse for Ident {
+	fn parse(input: ParseStream<'_>) -> Result<Self> {
+		let ident = input.step(|cursor| {
+			if let Some(ident) = cursor.ident() {
+				Ok(ident)
+			} else {
+				Err(cursor.error("Expected an identifier"))
+			}
+		})?;
+
+		Ok(Self(ident))
+	}
+}
+
+impl ToTokens for Ident {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		self.0.to_tokens(tokens);
+	}
+}
+
+impl ImplGen {
+	fn parse(&mut self, input: ParseStream<'_>) -> Result<()> {
+		let options = Punctuated::<Ident, Token![,]>::parse_terminated(input)?;
+
+		for option in options {
+			let span = match option.0.to_string().as_ref() {
+				"ref" => &mut self.impl_ref,
+				"mut" => &mut self.impl_mut,
+				"box" => &mut self.impl_box,
+				_ => {
+					let message = "Unknown option";
+
+					return Err(Error::new_spanned(option, message));
+				}
+			};
+
+			if span.is_some() {
+				let message = "Duplicate option";
+
+				return Err(Error::new_spanned(option, message));
+			}
+
+			*span = Some(option.span());
+		}
+
+		Ok(())
+	}
+
+	pub fn span(&self) -> Option<Span> {
+		self.impl_mut.or(self.impl_box)
+	}
+}
+
 #[derive(Clone)]
 pub struct AttributeArgs {
 	pub async_kind: (AsyncKind, Span),
+	pub impl_gen: ImplGen,
 	pub language: Option<(Lang, Span)>
 }
 
 impl AttributeArgs {
-	pub const fn new(async_kind: AsyncKind, span: Span) -> Self {
-		Self { async_kind: (async_kind, span), language: None }
+	pub fn new(async_kind: AsyncKind, span: Span) -> Self {
+		Self {
+			async_kind: (async_kind, span),
+			language: None,
+			impl_gen: ImplGen::default()
+		}
 	}
 
-	pub fn parse(args: TokenStream) -> Result<Self> {
-		let mut this = Self::new(AsyncKind::Default, args.span());
-		let options = Punctuated::<Ident, Token![,]>::parse_terminated.parse2(args)?;
+	pub fn parse(input: ParseStream<'_>) -> Result<Self> {
+		let mut this = Self::new(AsyncKind::Default, input.span());
 
-		for option in &options {
-			if this.async_kind.0 != AsyncKind::Default {
-				let message = "Invalid combination of options";
+		while !input.is_empty() {
+			let option = input.parse::<Ident>()?;
+			let name = option.0.to_string();
 
-				return Err(Error::new_spanned(options, message));
+			match name.as_ref() {
+				"impl" => {
+					let content;
+
+					parenthesized!(content in input);
+
+					this.impl_gen.parse(&content)?;
+				}
+
+				_ => {
+					let kind = name
+						.parse()
+						.map_err(|()| Error::new_spanned(&option, "Unknown option"))?;
+
+					if this.async_kind.0 != AsyncKind::Default {
+						let message = "Invalid combination of options";
+
+						return Err(Error::new_spanned(option, message));
+					}
+
+					this.async_kind = (kind, option.span());
+				}
 			}
-
-			let kind = option
-				.to_string()
-				.parse()
-				.map_err(|()| Error::new_spanned(option, "Unknown option"))?;
-			this.async_kind = (kind, option.span());
 		}
 
 		Ok(this)

@@ -2,11 +2,55 @@ use super::*;
 
 #[derive(Default)]
 struct Attributes {
+	no_display: Option<Span>,
+	no_debug: Option<Span>
+}
+
+impl Attributes {
+	fn parse(tokens: TokenStream) -> Result<Self> {
+		let mut this = Self::default();
+		let bounds = Punctuated::<TraitBound, Token![+]>::parse_terminated.parse2(tokens)?;
+
+		for bound in bounds {
+			if let Some(lt) = bound.lifetimes {
+				return Err(Error::new_spanned(lt, "Not allowed"));
+			}
+
+			if !matches!(bound.modifier, TraitBoundModifier::Maybe(_)) {
+				let msg = "Expected leading `?`";
+
+				return Err(Error::new_spanned(bound, msg));
+			}
+
+			let msg = "Expected `Debug` or `Display`";
+			let Some(ident) = &bound.path.get_ident() else {
+				return Err(Error::new_spanned(bound.path, msg));
+			};
+
+			let option = match ident.to_string().as_ref() {
+				"Display" => &mut this.no_display,
+				"Debug" => &mut this.no_debug,
+				_ => return Err(Error::new_spanned(bound.path, msg))
+			};
+
+			if option.is_some() {
+				return Err(Error::new_spanned(bound.path, "Duplicate bound"));
+			}
+
+			*option = Some(ident.span());
+		}
+
+		Ok(this)
+	}
+}
+
+#[derive(Default)]
+struct VariantAttrs {
 	from: Option<Attribute>,
 	source: Option<(Attribute, usize)>
 }
 
-impl Attributes {
+impl VariantAttrs {
 	fn get_attrs(&mut self, field: &mut Field, index: usize) {
 		if self.from.is_none() {
 			self.from = remove_attr_path(&mut field.attrs, "from");
@@ -21,14 +65,14 @@ impl Attributes {
 }
 
 struct VariantFields {
-	attributes: Attributes,
+	attributes: VariantAttrs,
 	members: Vec<(Member, Type)>,
 	named: bool
 }
 
 impl VariantFields {
 	fn new(fields: &mut Fields) -> Self {
-		let mut attributes = Attributes::default();
+		let mut attributes = VariantAttrs::default();
 		let mut members = Vec::new();
 
 		match fields {
@@ -195,6 +239,7 @@ fn add_bounds(
 }
 
 struct Input {
+	attrs: Attributes,
 	input: DeriveInput,
 	repr: Repr
 }
@@ -214,12 +259,14 @@ impl Input {
 		Ok(variants)
 	}
 
-	fn parse(item: TokenStream) -> Result<Self> {
+	fn parse(item: TokenStream, attrs: Attributes) -> Result<Self> {
 		let mut input: DeriveInput = parse2(item)?;
 
-		input.attrs.push(parse_quote! {
-			#[derive(::std::fmt::Debug)]
-		});
+		if attrs.no_debug.is_none() {
+			input.attrs.push(parse_quote! {
+				#[derive(::std::fmt::Debug)]
+			});
+		}
 
 		input.attrs.push(parse_quote! {
 			#[allow(missing_copy_implementations)]
@@ -236,10 +283,11 @@ impl Input {
 			Data::Union(_) => return Err(Error::new_spanned(input, "Unions are not supported"))
 		};
 
-		Ok(Self { input, repr })
+		Ok(Self { attrs, input, repr })
 	}
 
 	fn expand(&self) -> Result<TokenStream> {
+		let orig = &self.input;
 		let name = &self.input.ident;
 		let (impl_generics, type_generics, where_clause) = self.input.generics.split_for_impl();
 
@@ -306,24 +354,39 @@ impl Input {
 			}
 		};
 
-		let display = (!displays.is_empty()).then(|| {
-			let where_clause = add_bounds(
-				&self.input.generics,
-				where_clause,
-				&[parse_quote! { ::std::fmt::Display }]
-			);
+		let mut fmts = Vec::new();
 
-			quote! {
-				impl #impl_generics ::std::fmt::Display for #name #type_generics #where_clause {
-					fn fmt(&self, #fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-						#[allow(unused_variables)]
-						match self {
-							#displays
+		if !displays.is_empty() {
+			let mut clause = None;
+			let where_clause = if self.attrs.no_display.is_some() {
+				where_clause
+			} else {
+				Some(&*clause.insert(add_bounds(
+					&self.input.generics,
+					where_clause,
+					&[parse_quote! { ::std::fmt::Display }]
+				)))
+			};
+
+			let gen_fmt = |trait_name| {
+				quote! {
+					impl #impl_generics ::std::fmt::#trait_name for #name #type_generics #where_clause {
+						fn fmt(&self, #fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+							#[allow(unused_variables)]
+							match self {
+								#displays
+							}
 						}
 					}
 				}
+			};
+
+			fmts.push(gen_fmt(quote! { Display }));
+
+			if self.attrs.no_debug.is_some() {
+				fmts.push(gen_fmt(quote! { Debug }));
 			}
-		});
+		}
 
 		let mut from_impls = Vec::new();
 
@@ -341,7 +404,8 @@ impl Input {
 		sources.push(quote! { _ => None });
 
 		Ok(quote! {
-			#display
+			#orig
+			#(#fmts)*
 
 			#(#from_impls)*
 
@@ -380,16 +444,10 @@ impl Input {
 }
 
 fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-	ensure_empty(attr)?;
+	let attrs = Attributes::parse(attr)?;
+	let input = Input::parse(item, attrs)?;
 
-	let input = Input::parse(item)?;
-	let orig = &input.input;
-	let expansion = input.expand()?;
-
-	Ok(quote! {
-		#orig
-		#expansion
-	})
+	input.expand()
 }
 
 pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {

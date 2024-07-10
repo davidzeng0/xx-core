@@ -28,7 +28,7 @@ mod error {
 		Closed
 	}
 
-	#[errors]
+	#[errors(?Debug + ?Display)]
 	pub enum SendError<T> {
 		#[error("Channel full")]
 		#[kind = ErrorKind::WouldBlock]

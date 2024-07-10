@@ -21,7 +21,7 @@ pub mod unistd;
 
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
-use std::mem::{size_of, size_of_val, transmute, MaybeUninit};
+use std::mem::{size_of, size_of_val, transmute};
 use std::os::fd::*;
 use std::path::Path;
 use std::time::Duration;
@@ -30,6 +30,7 @@ use enumflags2::*;
 use syscall::*;
 
 use crate::error::*;
+use crate::impls::Buffer;
 use crate::macros::syscall_define;
 use crate::pointer::*;
 
@@ -195,36 +196,17 @@ macro_rules! define_struct {
 	(
 		$(#$attrs: tt)*
 		$vis: vis
-		struct $name: ident<$generic:ident: ?Sized>
-		$($rest: tt)*
+		struct $name: ident $(<$generic:ident: ?Sized>)?
+		{ $($rest: tt)* }
 	) => {
 		#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 		#[repr(C)]
 		$(#$attrs)*
-		$vis struct $name<$generic: ?Sized> $($rest)*
+		$vis struct $name $(<$generic: ?Sized>)?
+		{ $($rest)* }
 
 		#[allow(deprecated)]
-		impl<$generic> ::std::default::Default for $name<$generic> {
-			fn default() -> Self {
-				/* Safety: repr(C) */
-				unsafe { ::std::mem::zeroed() }
-			}
-		}
-	};
-
-	(
-		$(#$attrs: tt)*
-		$vis: vis
-		struct $name: ident
-		$($rest: tt)*
-	) => {
-		#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-		#[repr(C)]
-		$(#$attrs)*
-		$vis struct $name $($rest)*
-
-		#[allow(deprecated)]
-		impl ::std::default::Default for $name {
+		impl $(<$generic>)? ::std::default::Default for $name $(<$generic>)? {
 			fn default() -> Self {
 				/* Safety: repr(C) */
 				unsafe { ::std::mem::zeroed() }
@@ -296,21 +278,12 @@ where
 	if bytes.len() >= MAX_STACK_ALLOCATION {
 		allocate_cstr(bytes, func)
 	} else {
-		let mut buf = MaybeUninit::<[u8; MAX_STACK_ALLOCATION]>::uninit();
-		let ptr = MutPtr::from(buf.as_mut_ptr()).cast();
+		let mut buf = Buffer::<MAX_STACK_ALLOCATION>::new();
 
-		#[allow(clippy::arithmetic_side_effects)]
-		let buf_ptr = MutPtr::slice_from_raw_parts(ptr, bytes.len() + 1);
+		buf.append(bytes);
+		buf.append(&[0]);
 
-		/* Safety: bytes len is in range */
-		unsafe {
-			buf_ptr.copy_from_nonoverlapping(bytes.as_ptr().into(), bytes.len());
-			ptr.add(bytes.len()).write(0);
-		}
-
-		/* Safety: data is initialized */
-		let str = CStr::from_bytes_with_nul(unsafe { buf_ptr.as_ref() })
-			.map_err(|_| ErrorKind::invalid_cstr())?;
+		let str = CStr::from_bytes_with_nul(&buf).map_err(|_| ErrorKind::invalid_cstr())?;
 
 		func(str)
 	}

@@ -1,13 +1,27 @@
+#![allow(clippy::module_name_repetitions)]
+
 use super::*;
 
 /// Splits a stream into a read half and a write half.
-pub trait Split: Read + Write {
-	type Reader: Read;
-	type Writer: Write;
+pub trait SplitMut {
+	type Reader<'a>: Read
+	where
+		Self: 'a;
 
-	fn split(&mut self) -> (Self::Reader, Self::Writer) {
+	type Writer<'a>: Write
+	where
+		Self: 'a;
+
+	fn split(&mut self) -> (Self::Reader<'_>, Self::Writer<'_>) {
 		self.try_split().unwrap()
 	}
 
-	fn try_split(&mut self) -> Result<(Self::Reader, Self::Writer)>;
+	fn try_split(&mut self) -> Result<(Self::Reader<'_>, Self::Writer<'_>)>;
+}
+
+pub trait Split {
+	type Reader: Read;
+	type Writer: Write;
+
+	fn try_split(self) -> Result<(Self::Reader, Self::Writer)>;
 }

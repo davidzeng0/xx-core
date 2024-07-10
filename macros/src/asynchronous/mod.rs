@@ -85,6 +85,15 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 		_ => ()
 	}
 
+	if let Some(span) = attrs.impl_gen.span() {
+		if !matches!(
+			(&item, attrs.async_kind.0),
+			(AsyncItem::Trait(_), AsyncKind::Default)
+		) {
+			return Err(Error::new(span, "Not allowed here"));
+		}
+	}
+
 	if attrs.language.is_some() {
 		return language_impl(attrs, item);
 	}
@@ -153,7 +162,7 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 
 pub fn asynchronous(attrs: TokenStream, item: TokenStream) -> TokenStream {
 	try_expand(|| {
-		let attrs = AttributeArgs::parse(attrs)?;
+		let attrs = AttributeArgs::parse.parse2(attrs)?;
 
 		try_transform(attrs, item)
 	})

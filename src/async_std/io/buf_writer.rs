@@ -11,6 +11,56 @@ pub struct BufWriter<W: ?Sized> {
 }
 
 #[asynchronous]
+impl<W> BufWriter<W> {
+	/// Creates a new `BufWriter<W>` with a [`DEFAULT_BUFFER_SIZE`]
+	pub fn new(inner: W) -> Self {
+		Self::with_capacity(inner, DEFAULT_BUFFER_SIZE)
+	}
+
+	/// Creates a new `BufWriter<W>` with the specified buffer capacity
+	pub fn with_capacity(inner: W, capacity: usize) -> Self {
+		Self::from_parts(inner, Vec::with_capacity(capacity), 0)
+	}
+
+	/// Creates a new `BufWriter<W>` from parts
+	///
+	/// # Panics
+	/// If `pos` > `buf.len()`
+	pub fn from_parts(writer: W, mut buf: Vec<u8>, pos: usize) -> Self {
+		let len = buf.len();
+
+		assert!(pos <= len);
+
+		buf.resize(buf.capacity(), 0);
+
+		Self {
+			writer,
+			data: buf.into_boxed_slice(),
+			buffered: pos..len
+		}
+	}
+
+	/// Unwraps this `BufWriter<W>`, returning the underlying writer
+	///
+	/// Any leftover data in the internal buffer is lost
+	pub fn into_inner(self) -> W {
+		self.writer
+	}
+
+	/// Unwraps this `BufWriter<W>`, returning its parts
+	///
+	/// The `Vec<u8>` contains the buffered data,
+	/// and the `usize` is the position to start flushing
+	pub fn into_parts(self) -> (W, Vec<u8>, usize) {
+		let mut buf = self.data.into_vec();
+
+		buf.truncate(self.buffered.end);
+
+		(self.writer, buf, self.buffered.start)
+	}
+}
+
+#[asynchronous]
 impl<W: Write + ?Sized> BufWriter<W> {
 	/// Discard all buffered data
 	fn discard(&mut self) {
@@ -56,68 +106,6 @@ impl<W: Write + ?Sized> BufWriter<W> {
 		self.discard();
 
 		Ok(())
-	}
-
-	/// Creates a new `BufWriter<W>` with a [`DEFAULT_BUFFER_SIZE`]
-	pub fn new(inner: W) -> Self
-	where
-		W: Sized
-	{
-		Self::with_capacity(inner, DEFAULT_BUFFER_SIZE)
-	}
-
-	/// Creates a new `BufWriter<W>` with the specified buffer capacity
-	pub fn with_capacity(inner: W, capacity: usize) -> Self
-	where
-		W: Sized
-	{
-		Self::from_parts(inner, Vec::with_capacity(capacity), 0)
-	}
-
-	/// Creates a new `BufWriter<W>` from parts
-	///
-	/// # Panics
-	/// If `pos` > `buf.len()`
-	pub fn from_parts(writer: W, mut buf: Vec<u8>, pos: usize) -> Self
-	where
-		W: Sized
-	{
-		let len = buf.len();
-
-		assert!(pos <= len);
-
-		buf.resize(buf.capacity(), 0);
-
-		Self {
-			writer,
-			data: buf.into_boxed_slice(),
-			buffered: pos..len
-		}
-	}
-
-	/// Unwraps this `BufWriter<W>`, returning the underlying writer
-	///
-	/// Any leftover data in the internal buffer is lost
-	pub fn into_inner(self) -> W
-	where
-		W: Sized
-	{
-		self.writer
-	}
-
-	/// Unwraps this `BufWriter<W>`, returning its parts
-	///
-	/// The `Vec<u8>` contains the buffered data,
-	/// and the `usize` is the position to start flushing
-	pub fn into_parts(self) -> (W, Vec<u8>, usize)
-	where
-		W: Sized
-	{
-		let mut buf = self.data.into_vec();
-
-		buf.truncate(self.buffered.end);
-
-		(self.writer, buf, self.buffered.start)
 	}
 
 	pub async fn write_from_once<R>(&mut self, reader: &mut R) -> Result<usize>

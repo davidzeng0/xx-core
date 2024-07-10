@@ -49,3 +49,9 @@ impl<T: Copy + PartialEq> PartialEq<T> for Cell<T> {
 		self.get().eq(other)
 	}
 }
+
+impl<T: Copy + PartialOrd> PartialOrd<T> for Cell<T> {
+	fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
+		self.get().partial_cmp(other)
+	}
+}

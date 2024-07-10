@@ -325,7 +325,7 @@ impl Context {
 
 		#[allow(clippy::never_loop)]
 		loop {
-			if this.data.guards.get() > 0 {
+			if this.data.guards > 0 {
 				break;
 			}
 
@@ -354,7 +354,7 @@ impl Context {
 	///
 	/// In the presence of interrupt guards, this returns false
 	pub(super) fn interrupted(&self) -> bool {
-		self.data.guards.get() == 0 && self.data.interrupted.get()
+		self.data.guards == 0 && self.data.interrupted.get()
 	}
 
 	/// Clears any interrupts or pending interrupts (due to guards) on the

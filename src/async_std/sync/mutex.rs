@@ -1,65 +1,23 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::hint::spin_loop;
-use std::mem::discriminant;
 use std::ops::{Deref, DerefMut};
 use std::panic::*;
 use std::sync::atomic::*;
 use std::sync::*;
-use std::{error, fmt, result};
+use std::{fmt, result};
 
 use super::*;
 use crate::sync::poison::*;
 
+#[errors(?Debug + ?Display)]
 pub enum LockError<T> {
-	Poisoned(PoisonError<T>),
+	#[error(transparent)]
+	Poisoned(#[from] PoisonError<T>),
+
+	#[error("Lock failed: the operation would block and the current task is interrupted")]
+	#[kind = ErrorKind::Interrupted]
 	Interrupted
-}
-
-impl<T> fmt::Debug for LockError<T> {
-	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::Poisoned(f0) => fmt::Debug::fmt(f0, fmt),
-			Self::Interrupted => fmt.write_str("Interrupted")
-		}
-	}
-}
-
-impl<T> fmt::Display for LockError<T> {
-	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::Poisoned(f0) => fmt::Display::fmt(f0, fmt),
-			Self::Interrupted => fmt.write_str(
-				"Lock failed: the operation would block and the current task is interrupted"
-			)
-		}
-	}
-}
-
-impl<T> From<PoisonError<T>> for LockError<T> {
-	fn from(value: PoisonError<T>) -> Self {
-		Self::Poisoned(value)
-	}
-}
-
-impl<T> PartialEq for LockError<T> {
-	fn eq(&self, other: &Self) -> bool {
-		discriminant(self) == discriminant(other)
-	}
-}
-
-impl<T> error::Error for LockError<T> {}
-
-impl<T> crate::error::internal::ErrorImpl for LockError<T>
-where
-	Self: Send + Sync + 'static
-{
-	fn kind(&self) -> ErrorKind {
-		match self {
-			Self::Poisoned(_) => ErrorKind::Other,
-			Self::Interrupted => ErrorKind::Interrupted
-		}
-	}
 }
 
 pub type LockResult<T> = result::Result<T, LockError<T>>;

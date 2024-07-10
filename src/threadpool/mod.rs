@@ -118,9 +118,9 @@ struct Queue {
 }
 
 impl Queue {
-	const fn new() -> Self {
+	const fn new(threads: usize) -> Self {
 		Self {
-			idle_count: AtomicUsize::new(0),
+			idle_count: AtomicUsize::new(threads),
 			work: Mutex::new(LinkedList::new()),
 			notify: Condvar::new(),
 			closed: AtomicBool::new(false)
@@ -178,6 +178,8 @@ impl Worker {
 	#[allow(clippy::unwrap_used, clippy::multiple_unsafe_ops_per_block)]
 	fn run(&self) {
 		let mut work_queue = self.queue.work.lock().unwrap();
+
+		self.queue.idle_count.fetch_sub(1, Ordering::Relaxed);
 
 		while !self.queue.closed.load(Ordering::Relaxed) {
 			let Some(node) = work_queue.pop_front() else {
@@ -258,7 +260,7 @@ impl ThreadPool {
 
 	#[allow(clippy::missing_panics_doc, clippy::expect_used)]
 	pub fn new(max_workers: usize) -> Result<Self> {
-		let queue = Queue::new().pin_arc();
+		let queue = Queue::new(max_workers).pin_arc();
 		let mut threads = Vec::with_capacity(max_workers);
 		let mut error = None;
 

@@ -5,7 +5,7 @@ use super::*;
 /// The async equivalent of [`std::io::Seek`]
 ///
 /// This trait is object safe
-#[asynchronous]
+#[asynchronous(impl(mut, box))]
 pub trait Seek {
 	/// Seek to an offset, in bytes
 	///

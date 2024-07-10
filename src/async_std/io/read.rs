@@ -87,7 +87,7 @@ where
 /// The async equivalent of [`std::io::Read`]
 ///
 /// This trait is object safe
-#[asynchronous]
+#[asynchronous(impl(mut, box))]
 pub trait Read {
 	/// Read into `buf`, returning the amount of bytes read
 	///
@@ -318,7 +318,7 @@ pub use read_wrapper;
 /// The async equivalent of [`std::io::BufRead`]
 ///
 /// This trait is object safe
-#[asynchronous]
+#[asynchronous(impl(mut, box))]
 pub trait BufRead: Read {
 	/// Fill any remaining space in the internal buffer
 	/// up to `amount` total unconsumed bytes
