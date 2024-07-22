@@ -89,7 +89,7 @@ impl Executor {
 
 	/// Switch from whichever `current` worker is running to the new `worker`
 	///
-	/// # Safety:
+	/// # Safety
 	/// the passed `worker` must not exist on the worker call stack
 	/// as workers cannot resume each other recursively.
 	///

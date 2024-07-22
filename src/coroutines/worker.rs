@@ -49,6 +49,8 @@ impl Worker {
 		self.caller.get()
 	}
 
+	/// # Safety
+	/// setting an invalid worker will most likely result in undefined behavior
 	pub(super) unsafe fn suspend_to(&self, to: Ptr<Self>) {
 		self.caller.set(to);
 	}

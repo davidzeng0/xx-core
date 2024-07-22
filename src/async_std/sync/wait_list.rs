@@ -162,6 +162,10 @@ struct Waiter<T> {
 }
 
 impl<T> Waiter<T> {
+	/// # Safety
+	/// valid `this` ptr
+	/// must no longer be linked
+	/// must be called no more than once
 	unsafe fn complete(this: Ptr<Self>, value: WaitResult<MaybePanic<T>>) {
 		/* Safety: guaranteed by caller */
 		let request = unsafe { ptr!(this=>request) };
@@ -170,6 +174,10 @@ impl<T> Waiter<T> {
 		unsafe { Request::complete(request, value) };
 	}
 
+	/// # Safety
+	/// valid `node` ptr
+	/// must no longer be linked
+	/// must be called no more than once
 	unsafe fn complete_node(node: Ptr<Node>, value: WaitResult<MaybePanic<T>>) {
 		/* Safety: guaranteed by caller */
 		let waiter = unsafe { container_of!(node, Self=>node) };
@@ -188,6 +196,8 @@ pub struct RawWaitList<T = ()> {
 
 #[asynchronous]
 impl<T: Clone> RawWaitList<T> {
+	/// # Safety
+	/// must pin the list before calling any of its methods
 	#[must_use]
 	pub const unsafe fn new() -> Self {
 		Self {

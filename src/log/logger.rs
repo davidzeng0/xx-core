@@ -16,6 +16,7 @@ lazy_static! {
 		Mutex::new(BufWriter::with_capacity(1024, stderr()));
 }
 
+#[allow(clippy::missing_panics_doc)]
 fn get_stderr() -> MutexGuard<'static, BufWriter<Stderr>> {
 	#[allow(clippy::unwrap_used)]
 	STDERR.lock().unwrap()
@@ -124,7 +125,7 @@ impl Log for Logger {
 }
 
 #[track_caller]
-fn panic_hook(info: &PanicInfo<'_>) {
+fn panic_hook(info: &PanicHookInfo<'_>) {
 	let msg = match info.payload().downcast_ref::<&'static str>() {
 		Some(s) => *s,
 		None => match info.payload().downcast_ref::<String>() {

@@ -56,6 +56,8 @@ impl<C: Context> ErrorImpl for ContextError<C> {
 }
 
 impl<C: Context> ContextError<C> {
+	/// # Safety
+	/// See [`DynError::kind`]
 	unsafe fn kind(this: MutNonNull<()>) -> ErrorKind {
 		let this = this.cast::<Self>();
 
@@ -63,6 +65,8 @@ impl<C: Context> ContextError<C> {
 		unsafe { ptr!(this=>error.kind()) }
 	}
 
+	/// # Safety
+	/// See [`DynError::meta`]
 	unsafe fn meta(this: MutNonNull<()>) -> MutNonNull<dyn ErrorImpl> {
 		let this = this.cast::<Self>().as_mut_ptr() as *mut dyn ErrorImpl;
 
@@ -70,6 +74,8 @@ impl<C: Context> ContextError<C> {
 		unsafe { MutNonNull::new_unchecked(this.into()) }
 	}
 
+	/// # Safety
+	/// See [`DynError::downcast_ptr`]
 	unsafe fn downcast_ptr(this: MutNonNull<()>, type_id: TypeId) -> Option<MutNonNull<()>> {
 		let this = this.cast::<Self>();
 
@@ -80,6 +86,8 @@ impl<C: Context> ContextError<C> {
 		unsafe { crate::error::Error::downcast_ptr(ptr, type_id) }
 	}
 
+	/// # Safety
+	/// See [`DynError::downcast_owned`]
 	unsafe fn downcast_owned(
 		this: MutNonNull<()>, type_id: TypeId, out: MutPtr<MaybeUninit<()>>
 	) -> bool {
@@ -99,6 +107,8 @@ impl<C: Context> ContextError<C> {
 		true
 	}
 
+	/// # Safety
+	/// See [`DynError::backtrace`]
 	unsafe fn backtrace(this: MutNonNull<()>) -> Option<&'static Backtrace> {
 		let this = this.cast::<Self>();
 
@@ -109,6 +119,8 @@ impl<C: Context> ContextError<C> {
 		bt.or_else(|| unsafe { ptr!(this=>error.backtrace()) })
 	}
 
+	/// # Safety
+	/// See [`DynError::drop`]
 	unsafe fn drop(this: MutNonNull<()>) {
 		let this = this.cast::<DynError<Self>>();
 

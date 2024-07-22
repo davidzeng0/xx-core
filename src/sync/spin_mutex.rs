@@ -19,6 +19,8 @@ pub struct SpinMutexGuard<'a, T: ?Sized> {
 }
 
 impl<'a, T: ?Sized> SpinMutexGuard<'a, T> {
+	/// # Safety
+	/// caller must have the lock held
 	const unsafe fn new(lock: &'a SpinMutex<T>) -> Self {
 		Self { lock }
 	}

@@ -24,11 +24,15 @@ impl Context {
 		Ptr::from_addr(self.link)
 	}
 
+	/// # Safety
+	/// the fiber must not be running
 	pub unsafe fn set_stack(&mut self, stack: Ptr<()>, len: usize) {
 		#[allow(clippy::arithmetic_side_effects)]
 		(self.stack = stack.addr() + len);
 	}
 
+	/// # Safety
+	/// the fiber must not be running
 	pub unsafe fn set_start(&mut self, start: Start) {
 		let stack = MutPtr::<Start>::from_addr(self.stack);
 
@@ -38,6 +42,8 @@ impl Context {
 		self.link = xx_core_fiber_arm64_start as usize;
 	}
 
+	/// # Safety
+	/// valid intercept
 	pub unsafe fn set_intercept(&mut self, intercept: Intercept) {
 		let stack = MutPtr::<Intercept>::from_addr(self.stack);
 
@@ -48,6 +54,9 @@ impl Context {
 	}
 }
 
+/// # Safety
+/// `from` is the current running worker
+/// `to` is valid
 pub unsafe fn switch(from: MutPtr<Context>, to: MutPtr<Context>) {
 	/* Safety: guaranteed by caller */
 	unsafe {

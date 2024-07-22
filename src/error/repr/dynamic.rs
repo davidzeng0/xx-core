@@ -18,11 +18,15 @@ pub struct DynError<T: ?Sized> {
 }
 
 impl DynError<()> {
+	/// # Safety
+	/// valid pointer
 	unsafe fn into_parts(this: MutNonNull<Self>) -> (&'static ErrorVTable, MutNonNull<()>) {
 		/* Safety: guaranteed by caller */
 		unsafe { (ptr!(this=>vtable), ptr!(!null &mut this=>data)) }
 	}
 
+	/// # Safety
+	/// valid pointer
 	pub unsafe fn kind(this: MutNonNull<Self>) -> ErrorKind {
 		/* Safety: guaranteed by caller */
 		let (vtable, data) = unsafe { Self::into_parts(this) };
@@ -31,6 +35,8 @@ impl DynError<()> {
 		unsafe { (vtable.kind)(data) }
 	}
 
+	/// # Safety
+	/// valid pointer
 	pub unsafe fn meta(this: MutNonNull<Self>) -> MutNonNull<dyn ErrorImpl> {
 		/* Safety: guaranteed by caller */
 		let (vtable, data) = unsafe { Self::into_parts(this) };
@@ -39,6 +45,9 @@ impl DynError<()> {
 		unsafe { (vtable.meta)(data) }
 	}
 
+	/// # Safety
+	/// valid pointer
+	/// `type_id` must be valid
 	pub unsafe fn downcast_ptr_type_id(
 		this: MutNonNull<Self>, type_id: TypeId
 	) -> Option<MutNonNull<()>> {
@@ -51,6 +60,8 @@ impl DynError<()> {
 		Some(ptr)
 	}
 
+	/// # Safety
+	/// valid pointer
 	pub unsafe fn downcast_ptr<T>(this: MutNonNull<Self>) -> Option<MutNonNull<T>>
 	where
 		T: ErrorBounds
@@ -59,6 +70,11 @@ impl DynError<()> {
 		unsafe { Self::downcast_ptr_type_id(this, TypeId::of::<T>()) }.map(MutNonNull::cast)
 	}
 
+	/// # Safety
+	/// valid pointers
+	/// `type_id` must be valid
+	/// ownership of the error is considered moved if and only if this function
+	/// returns true
 	pub unsafe fn downcast_owned_type_id(
 		this: MutNonNull<Self>, type_id: TypeId, out: MutPtr<MaybeUninit<()>>
 	) -> bool {
@@ -69,6 +85,10 @@ impl DynError<()> {
 		unsafe { (vtable.downcast_owned)(this.cast(), type_id, out) }
 	}
 
+	/// # Safety
+	/// valid pointer
+	///
+	/// See [`Self::downcast_owned_type_id`]
 	pub unsafe fn downcast_owned<T>(this: MutNonNull<Self>) -> Option<T>
 	where
 		T: ErrorBounds
@@ -87,6 +107,8 @@ impl DynError<()> {
 		downcasted.then(|| unsafe { result.assume_init() })
 	}
 
+	/// # Safety
+	/// valid pointer
 	pub unsafe fn backtrace<'a>(this: MutNonNull<Self>) -> Option<&'a Backtrace> {
 		/* Safety: guaranteed by caller */
 		let (vtable, data) = unsafe { Self::into_parts(this) };
@@ -95,6 +117,8 @@ impl DynError<()> {
 		unsafe { (vtable.backtrace)(data) }
 	}
 
+	/// # Safety
+	/// passes ownership of the pointer
 	pub unsafe fn drop(this: MutNonNull<Self>) {
 		/* Safety: guaranteed by caller */
 		let (vtable, _) = unsafe { Self::into_parts(this) };
@@ -115,6 +139,8 @@ pub fn capture_backtrace() -> Option<Backtrace> {
 }
 
 impl crate::error::Error {
+	/// # Safety
+	/// See [`DynError::downcast_ptr`]
 	pub(super) unsafe fn downcast_ptr(
 		this: MutNonNull<Self>, type_id: TypeId
 	) -> Option<MutNonNull<()>> {
@@ -127,6 +153,8 @@ impl crate::error::Error {
 		unsafe { DynError::downcast_ptr_type_id(ptr, type_id) }
 	}
 
+	/// # Safety
+	/// See [`DynError::downcast_owned`]
 	pub(super) unsafe fn downcast_owned(
 		this: MutNonNull<Self>, type_id: TypeId, out: MutPtr<MaybeUninit<()>>
 	) -> bool {

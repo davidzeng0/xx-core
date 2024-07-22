@@ -70,6 +70,7 @@ struct VariantFields {
 	named: bool
 }
 
+#[allow(clippy::missing_panics_doc)]
 impl VariantFields {
 	fn new(fields: &mut Fields) -> Self {
 		let mut attributes = VariantAttrs::default();

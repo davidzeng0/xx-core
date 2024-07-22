@@ -31,6 +31,8 @@ impl<E: ErrorImpl, K: CompactErrorKind> ErrorImpl for CustomError<E, K> {
 }
 
 impl<E, K> CustomError<E, K> {
+	/// # Safety
+	/// See [`DynError::downcast_ptr`]
 	unsafe fn downcast_ptr<I>(this: MutNonNull<()>, type_id: TypeId) -> Option<MutNonNull<()>>
 	where
 		I: ErrorBounds
@@ -47,6 +49,8 @@ impl<E, K> CustomError<E, K> {
 		Some(ptr.cast())
 	}
 
+	/// # Safety
+	/// See [`DynError::downcast_owned`]
 	unsafe fn downcast_owned<I>(
 		this: MutNonNull<()>, type_id: TypeId, out: MutPtr<MaybeUninit<()>>
 	) -> bool
@@ -72,6 +76,8 @@ impl<E, K> CustomError<E, K> {
 		true
 	}
 
+	/// # Safety
+	/// See [`DynError::backtrace`]
 	unsafe fn backtrace(this: MutNonNull<()>) -> Option<&'static Backtrace> {
 		let this = this.cast::<Self>();
 
@@ -79,6 +85,8 @@ impl<E, K> CustomError<E, K> {
 		unsafe { ptr!(this=>backtrace.as_ref()) }
 	}
 
+	/// # Safety
+	/// See [`DynError::drop`]
 	unsafe fn drop(this: MutNonNull<()>) {
 		let this = this.cast::<DynError<Self>>();
 
@@ -195,6 +203,8 @@ impl<K: CompactErrorKind> CustomError<BoxedError, K> {
 }
 
 impl<E: ErrorImpl, K: CompactErrorKind> CustomError<E, K> {
+	/// # Safety
+	/// See [`DynError::kind`]
 	unsafe fn kind(this: MutNonNull<()>) -> ErrorKind {
 		let this = this.cast::<Self>();
 
@@ -202,6 +212,8 @@ impl<E: ErrorImpl, K: CompactErrorKind> CustomError<E, K> {
 		unsafe { ptr!(this=>error.kind()) }
 	}
 
+	/// # Safety
+	/// See [`DynError::meta`]
 	unsafe fn meta(this: MutNonNull<()>) -> MutNonNull<dyn ErrorImpl> {
 		let this = this.cast::<Self>().as_mut_ptr() as *mut dyn ErrorImpl;
 

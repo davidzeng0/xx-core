@@ -48,6 +48,8 @@ impl CompactErrorKind for ErrorKind {
 pub struct CustomRef<'a, const MUT: bool = false>(MutNonNull<DynError<()>>, PhantomData<&'a ()>);
 
 impl<'a, const MUT: bool> CustomRef<'a, MUT> {
+	/// # Safety
+	/// valid ptr
 	const unsafe fn from(ptr: MutNonNull<DynError<()>>) -> Self {
 		Self(ptr, PhantomData)
 	}

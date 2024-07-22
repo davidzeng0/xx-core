@@ -36,17 +36,21 @@ struct Callback<'func> {
 	phantom: PhantomData<&'func ()>
 }
 
-unsafe fn fn_call_once<F>(ptr: MutPtr<()>, cancel: &WorkContext)
+/// # Safety
+/// valid ptr
+unsafe fn fn_call_once<F>(ptr: MutPtr<()>, ctx: &WorkContext)
 where
 	F: FnOnce(&WorkContext)
 {
 	/* Safety: guaranteed by caller */
 	let func = unsafe { ptr.cast::<F>().read() };
 
-	func(cancel);
+	func(ctx);
 }
 
 impl<'a> Callback<'a> {
+	/// # Safety
+	/// the value inside is initialized
 	unsafe fn new<F>(func: &'a mut ManuallyDrop<F>) -> Self
 	where
 		F: FnOnce(&WorkContext)
@@ -58,11 +62,13 @@ impl<'a> Callback<'a> {
 		}
 	}
 
-	unsafe fn call_once(self, cancel: &WorkContext) {
+	/// # Safety
+	/// must call only once
+	unsafe fn call_once(self, ctx: &WorkContext) {
 		let Callback { func, call_once, .. } = self;
 
 		/* Safety: guaranteed by caller */
-		unsafe { (call_once)(func, cancel) }
+		unsafe { (call_once)(func, ctx) }
 	}
 }
 
@@ -97,6 +103,8 @@ impl<'a> Work<'a> {
 	}
 }
 
+/// # Safety
+/// `list` contains all jobs that have yet to be started
 unsafe fn cancel_all(list: &mut LinkedList) {
 	while let Some(node) = list.pop_front() {
 		/* Safety: all nodes are wrapped in Work */
@@ -175,7 +183,11 @@ impl Worker {
 		}
 	}
 
-	#[allow(clippy::unwrap_used, clippy::multiple_unsafe_ops_per_block)]
+	#[allow(
+		clippy::unwrap_used,
+		clippy::multiple_unsafe_ops_per_block,
+		clippy::missing_panics_doc
+	)]
 	fn run(&self) {
 		let mut work_queue = self.queue.work.lock().unwrap();
 

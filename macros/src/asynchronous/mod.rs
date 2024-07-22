@@ -25,6 +25,7 @@ fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> 
 	removed
 }
 
+#[allow(clippy::missing_panics_doc)]
 fn language_impl(mut attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStream> {
 	let (lang, span) = attrs.language.take().unwrap();
 	let use_lang = quote_spanned! { span =>

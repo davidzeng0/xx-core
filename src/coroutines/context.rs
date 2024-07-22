@@ -165,6 +165,8 @@ impl Waker {
 	}
 }
 
+/// # Safety
+/// the worker must belong to this thread
 unsafe fn wake(_: ReqPtr<()>, arg: Ptr<()>, _: ()) {
 	let worker = arg.cast::<Worker>();
 
@@ -202,37 +204,12 @@ pub struct Context {
 }
 
 impl Context {
-	/// # Safety
-	/// the context must be alive while it's executing
-	/// this function is unsafe so that Context::run doesn't need
-	/// these guarantees
-	///
-	/// must call `set_worker`
-	#[must_use]
-	pub unsafe fn new<E>(waker: Option<Waker>) -> Self
-	where
-		E: Environment
-	{
-		Self {
-			environment: type_for::<E>(),
-			worker: Ptr::null(),
-			waker,
-			data: Data::new()
-		}
-	}
-
-	/// # Safety
-	/// worker must be a valid pointer, and must outlive this context
-	pub unsafe fn set_worker(&mut self, worker: Ptr<Worker>) {
-		self.worker = worker;
-	}
-
 	/// Runs async task `T`
 	///
 	/// # Safety
 	/// See [`scoped`]
 	#[inline(always)]
-	pub unsafe fn run<T>(&self, task: T) -> T::Output<'_>
+	pub(super) unsafe fn run<T>(&self, task: T) -> T::Output<'_>
 	where
 		T: Task
 	{
@@ -240,18 +217,25 @@ impl Context {
 		unsafe { task.run(self) }
 	}
 
-	/// Safety: same as Worker::suspend
+	/// # Safety
+	/// same as Worker::suspend
 	unsafe fn suspend(&self) {
 		/* Safety: guaranteed by caller */
 		unsafe { ptr!(self.worker=>suspend()) };
 	}
 
-	/// Safety: same as Worker::resume
+	/// # Safety
+	/// same as Worker::resume
 	unsafe fn resume(&self) {
 		/* Safety: guaranteed by caller */
 		unsafe { ptr!(self.worker=>resume()) };
 	}
 
+	/// # Safety
+	/// See [`scoped`]
+	///
+	/// # Panics
+	/// See [`block_on_thread_safe`]
 	#[inline]
 	pub(super) unsafe fn block_on<F>(&self, future: F, thread_safe: bool) -> F::Output
 	where
@@ -316,6 +300,44 @@ impl Context {
 		result
 	}
 
+	/// Returns true if the worker is being interrupted
+	///
+	/// In the presence of interrupt guards, this returns false
+	pub(super) fn interrupted(&self) -> bool {
+		self.data.guards == 0 && self.data.interrupted.get()
+	}
+
+	/// Clears any interrupts or pending interrupts (due to guards) on the
+	/// current worker
+	pub(super) fn clear_interrupt(&self) {
+		self.data.interrupted.set(false);
+	}
+
+	/// # Safety
+	/// the context must be alive while it's executing
+	/// this function is unsafe so that Context::run doesn't need
+	/// these guarantees
+	///
+	/// must call `set_worker`
+	#[must_use]
+	pub unsafe fn new<E>(waker: Option<Waker>) -> Self
+	where
+		E: Environment
+	{
+		Self {
+			environment: type_for::<E>(),
+			worker: Ptr::null(),
+			waker,
+			data: Data::new()
+		}
+	}
+
+	/// # Safety
+	/// worker must be a valid pointer, and must outlive this context
+	pub unsafe fn set_worker(&mut self, worker: Ptr<Worker>) {
+		self.worker = worker;
+	}
+
 	/// Signals an interrupt to the current task
 	///
 	/// # Safety
@@ -350,19 +372,6 @@ impl Context {
 		} else {
 			Err(ErrorKind::AlreadyInProgress.into())
 		}
-	}
-
-	/// Returns true if the worker is being interrupted
-	///
-	/// In the presence of interrupt guards, this returns false
-	pub(super) fn interrupted(&self) -> bool {
-		self.data.guards == 0 && self.data.interrupted.get()
-	}
-
-	/// Clears any interrupts or pending interrupts (due to guards) on the
-	/// current worker
-	pub(super) fn clear_interrupt(&self) {
-		self.data.interrupted.set(false);
 	}
 
 	pub fn get_environment<E>(&self) -> Option<&E>

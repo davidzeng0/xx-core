@@ -210,6 +210,8 @@ impl<
 		C2: Fn(&MaybePanic<F2::Output>) -> bool
 	> Branch<F1, F2, (C1, C2)>
 {
+	/// # Safety
+	/// must only be called when a task has completed
 	unsafe fn complete_single(this: MutPtr<Self>, is_first: bool, should_cancel: bool) {
 		/* Safety: we have mutable access here */
 		let this = unsafe { this.as_mut() };
@@ -255,6 +257,8 @@ impl<
 		}
 	}
 
+	/// # Safety
+	/// must only be called when the first task completes
 	unsafe fn complete_first(_: ReqPtr<F1::Output>, arg: Ptr<()>, value: F1::Output) {
 		let this = arg.cast::<Self>().cast_mut();
 
@@ -268,6 +272,8 @@ impl<
 		unsafe { Self::complete_single(this, true, should_cancel) };
 	}
 
+	/// # Safety
+	/// must only be called when the second task completes
 	unsafe fn complete_second(_: ReqPtr<F2::Output>, arg: Ptr<()>, value: F2::Output) {
 		let this = arg.cast::<Self>().cast_mut();
 
@@ -297,6 +303,8 @@ impl<
 		}
 	}
 
+	/// # Safety
+	/// See [`Cancel::run`]
 	unsafe fn cancel_all(this: MutPtr<Self>) -> Result<()> {
 		/* Safety: guaranteed by future's contract */
 		let this = unsafe { this.as_mut() };

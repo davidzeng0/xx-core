@@ -83,6 +83,9 @@ struct Intercept {
 	ret: Ptr<()>
 }
 
+/// # Safety
+/// valid ptr
+/// the current worker is not the fiber being exited
 unsafe extern "C" fn exit_fiber(arg: Ptr<()>) {
 	/* Safety: guaranteed by caller */
 	let fiber = unsafe { arg.cast::<ManuallyDrop<Fiber>>().cast_mut().as_mut() };
@@ -95,6 +98,9 @@ unsafe extern "C" fn exit_fiber(arg: Ptr<()>) {
 	drop(unsafe { ManuallyDrop::take(fiber) });
 }
 
+/// # Safety
+/// valid ptr
+/// the current worker is not the fiber being exited
 unsafe extern "C" fn exit_fiber_to_pool(arg: Ptr<()>) {
 	/* Safety: guaranteed by caller */
 	let arg = unsafe {

@@ -7,7 +7,7 @@ struct Slot<T> {
 	data: UnsafeCell<MaybeUninit<T>>
 }
 
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::missing_panics_doc)]
 fn create_slots<T>(mut size: usize) -> Box<[Slot<T>]> {
 	assert!(size != 0, "Cannot create a zero sized channel");
 

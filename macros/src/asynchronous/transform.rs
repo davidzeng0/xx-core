@@ -301,6 +301,7 @@ impl VisitMut for AddLifetimes {
 	}
 }
 
+#[allow(clippy::missing_panics_doc)]
 fn modify_bounds(bounds: &mut Punctuated<TypeParamBound, Token![+]>) -> Result<()> {
 	let path_segments = ["xx_core", "coroutines", "ops"];
 	let async_fns = ["AsyncFnOnce", "AsyncFnMut", "AsyncFn"];

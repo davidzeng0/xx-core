@@ -49,6 +49,7 @@ pub use import_sysdeps;
 #[macro_export]
 macro_rules! require_unsafe {
 	() => {{
+		#[allow(clippy::missing_safety_doc)]
 		const unsafe fn require_unsafe() {}
 
 		require_unsafe();

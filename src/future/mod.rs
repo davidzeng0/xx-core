@@ -86,7 +86,7 @@ pub unsafe trait Cancel {
 	/// Cancelling is on a best-effort basis
 	///
 	/// If the cancellation fails, the user should
-	/// ignore the error and pray that the future
+	/// ignore the error and hope that the future
 	/// completes in a reasonable amount of time
 	///
 	/// Unless running critically low on memory,
@@ -98,11 +98,12 @@ pub unsafe trait Cancel {
 	/// because cancellations may be asynchronous
 	///
 	/// After cancelling, you must wait for the callback
-	/// to be called before releasing the [`Request`]
+	/// to be called before releasing the [`Request`] or any data passed into
+	/// the future
 	///
-	/// Cancel operations must not expect captured references to
-	/// live until the cancel finishes, only until the future callback
-	/// is called
+	/// Cancel implementers must not expect captured references to
+	/// live until the (possibly asynchronous) cancel finishes, only until the
+	/// future callback is called
 	///
 	/// It is possible that the callback is
 	/// immediately executed in the call to cancel

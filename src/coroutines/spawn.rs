@@ -208,6 +208,8 @@ struct Spawn<Output> {
 }
 
 impl<Output> Spawn<Output> {
+	/// # Safety
+	/// must only be called when the task completes
 	unsafe fn spawn_complete(
 		_: ReqPtr<SpawnResult<Output>>, arg: Ptr<()>, output: SpawnResult<Output>
 	) {

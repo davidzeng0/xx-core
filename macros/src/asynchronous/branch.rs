@@ -15,6 +15,7 @@ fn vars(items: usize, prefix: &str) -> Vec<Ident> {
 		.collect()
 }
 
+#[allow(clippy::missing_panics_doc)]
 fn branch(env: &Expr, tasks: &[&Expr], mode: Mode<'_>) -> TokenStream {
 	let fut_vars = vars(tasks.len(), "fut");
 

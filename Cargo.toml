@@ -2,6 +2,7 @@
 name = "xx-core"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.80"
 
 [dependencies]
 log = { version = "0.4", features = ["std"], optional = true }

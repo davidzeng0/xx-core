@@ -17,6 +17,7 @@ struct Channel<T> {
 	rx_waiters: ThreadSafeWaitList
 }
 
+#[allow(clippy::missing_panics_doc)]
 impl<T> Channel<T> {
 	#[allow(clippy::expect_used)]
 	fn new(mut size: usize) -> Self {

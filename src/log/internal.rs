@@ -6,7 +6,11 @@ pub use log::{log, log_enabled};
 use super::*;
 use crate::pointer::*;
 
-#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
+#[allow(
+	clippy::unwrap_used,
+	clippy::arithmetic_side_effects,
+	clippy::missing_panics_doc
+)]
 fn get_struct_name<T>() -> &'static str
 where
 	T: ?Sized

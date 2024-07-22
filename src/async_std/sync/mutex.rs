@@ -26,6 +26,8 @@ pub struct MutexGuard<'a, T: ?Sized> {
 }
 
 impl<'a, T: ?Sized> MutexGuard<'a, T> {
+	/// # Safety
+	/// must create atmost 1 guards after a successful locking of the mutex
 	unsafe fn new(lock: &'a Mutex<T>) -> Self {
 		Self { lock, poison: lock.poison.guard() }
 	}
@@ -97,6 +99,8 @@ impl<T: ?Sized> Mutex<T> {
 		}
 	}
 
+	/// # Safety
+	/// must have acquired the lock
 	unsafe fn unlock(&self) {
 		let state = self.state.swap(State::Unlocked as u8, Ordering::SeqCst);
 

@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc)]
+
 use std::mem::replace;
 #[cfg(not(debug_assertions))]
 use std::mem::ManuallyDrop;
@@ -66,6 +68,8 @@ impl<Resume, Output> BlockState<Resume, Output> {
 	}
 }
 
+/// # Safety
+/// See [`Request::complete`]
 unsafe fn block_resume<Resume, Output>(_: ReqPtr<Output>, arg: Ptr<()>, value: Output)
 where
 	Resume: FnOnce()
@@ -92,6 +96,8 @@ impl<Resume: FnOnce(), Output> Waiter<Resume, Output> {
 		Self { request, state: BlockState::pending(resume) }
 	}
 
+	/// # Safety
+	/// future must be complete
 	#[allow(clippy::missing_const_for_fn)]
 	unsafe fn output(self) -> Output {
 		/* Safety: guaranteed by caller */
