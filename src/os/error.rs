@@ -1,8 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
 
-use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
-
 use super::*;
 use crate::macros::strings;
 

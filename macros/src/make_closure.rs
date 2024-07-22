@@ -4,7 +4,7 @@ fn closure_lifetime<R>() -> R
 where
 	R: Parse
 {
-	parse_quote! { '__xx_internal_closure_lifetime }
+	parse_quote! { '__xx_iclslt }
 }
 
 const SELF_IDENT: &str = "this";
@@ -86,8 +86,6 @@ impl AddLifetime {
 }
 
 impl VisitMut for AddLifetime {
-	fn visit_item_mut(&mut self, _: &mut Item) {}
-
 	fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
 		if let Some(lifetime) = &reference.lifetime {
 			self.explicit_lifetimes.push(lifetime.clone());
@@ -153,7 +151,7 @@ fn capture_lifetimes(sig: &Signature, env_generics: Option<&Generics>) -> TokenS
 		for param in generics.lifetimes() {
 			let lifetime = &param.lifetime;
 
-			addl_bounds.push(parse_quote! { ::xx_core::impls::Captures<#lifetime> });
+			addl_bounds.push(parse_quote! { ::xx_core::impls::captures::Captures<#lifetime> });
 		}
 	}
 
@@ -163,7 +161,7 @@ fn capture_lifetimes(sig: &Signature, env_generics: Option<&Generics>) -> TokenS
 	for param in sig.generics.lifetimes() {
 		let lifetime = &param.lifetime;
 
-		addl_bounds.push(parse_quote! { ::xx_core::impls::Captures<#lifetime> });
+		addl_bounds.push(parse_quote! { ::xx_core::impls::captures::Captures<#lifetime> });
 	}
 
 	addl_bounds.push(closure_lifetime());
@@ -292,7 +290,7 @@ pub fn make_explicit_closure(
 		FnArg::Typed(pat) => {
 			let destr = pat.pat.as_ref().clone();
 
-			RemoveModifiers {}.visit_pat_mut(pat.pat.as_mut());
+			RemoveModifiers.visit_pat_mut(pat.pat.as_mut());
 
 			(pat.ty.as_ref().clone(), pat.pat.as_ref().clone(), destr)
 		}
@@ -336,7 +334,7 @@ pub fn make_explicit_closure(
 	func.sig.output = parse_quote! { -> #closure_return_type };
 
 	if let Some(block) = &mut func.block {
-		ReplaceSelf {}.visit_block_mut(block);
+		ReplaceSelf.visit_block_mut(block);
 
 		**block = parse_quote! {{
 			#closure_type::new(

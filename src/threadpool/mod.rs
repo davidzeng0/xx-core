@@ -1,14 +1,14 @@
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::os::unix::thread::JoinHandleExt;
-use std::sync::atomic::*;
-use std::sync::*;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
+use crate::cell::UnsafeCell;
 use crate::container::zero_alloc::linked_list::*;
 use crate::error::*;
 use crate::future::*;
-use crate::macros::container_of;
 use crate::os::signal::*;
 use crate::os::unistd::{get_system_configuration, SystemConfiguration};
 use crate::pointer::*;
@@ -264,12 +264,12 @@ impl ThreadPool {
 		let mut threads = Vec::with_capacity(max_workers);
 		let mut error = None;
 
-		for _ in 0..max_workers {
+		for i in 0..max_workers {
 			let worker = Arc::new(Worker::new(queue.clone()));
 			let worker_clone = worker.clone();
 
 			let result = thread::Builder::new()
-				.name("xx-worker-thread".to_string())
+				.name(format!("xx-tp-wrk-{}", i))
 				.spawn(move || worker.run());
 
 			let handle = match result {

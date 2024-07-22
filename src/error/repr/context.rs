@@ -1,4 +1,4 @@
-use fmt::Write;
+use std::fmt::Write;
 
 use super::*;
 

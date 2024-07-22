@@ -6,6 +6,7 @@ use std::mem::{take, transmute};
 use std::str::from_utf8;
 
 use super::*;
+use crate::io::*;
 use crate::macros::{macro_each, seal_trait};
 use crate::opt::hint::*;
 
@@ -24,14 +25,6 @@ pub use {buf_reader::*, buf_writer::*, read::*, seek::*, split::*, write::*};
 
 /// The default buffer size (16 KiB) for buffered I/O
 pub const DEFAULT_BUFFER_SIZE: usize = 0x4000;
-
-/// Checks if the slice is valid UTF-8, otherwise returns an `Err`
-pub fn check_utf8(buf: &[u8]) -> Result<()> {
-	match from_utf8(buf) {
-		Ok(_) => Ok(()),
-		Err(_) => Err(ErrorKind::invalid_utf8().into())
-	}
-}
 
 /// If `len` is zero, checks if the current async task is interrupted
 #[asynchronous]

@@ -3,21 +3,7 @@
 use memchr::memchr;
 
 use super::*;
-use crate::impls::AsyncFnOnce;
-
-/// Read from `src` to `dest`
-pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
-	let len = dest.len().min(src.len());
-
-	/* adding any checks for small lengths only worsens performance
-	 * it seems like llvm or rustc can't do branching properly
-	 * (unlikely branches should be placed at the end, but that doesn't happen)
-	 *
-	 * a call to memcpy should do those checks anyway
-	 */
-	dest[0..len].copy_from_slice(&src[0..len]);
-	len
-}
+use crate::coroutines::ops::AsyncFnOnce;
 
 /// Appends to `buf` by calling `read` with the string's buffer
 ///
@@ -25,7 +11,7 @@ pub fn read_into_slice(dest: &mut [u8], src: &[u8]) -> usize {
 #[asynchronous]
 pub async fn append_to_string<F>(buf: &mut String, read: F) -> Result<Option<usize>>
 where
-	F: for<'a> AsyncFnOnce<&'a mut Vec<u8>, Output = Result<Option<usize>>>
+	F: AsyncFnOnce(&mut Vec<u8>) -> Result<Option<usize>>
 {
 	/* panic guard */
 	struct Guard<'a> {
@@ -49,7 +35,7 @@ where
 	let read = read.call_once(guard.buf).await?;
 
 	if read.is_some() {
-		check_utf8(&guard.buf[guard.len..])?;
+		from_utf8(&guard.buf[guard.len..])?;
 
 		guard.len = guard.buf.len();
 	}

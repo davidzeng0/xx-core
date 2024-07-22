@@ -126,7 +126,8 @@ where
 	let mut waiter = Waiter::new(resume);
 
 	{
-		let waiter = waiter.pin_local();
+		/* Safety: waiter is never moved */
+		let waiter = unsafe { waiter.pin_local() };
 
 		/* Safety: contract upheld by caller */
 		unsafe {

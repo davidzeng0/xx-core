@@ -71,9 +71,9 @@ impl<T> Receiver<T> {
 
 #[asynchronous(task)]
 impl<T> Task for Receiver<T> {
-	type Output<'ctx> = RecvResult<T>;
+	type Output = RecvResult<T>;
 
-	async fn run(mut self) -> RecvResult<T> {
+	async fn run(mut self) -> Self::Output {
 		self.recv().await
 	}
 }

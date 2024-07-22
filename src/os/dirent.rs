@@ -1,7 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
 
-use num_traits::FromPrimitive;
-
 use super::error::*;
 use super::fcntl::OpenFlag;
 use super::stat::{Statx, *};

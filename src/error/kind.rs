@@ -182,6 +182,7 @@ impl Display for ErrorKind {
 	}
 }
 
+#[cfg(feature = "os")]
 impl From<OsError> for ErrorKind {
 	fn from(value: OsError) -> Self {
 		use ErrorKind::*;
@@ -227,6 +228,42 @@ impl From<OsError> for ErrorKind {
 			code if code == OsError::Again || code == OsError::WouldBlock => WouldBlock,
 
 			_ => Uncategorized
+		}
+	}
+}
+
+#[cfg(not(feature = "os"))]
+impl From<OsError> for ErrorKind {
+	fn from(_: OsError) -> Self {
+		Self::Other
+	}
+}
+
+impl From<io::ErrorKind> for ErrorKind {
+	fn from(value: io::ErrorKind) -> Self {
+		use io::ErrorKind::*;
+
+		match value {
+			NotFound => Self::NotFound,
+			PermissionDenied => Self::PermissionDenied,
+			ConnectionRefused => Self::ConnectionRefused,
+			ConnectionReset => Self::ConnectionReset,
+			ConnectionAborted => Self::ConnectionAborted,
+			NotConnected => Self::NotConnected,
+			AddrInUse => Self::AddrInUse,
+			AddrNotAvailable => Self::AddrNotAvailable,
+			BrokenPipe => Self::BrokenPipe,
+			AlreadyExists => Self::AlreadyExists,
+			WouldBlock => Self::WouldBlock,
+			InvalidInput => Self::InvalidInput,
+			InvalidData => Self::InvalidData,
+			TimedOut => Self::TimedOut,
+			WriteZero => Self::WriteZero,
+			Interrupted => Self::Interrupted,
+			Unsupported => Self::Unsupported,
+			UnexpectedEof => Self::UnexpectedEof,
+			OutOfMemory => Self::OutOfMemory,
+			_ => Self::Other
 		}
 	}
 }

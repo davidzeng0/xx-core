@@ -1,11 +1,11 @@
 pub use xx_core_macros::*;
-pub use xx_proc_macro_support::*;
+pub use xx_macros::*;
 
-pub mod pointer;
+#[cfg(feature = "runtime")]
 pub mod runtime;
 pub mod traits;
 
-pub use pointer::*;
+#[cfg(feature = "runtime")]
 pub use runtime::*;
 pub use traits::*;
 

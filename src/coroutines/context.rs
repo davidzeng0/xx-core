@@ -6,7 +6,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use static_assertions::const_assert;
 
 use super::*;
-use crate::impls::{Cell, OptionExt};
+use crate::cell::Cell;
+use crate::impls::OptionExt;
 
 /// The environment for an async worker
 ///
@@ -251,10 +252,6 @@ impl Context {
 		unsafe { ptr!(self.worker=>resume()) };
 	}
 
-	/// Runs and blocks on future `F`
-	///
-	/// # Panics
-	/// If a thread safe block was requested and isn't supported
 	#[inline]
 	pub(super) unsafe fn block_on<F>(&self, future: F, thread_safe: bool) -> F::Output
 	where
@@ -269,6 +266,14 @@ impl Context {
 			self.data.budget.set(DEFAULT_BUDGET as u16);
 			self.data.cancel.set(Some(canceller));
 
+			if thread_safe {
+				/* Safety: waker is Some as checked below */
+				let waker = unsafe { self.waker.as_ref().unwrap_unchecked() };
+
+				/* Safety: prepare for wake */
+				unsafe { waker.prepare() };
+			}
+
 			/* Safety: context is valid while executing */
 			unsafe { self.suspend() };
 
@@ -278,9 +283,6 @@ impl Context {
 		if thread_safe {
 			#[allow(clippy::expect_used)]
 			let waker = self.waker.as_ref().expect("Operation not supported");
-
-			/* Safety: prepare for wake */
-			unsafe { waker.prepare() };
 
 			/* Safety: wake doesn't unwind */
 			let request = unsafe { Request::new(self.worker.cast(), wake) };

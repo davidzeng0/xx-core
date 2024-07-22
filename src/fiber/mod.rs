@@ -3,13 +3,16 @@
 use std::arch::global_asm;
 use std::mem::{zeroed, ManuallyDrop};
 
-use super::macros::{assert_unsafe_precondition, import_sysdeps};
-use super::opt::hint::unreachable_unchecked;
-use super::os::mman::*;
-use super::os::resource::*;
-use super::os::unistd::*;
-use super::os::RawBuf;
-use super::pointer::*;
+use crate::macros::{assert_unsafe_precondition, import_sysdeps};
+use crate::opt::hint::unreachable_unchecked;
+use crate::os::mman::*;
+use crate::os::resource::*;
+use crate::os::unistd::*;
+use crate::os::RawBuf;
+use crate::pointer::*;
+
+pub mod pool;
+pub use pool::*;
 
 import_sysdeps!();
 
@@ -31,9 +34,6 @@ macro_rules! define_context {
 }
 
 use define_context;
-
-pub mod pool;
-pub use pool::*;
 
 /// Safety: the stack is not used before a fiber is started,
 /// so we can safely write our start args there

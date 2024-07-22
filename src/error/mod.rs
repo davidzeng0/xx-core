@@ -1,19 +1,23 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::backtrace::Backtrace;
+use std::ffi::NulError;
 use std::fmt::{self, Debug, Display, Formatter};
+use std::str::Utf8Error;
 use std::{error, io, result};
 
 use crate::macros::seal_trait;
+#[cfg(feature = "os")]
 use crate::os::error::OsError;
+#[cfg(not(feature = "os"))]
+pub type OsError = i32;
 
-mod common;
+mod kind;
 mod repr;
-use repr::*;
 
 type BoxedError = Box<dyn error::Error + Send + Sync + 'static>;
 
-pub use common::*;
+pub use kind::*;
 pub use repr::SimpleMessage;
 
 pub use crate::macros::errors;
@@ -41,7 +45,7 @@ pub mod internal {
 		where
 			Self: Sized
 		{
-			Error(Custom::new_error_impl(self).into())
+			Error(Custom::new_error_impl(self, ()).into())
 		}
 
 		fn kind(&self) -> ErrorKind {
@@ -50,8 +54,9 @@ pub mod internal {
 	}
 }
 
-use internal::*;
-use private::*;
+use self::internal::*;
+use self::private::*;
+use self::repr::*;
 
 seal_trait!();
 
@@ -119,7 +124,7 @@ impl Error {
 	where
 		E: ErrorBounds
 	{
-		Self(Custom::new_basic(err).into())
+		Self(Custom::new_basic(err, ()).into())
 	}
 
 	#[must_use]
@@ -127,7 +132,7 @@ impl Error {
 	where
 		E: ErrorBounds + error::Error
 	{
-		Self(Custom::new_std(err).into())
+		Self(Custom::new_std(err, ()).into())
 	}
 
 	pub fn context<C>(self, context: C) -> Self
@@ -213,7 +218,7 @@ impl From<&'static SimpleMessage> for Error {
 
 impl From<BoxedError> for Error {
 	fn from(value: BoxedError) -> Self {
-		Self(Custom::new_boxed(value).into())
+		Self(Custom::new_boxed(value, ()).into())
 	}
 }
 
@@ -247,7 +252,7 @@ impl<T: PartialEq + ErrorImpl> PartialEq<T> for Error {
 
 impl PartialEq<OsError> for Error {
 	fn eq(&self, other: &OsError) -> bool {
-		self.os_error().is_some_and(|os| os == *other)
+		self.os_error() == Some(*other)
 	}
 }
 
@@ -257,29 +262,55 @@ impl PartialEq<ErrorKind> for Error {
 	}
 }
 
-impl From<io::Error> for Error {
-	#[allow(clippy::unwrap_used)]
-	fn from(value: io::Error) -> Self {
-		if let Some(code) = value.raw_os_error() {
+impl ErrorImpl for io::Error {
+	fn into_error(self) -> Error
+	where
+		Self: Sized
+	{
+		if let Some(code) = self.raw_os_error() {
+			#[cfg(feature = "os")]
 			return OsError::from(code).into();
+			#[cfg(not(feature = "os"))]
+			return code.into();
 		}
 
-		if value.get_ref().is_some() {
-			let inner = value.into_inner().unwrap();
+		if self.get_ref().is_some() {
+			let kind = ErrorKind::from(self.kind());
 
-			return match inner.downcast() {
-				Ok(this) => *this,
-				Err(boxed) => boxed.into()
+			#[allow(clippy::unwrap_used)]
+			let inner = self.into_inner().unwrap();
+
+			return match (inner.downcast(), kind) {
+				(Ok(err), _) => *err,
+				(Err(boxed), ErrorKind::Other) => Error(Custom::new_boxed(boxed, ()).into()),
+				(Err(boxed), kind) => Error(Custom::new_boxed(boxed, kind).into())
 			};
 		}
 
-		Self(Custom::new_std(value).into())
+		Error(Custom::new_error_impl(self, ()).into())
+	}
+
+	fn kind(&self) -> ErrorKind {
+		self.kind().into()
+	}
+}
+
+impl From<NulError> for Error {
+	fn from(_: NulError) -> Self {
+		ErrorKind::invalid_cstr().into()
+	}
+}
+
+impl From<Utf8Error> for Error {
+	fn from(_: Utf8Error) -> Self {
+		ErrorKind::invalid_utf8().into()
 	}
 }
 
 impl From<Error> for io::Error {
 	fn from(value: Error) -> Self {
 		if let Some(os) = value.os_error() {
+			#[allow(clippy::unnecessary_cast)]
 			Self::from_raw_os_error(os as i32)
 		} else {
 			Self::new(io::ErrorKind::Other, value)
@@ -287,6 +318,7 @@ impl From<Error> for io::Error {
 	}
 }
 
+#[cfg(feature = "os")]
 impl Debug for OsError {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
 		fmt.debug_struct("Os")
@@ -297,6 +329,7 @@ impl Debug for OsError {
 	}
 }
 
+#[cfg(feature = "os")]
 impl Display for OsError {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
 		write!(fmt, "{} (os error {})", self.as_str(), *self as i32)

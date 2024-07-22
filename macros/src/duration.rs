@@ -1,147 +1,177 @@
-use nom::branch::alt;
-use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::multispace0;
-use nom::error::{ErrorKind, ParseError};
-use nom::multi::{many1, separated_list1};
-use nom::number::complete::double;
-use nom::sequence::tuple;
-use nom::{IResult, Parser};
-
 use super::*;
 
-type Result<T> = std::result::Result<T, &'static str>;
+#[strings(defaults, lowercase)]
+#[repr(u8)]
+enum Unit {
+	#[alt = "d"]
+	#[alt = "days"]
+	Day,
 
-fn alt_vec<I, O, E, P>(mut choices: Vec<P>) -> impl FnMut(I) -> IResult<I, O, E>
-where
-	I: Clone,
-	P: Parser<I, O, E>
-{
-	assert!(!choices.is_empty());
+	#[alt = "h"]
+	#[alt = "hours"]
+	Hour,
 
-	move |input| {
-		let mut error = None;
+	#[alt = "m"]
+	#[alt = "min"]
+	#[alt = "mins"]
+	#[alt = "minutes"]
+	Minute,
 
-		for choice in &mut choices {
-			match choice.parse(input.clone()) {
-				Err(err @ nom::Err::Error(_)) => error = Some(err),
-				res => return res
-			}
+	#[alt = "s"]
+	#[alt = "sec"]
+	#[alt = "secs"]
+	#[alt = "seconds"]
+	Second,
+
+	#[alt = "ms"]
+	#[alt = "millis"]
+	#[alt = "millisec"]
+	#[alt = "millisecs"]
+	#[alt = "milliseconds"]
+	Millisecond,
+
+	#[alt = "us"]
+	#[alt = "micros"]
+	#[alt = "microsec"]
+	#[alt = "microsecs"]
+	#[alt = "microseconds"]
+	Microsecond,
+
+	#[alt = "ns"]
+	#[alt = "nanos"]
+	#[alt = "nanosec"]
+	#[alt = "nanosecs"]
+	#[alt = "nanoseconds"]
+	Nanosecond
+}
+
+const NAMED_SCALES: &[(Unit, f64)] = &[
+	(Unit::Day, 24.0),
+	(Unit::Hour, 60.0),
+	(Unit::Minute, 60.0),
+	(Unit::Second, 1000.0),
+	(Unit::Millisecond, 1000.0),
+	(Unit::Microsecond, 1000.0),
+	(Unit::Nanosecond, 1.0)
+];
+
+#[derive(Default)]
+struct ParsedDuration {
+	expr: Punctuated<Expr, Token![+]>,
+	nanos: f64
+}
+
+impl ParsedDuration {
+	fn push(&mut self, scale: f64, scalar: Expr) -> Result<()> {
+		#[allow(clippy::cast_precision_loss)]
+		if let Expr::Lit(ExprLit { lit: Lit::Int(lit), .. }) = scalar {
+			self.nanos += lit.base10_parse::<u128>()? as f64 * scale;
+		} else if let Expr::Lit(ExprLit { lit: Lit::Float(lit), .. }) = scalar {
+			self.nanos += lit.base10_parse::<f64>()? * scale;
+		} else {
+			self.expr.push(parse_quote_spanned! { scalar.span() =>
+				(#scalar) as f64 * #scale
+			});
 		}
 
-		Err(error.unwrap())
+		Ok(())
 	}
 }
 
-fn parse_named_units<'input, E>(input: &'input str) -> IResult<&'input str, f64, E>
-where
-	E: ParseError<&'input str>
-{
-	let scales = [
-		("d", 24.0),
-		("h", 60.0),
-		("m", 60.0),
-		("s", 1000.0),
-		("ms", 1000.0),
-		("us", 1000.0),
-		("ns", 1.0)
-	];
+impl ToTokens for ParsedDuration {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		let nanos = self.nanos;
 
-	let mut tags = scales;
+		self.expr.to_tokens(tokens);
 
-	tags.sort_by(|a, b| b.0.cmp(a.0));
-
-	let tags = tags
-		.iter()
-		.map(|scale| {
-			tuple((
-				multispace0,
-				double,
-				multispace0,
-				tag_no_case(scale.0),
-				multispace0
-			))
-		})
-		.collect();
-
-	let mut parser = many1(alt_vec(tags));
-	let (leftover, parsed) = parser(input)?;
-
-	let mut duration = 0.0;
-
-	for (_, amount, _, unit, _) in parsed {
-		let index = scales.iter().position(|scale| scale.0 == unit).unwrap();
-		let scale = scales[index].1;
-
-		if amount < 0.0 || (amount >= scale && scale != 1.0) {
-			return Err(nom::Err::Failure(E::from_error_kind(
-				input,
-				ErrorKind::Float
-			)));
+		if nanos == 0.0 {
+			return;
 		}
 
-		duration += amount * scales[index..].iter().fold(1.0, |acc, value| acc * value.1);
-	}
-
-	Ok((leftover, duration))
-}
-
-fn parse_unnamed_units<'input, E>(input: &'input str) -> IResult<&'input str, f64, E>
-where
-	E: ParseError<&'input str>
-{
-	let scales = [24.0, 60.0, 60.0, 1_000_000_000.0];
-
-	let mut parser = separated_list1(
-		tuple((multispace0, alt((tag("::"), tag(":"))), multispace0)),
-		double
-	);
-
-	let (leftover, parsed) = parser(input)?;
-
-	let mut duration = 0.0;
-
-	if parsed.len() > scales.len() {
-		return Err(nom::Err::Failure(E::from_error_kind(
-			input,
-			ErrorKind::SeparatedNonEmptyList
-		)));
-	}
-
-	for (index, &amount) in parsed.iter().rev().enumerate() {
-		let index = scales.len() - index - 1;
-		let scale = scales[index];
-
-		if amount < 0.0 || amount >= scale {
-			return Err(nom::Err::Failure(E::from_error_kind(
-				input,
-				ErrorKind::Float
-			)));
+		if !self.expr.is_empty() {
+			quote! { + }.to_tokens(tokens);
 		}
 
-		duration += amount * scales[index..].iter().fold(1.0, |acc, value| acc * value);
+		quote! { #nanos }.to_tokens(tokens);
 	}
-
-	Ok((leftover, duration))
 }
 
-fn parse_time_string(amount: &str) -> Result<TokenStream> {
-	let mut parser = alt::<_, _, (), _>((parse_named_units, parse_unnamed_units));
-	let (leftover, nanos) = parser(amount).map_err(|_| "Unknown format")?;
+fn parse_named_units(input: ParseStream<'_>) -> Result<TokenStream> {
+	let mut parsed = ParsedDuration::default();
 
-	if !leftover.is_empty() {
-		return Err("Unknown format (found trailing data)");
+	loop {
+		let scalar = input.parse::<Expr>()?;
+		let unit_ident = input.parse::<Ident>()?;
+		let unit: Unit = unit_ident
+			.to_string()
+			.parse()
+			.map_err(|()| Error::new_spanned(unit_ident, "Unknown unit"))?;
+		let scale = NAMED_SCALES[(unit as usize)..]
+			.iter()
+			.fold(1.0, |acc, value| acc * value.1);
+		parsed.push(scale, scalar)?;
+
+		if input.is_empty() {
+			break;
+		}
 	}
 
-	Ok(quote! { #nanos })
+	Ok(parsed.to_token_stream())
+}
+
+const UNNAMED_SCALES: &[f64] = &[24.0, 60.0, 60.0, 1_000_000_000.0];
+
+fn parse_unnamed_units(input: ParseStream<'_>) -> Result<TokenStream> {
+	let mut parsed = ParsedDuration::default();
+	let mut scalars = Vec::new();
+
+	loop {
+		scalars.push(input.parse::<Expr>()?);
+
+		if input.is_empty() {
+			break;
+		}
+
+		if !input.peek(Token![::]) {
+			input.parse::<Token![:]>()?;
+		} else {
+			input.parse::<Token![::]>()?;
+		}
+	}
+
+	if scalars.len() > UNNAMED_SCALES.len() {
+		return Err(Error::new_spanned(
+			&scalars[UNNAMED_SCALES.len()],
+			"Too many separators"
+		));
+	}
+
+	for (index, scalar) in scalars.into_iter().rev().enumerate() {
+		let index = UNNAMED_SCALES.len() - index - 1;
+		let scale = UNNAMED_SCALES[index..]
+			.iter()
+			.fold(1.0, |acc, value| acc * value);
+		parsed.push(scale, scalar)?;
+	}
+
+	Ok(parsed.to_token_stream())
+}
+
+fn parse_time_string(input: ParseStream<'_>) -> Result<TokenStream> {
+	if input.peek2(Token![:]) || input.peek2(Token![::]) {
+		parse_unnamed_units(input)
+	} else {
+		parse_named_units(input)
+	}
 }
 
 fn parse_inverse(expr: Expr) -> Result<TokenStream> {
 	let Expr::Binary(binary) = expr else {
-		return Err("Expected a binary op");
+		return Err(Error::new_spanned(expr, "Expected a ratio"));
 	};
 
 	let BinOp::Div(_) = binary.op else {
-		return Err("Expected a divide op");
+		return Err(Error::new_spanned(binary.op, "Expected a ratio"));
 	};
 
 	let (left, right) = (&binary.left, &binary.right);
@@ -154,16 +184,16 @@ fn parse_inverse(expr: Expr) -> Result<TokenStream> {
 }
 
 pub fn duration(item: TokenStream) -> TokenStream {
-	let amount = item.to_string();
+	try_expand(|| {
+		let nanos = if let Ok(expr) = parse2::<Expr>(item.clone()) {
+			parse_inverse(expr)?
+		} else {
+			parse_time_string.parse2(item)?
+		};
 
-	let duration = if let Ok(expr) = parse2(item.clone()) {
-		parse_inverse(expr)
-	} else {
-		parse_time_string(amount.as_ref())
-	};
-
-	match duration {
-		Ok(duration) => quote! { ::std::time::Duration::from_nanos((#duration) as u64) },
-		Err(err) => Error::new_spanned(item, err).to_compile_error()
-	}
+		Ok(quote! {{
+			#[allow(clippy::unnecessary_cast)]
+			::std::time::Duration::from_nanos((#nanos) as u64)
+		}})
+	})
 }

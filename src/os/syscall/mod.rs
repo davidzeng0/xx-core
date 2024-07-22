@@ -1,8 +1,5 @@
-use enumflags2::*;
-
 use crate::error::*;
 use crate::macros::{import_sysdeps, macro_each, syscall_impl};
-use crate::pointer::*;
 
 import_sysdeps!();
 

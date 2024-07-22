@@ -1,10 +1,9 @@
 #![allow(clippy::module_name_repetitions)]
 
-use xx_core_macros::wrapper_functions;
-
 use super::signal::SignalMask;
 use super::time::TimeSpec;
 use super::*;
+use crate::macros::wrapper_functions;
 
 define_enum! {
 	#[bitflags]

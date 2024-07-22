@@ -2,9 +2,7 @@
 
 use std::hint::spin_loop;
 use std::ops::{Deref, DerefMut};
-use std::panic::*;
-use std::sync::atomic::*;
-use std::sync::*;
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::{fmt, result};
 
 use super::*;
@@ -12,10 +10,10 @@ use crate::sync::poison::*;
 
 #[errors(?Debug + ?Display)]
 pub enum LockError<T> {
-	#[error(transparent)]
+	#[display(transparent)]
 	Poisoned(#[from] PoisonError<T>),
 
-	#[error("Lock failed: the operation would block and the current task is interrupted")]
+	#[display("Lock failed: the operation would block and the current task is interrupted")]
 	#[kind = ErrorKind::Interrupted]
 	Interrupted
 }
@@ -60,7 +58,7 @@ impl<T: ?Sized> Drop for MutexGuard<'_, T> {
 
 impl<T: ?Sized + fmt::Debug> fmt::Debug for MutexGuard<'_, T> {
 	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-		self.deref().fmt(fmt)
+		(**self).fmt(fmt)
 	}
 }
 

@@ -1,21 +1,57 @@
 use super::*;
 
+pub fn try_change_task_output(output: &mut ReturnType) {
+	let ReturnType::Type(_, ty) = output else {
+		return;
+	};
+
+	let Type::Path(TypePath { qself: None, path }) = &mut **ty else {
+		return;
+	};
+
+	if path.leading_colon.is_none() &&
+		path.segments.len() == 2 &&
+		path.segments[0].ident == "Self" &&
+		path.segments[0].arguments.is_none() &&
+		path.segments[1].ident == "Output" &&
+		path.segments[1].arguments.is_empty()
+	{
+		path.segments[1].arguments = PathArguments::AngleBracketed(parse_quote! { <'_> });
+	}
+}
+
+pub fn try_change_task_type(generics: &mut Generics) {
+	if generics.params.is_empty() {
+		generics.params.push(parse_quote! { 'ctx });
+	}
+}
+
 pub fn task_impl(
-	mut attrs: AttributeArgs, use_lang: TokenStream, item: ItemTrait
+	mut attrs: AttributeArgs, use_lang: TokenStream, mut item: ItemTrait
 ) -> Result<TokenStream> {
 	attrs.async_kind.0 = AsyncKind::Task;
 
-	let item = Functions::Trait(item).transform_all(
-		|func| {
-			if func.sig.ident == "run" && func.sig.unsafety.is_none() {
+	for item in &mut item.items {
+		match item {
+			TraitItem::Fn(func) => {
 				/* caller must ensure we're allowed to suspend */
 				func.sig.unsafety = Some(Default::default());
+
+				try_change_task_output(&mut func.sig.output);
+
+				transform_async(
+					attrs.clone(),
+					&mut Function::from_trait_fn(true, None, func)
+				)?;
 			}
 
-			transform_async(attrs.clone(), func)
-		},
-		|_| true
-	)?;
+			TraitItem::Type(ty) => {
+				try_change_task_type(&mut ty.generics);
+			}
+
+			_ => ()
+		}
+	}
 
 	Ok(quote! {
 		const _: () = {
@@ -79,7 +115,8 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				}
 			}
 
-			impl<F: FnOnce(Args, &Context) -> Output, Args, Output> AsyncFnOnce<Args> for #ident<F, 0> {
+			impl<F: FnOnce(Args, &Context) -> Output, Args, Output> AsyncFnOnce<Args>
+				for #ident<F, 0> {
 				type Output = Output;
 
 				#[asynchronous(traitext)]
@@ -89,7 +126,8 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				}
 			}
 
-			impl<F: FnMut(Args, &Context) -> Output, Args, Output> AsyncFnMut<Args> for #ident<F, 1> {
+			impl<F: FnMut(Args, &Context) -> Output, Args, Output> AsyncFnMut<Args>
+				for #ident<F, 1> {
 				type Output = Output;
 
 				#[asynchronous(traitext)]
@@ -99,7 +137,8 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				}
 			}
 
-			impl<F: Fn(Args, &Context) -> Output, Args, Output> AsyncFn<Args> for #ident<F, 2> {
+			impl<F: Fn(Args, &Context) -> Output, Args, Output> AsyncFn<Args>
+				for #ident<F, 2> {
 				type Output = Output;
 
 				#[asynchronous(traitext)]

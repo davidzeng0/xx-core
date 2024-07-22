@@ -232,7 +232,7 @@ fn branch(env: &Expr, tasks: &[&Expr], mode: Mode<'_>) -> TokenStream {
 		}
 	};
 
-	TransformAsync {}.visit_expr_mut(&mut task);
+	TransformAsync::default().visit_expr_mut(&mut task);
 
 	task.to_token_stream()
 }

@@ -4,6 +4,7 @@ use std::mem::replace;
 use std::rc::Rc;
 
 use super::*;
+use crate::cell::UnsafeCell;
 
 #[allow(clippy::module_name_repetitions)]
 pub type SpawnResult<T> = MaybePanic<T>;
@@ -38,7 +39,8 @@ impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWork
 		trace!(target: &worker, "== Entered worker");
 
 		{
-			let worker = worker.pin_local();
+			/* Safety: worker stays pinned while running */
+			let worker = unsafe { worker.pin_local() };
 
 			if let Some(sync_output) =
 				Self::execute(this, env, ptr!(&*worker), task, request).transpose()
@@ -351,7 +353,7 @@ impl<Output> JoinHandle<Output> {
 
 #[asynchronous(task)]
 impl<Output> Task for JoinHandle<Output> {
-	type Output<'ctx> = Output;
+	type Output = Output;
 
 	async fn run(self) -> Output {
 		let result = self.try_join().await;

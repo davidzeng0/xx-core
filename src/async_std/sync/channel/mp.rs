@@ -1,7 +1,5 @@
 #![allow(unreachable_pub)]
 
-use std::mem::forget;
-
 use super::*;
 
 struct Slot<T> {
@@ -114,18 +112,18 @@ macro_rules! common_impl {
 				).ok()
 			}
 
-			fn can_send(&self) -> bool {
-				let tail = self.tail.load(Ordering::SeqCst);
+			pub fn len(&self) -> usize {
 				let head = self.head.load(Ordering::SeqCst);
+				let tail = self.tail.load(Ordering::SeqCst);
 
-				tail != head.wrapping_add(self.slots.len())
+				tail.wrapping_sub(head)
 			}
 
-			fn can_recv(&self) -> bool {
-				let head = self.head.load(Ordering::SeqCst);
+			pub fn spare_capacity(&self) -> usize {
 				let tail = self.tail.load(Ordering::SeqCst);
+				let head = self.head.load(Ordering::SeqCst);
 
-				tail != head
+				head.wrapping_add(self.slots.len()).wrapping_sub(tail)
 			}
 
 			fn wake_send(&self) {
@@ -153,7 +151,7 @@ macro_rules! common_impl {
 			}
 
 			pub async fn send_wait(&self) {
-				let _ = self.tx_waiters.wait(|| !self.can_send()).await;
+				let _ = self.tx_waiters.wait(|| self.spare_capacity() == 0).await;
 			}
 
 			pub async fn send_closed(&self) -> result::Result<(), WaitError> {
@@ -268,7 +266,7 @@ impl<T> MCChannel<T> {
 	}
 
 	pub async fn recv_wait(&self) {
-		let _ = self.rx_waiters.wait(|| !self.can_recv()).await;
+		let _ = self.rx_waiters.wait(|| self.len() == 0).await;
 	}
 }
 
@@ -311,6 +309,16 @@ macro_rules! channel_impl {
 						backoff.snooze();
 					}
 				}
+			}
+
+			#[must_use]
+			pub fn len(&self) -> usize {
+				self.channel.len()
+			}
+
+			#[must_use]
+			pub fn is_empty(&self) -> bool {
+				self.len() == 0
 			}
 
 			pub fn close(&self) {
@@ -362,6 +370,16 @@ macro_rules! channel_impl {
 						backoff.snooze();
 					}
 				}
+			}
+
+			#[must_use]
+			pub fn spare_capacity(&self) -> usize {
+				self.channel.spare_capacity()
+			}
+
+			#[must_use]
+			pub fn is_full(&self) -> bool {
+				self.spare_capacity() == 0
 			}
 
 			#[must_use]

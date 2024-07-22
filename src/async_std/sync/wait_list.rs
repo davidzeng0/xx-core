@@ -1,28 +1,24 @@
 #![allow(unreachable_pub, clippy::module_name_repetitions)]
 
 use std::marker::PhantomData;
-use std::mem::forget;
-use std::result;
 use std::sync::atomic::Ordering::*;
-use std::sync::atomic::*;
 
 use super::*;
+use crate::cell::Cell;
 use crate::container::zero_alloc::linked_list::*;
 use crate::coroutines::{self, block_on};
 use crate::future::*;
-use crate::impls::Cell;
-use crate::macros::container_of;
-use crate::pointer::AtomicPtr;
 use crate::runtime::{catch_unwind_safe, join, MaybePanic};
+use crate::sync::atomic::AtomicPtr;
 use crate::sync::{SpinMutex, SpinMutexGuard};
 
 #[errors]
 pub enum WaitError {
-	#[error("Suspend cancelled")]
+	#[display("Suspend cancelled")]
 	#[kind = ErrorKind::Interrupted]
 	Cancelled,
 
-	#[error("Wait list closed")]
+	#[display("Wait list closed")]
 	Closed
 }
 
@@ -269,9 +265,10 @@ impl<T: Clone> RawWaitList<T> {
 	}
 
 	pub fn wake_all(&self, value: T) -> usize {
-		let mut list = LinkedList::new();
-		let list = list.pin_local();
+		let list = LinkedList::new();
 		let count = self.count.get();
+
+		pin!(list);
 
 		/* Safety: our new list is pinned, and we clear out all nodes before
 		 * returning

@@ -1,5 +1,5 @@
 use std::fmt::Arguments;
-use std::panic::*;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 use crate::log::*;
 

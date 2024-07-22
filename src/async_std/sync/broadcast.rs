@@ -1,7 +1,4 @@
-use std::mem::{forget, replace, MaybeUninit};
-use std::result;
-use std::sync::atomic::*;
-use std::sync::*;
+use std::mem::replace;
 
 use super::*;
 use crate::sync::Backoff;
@@ -92,19 +89,19 @@ unsafe impl<T: Send> Sync for Channel<T> {}
 
 #[errors]
 pub enum RecvError {
-	#[error("Channel empty")]
+	#[display("Channel empty")]
 	#[kind = ErrorKind::WouldBlock]
 	Empty,
 
-	#[error("Channel closed")]
+	#[display("Channel closed")]
 	Closed,
 
-	#[error("Channel lagged by {}", f0)]
+	#[display("Channel lagged by {}", f0)]
 	Lagged(usize)
 }
 
 #[errors(?Debug + ?Display)]
-#[error("Channel closed")]
+#[fmt("Channel closed")]
 pub struct SendError<T>(pub T);
 
 type RecvResult<T> = result::Result<T, RecvError>;
@@ -128,6 +125,10 @@ impl<T: Clone> Receiver<T> {
 	#[must_use]
 	pub fn resubscribe(&self) -> Self {
 		Self::new(self.channel.clone())
+	}
+
+	pub fn synchronize(&mut self) {
+		self.pos = self.channel.tail.load(Ordering::SeqCst);
 	}
 
 	#[allow(clippy::missing_panics_doc, clippy::comparison_chain)]

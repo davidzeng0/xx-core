@@ -117,38 +117,56 @@ fn member_as_ident(member: &Member) -> Ident {
 
 struct Variant {
 	display: Option<(TokenStream, bool)>,
+	debug: Option<(TokenStream, bool)>,
 	kind: Option<Expr>,
 	ident: Ident,
 	fields: VariantFields
 }
 
+fn maybe_transparent(attr: MetaList) -> (TokenStream, bool) {
+	let is_transparent =
+		parse2::<Ident>(attr.tokens.clone()).is_ok_and(|ident| ident == "transparent");
+
+	(attr.tokens, is_transparent)
+}
+
 impl Variant {
 	fn new(attrs: &mut Vec<Attribute>, ident: &Ident, fields: &mut Fields) -> Result<Self> {
-		let display = remove_attr_list(attrs, "error").map(|attr| attr.tokens);
-		let kind = remove_attr_name_value(attrs, "kind").map(|attr| attr.value);
+		let fmt = remove_attr_list(attrs, "fmt").map(maybe_transparent);
+		let display = if fmt.is_none() {
+			remove_attr_list(attrs, "display").map(maybe_transparent)
+		} else {
+			fmt.clone()
+		};
 
-		let mut this = Self {
-			display: display.map(|display| (display, false)),
-			kind,
+		let debug = if fmt.is_none() {
+			remove_attr_list(attrs, "debug").map(maybe_transparent)
+		} else {
+			fmt
+		};
+
+		let this = Self {
+			display,
+			debug,
+			kind: remove_attr_name_value(attrs, "kind").map(|attr| attr.value),
 			ident: ident.clone(),
 			fields: VariantFields::new(fields)
 		};
-
-		if let Some((display, is_transparent)) = &mut this.display {
-			*is_transparent =
-				parse2::<Ident>(display.clone()).is_ok_and(|ident| ident == "transparent");
-		}
 
 		if this.fields.members.len() == 1 {
 			return Ok(this);
 		}
 
-		if let Some((display, is_transparent)) = &this.display {
-			if *is_transparent {
-				let msg = "#[error(transparent)] requires exactly one field";
+		if let Some((display, true)) = &this.display {
+			let msg = "#[display(transparent)] requires exactly one field";
 
-				return Err(Error::new_spanned(display, msg));
-			}
+			return Err(Error::new_spanned(display, msg));
+		}
+
+		if let Some((display, true)) = &this.debug {
+			let msg = "#[debug(transparent)] requires exactly one field";
+
+			return Err(Error::new_spanned(display, msg));
 		}
 
 		if let Some(from) = &this.fields.attributes.from {
@@ -188,6 +206,60 @@ impl Variant {
 		let matcher = self.matcher();
 
 		Some(quote! { #base #matcher => #write })
+	}
+
+	fn debug(&self, base: &Option<TokenStream>, fmt: &Ident) -> TokenStream {
+		let matcher = self.matcher();
+
+		let is_transparent = match self.debug {
+			Some((_, tr)) => tr,
+			None => matches!(self.display, Some((_, true)))
+		};
+
+		let write = if is_transparent {
+			let field = member_as_ident(&self.fields.members[0].0);
+
+			quote! { ::std::fmt::Debug::fmt(#field, #fmt) }
+		} else if let Some((debug, _)) = self.debug.as_ref() {
+			quote! { ::std::write!(#fmt, #debug) }
+		} else {
+			let mut debug = Punctuated::<Expr, Token![.]>::new();
+			let ident = self.ident.to_string();
+
+			debug.push(parse_quote! { #fmt });
+
+			if self.fields.members.is_empty() {
+				debug.push(parse_quote! { write_str(#ident) });
+			} else if self.fields.named {
+				debug.push(parse_quote! { debug_struct(#ident) });
+			} else {
+				debug.push(parse_quote! { debug_tuple(#ident) });
+			}
+
+			for (member, _) in &self.fields.members {
+				debug.push(match member {
+					Member::Named(ident) => {
+						let name = ident.to_string();
+
+						parse_quote! { field(#name, #ident) }
+					}
+
+					Member::Unnamed(_) => {
+						let ident = member_as_ident(member);
+
+						parse_quote! { field(#ident) }
+					}
+				});
+			}
+
+			if !self.fields.members.is_empty() {
+				debug.push(parse_quote! { finish() });
+			}
+
+			quote! { #debug }
+		};
+
+		quote! { #base #matcher => #write }
 	}
 
 	fn kind(&self, base: &Option<TokenStream>) -> Option<TokenStream> {
@@ -295,6 +367,7 @@ impl Input {
 		let base = Some(quote! { Self:: });
 
 		let mut displays = Punctuated::<_, Token![,]>::new();
+		let mut debugs = Punctuated::<_, Token![,]>::new();
 		let mut kinds = Punctuated::<_, Token![,]>::new();
 		let mut sources = Punctuated::<_, Token![,]>::new();
 		let mut froms = Vec::new();
@@ -317,6 +390,10 @@ impl Input {
 					sources.push(source);
 				}
 
+				if self.attrs.no_debug.is_some() {
+					debugs.push(variant.debug(&None, &fmt));
+				}
+
 				quote! { true }
 			}
 
@@ -328,7 +405,7 @@ impl Input {
 						let Some(display) = variant.display(&base, &fmt) else {
 							return Err(Error::new_spanned(
 								&variant.ident,
-								"Missing #[error(..)] display attribute"
+								"Missing #[display(..)] attribute"
 							));
 						};
 
@@ -346,6 +423,10 @@ impl Input {
 					if let Some(source) = variant.source(&base) {
 						sources.push(source);
 					}
+
+					if self.attrs.no_debug.is_some() {
+						debugs.push(variant.debug(&base, &fmt));
+					}
 				}
 
 				quote! {
@@ -357,34 +438,36 @@ impl Input {
 		let mut fmts = Vec::new();
 
 		if !displays.is_empty() {
-			let mut clause = None;
+			let clause;
 			let where_clause = if self.attrs.no_display.is_some() {
 				where_clause
 			} else {
-				Some(&*clause.insert(add_bounds(
+				clause = add_bounds(
 					&self.input.generics,
 					where_clause,
 					&[parse_quote! { ::std::fmt::Display }]
-				)))
+				);
+
+				Some(&clause)
 			};
 
-			let gen_fmt = |trait_name| {
+			let gen_fmt = |trait_name, fmts| {
 				quote! {
 					impl #impl_generics ::std::fmt::#trait_name for #name #type_generics #where_clause {
 						fn fmt(&self, #fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
 							#[allow(unused_variables)]
 							match self {
-								#displays
+								#fmts
 							}
 						}
 					}
 				}
 			};
 
-			fmts.push(gen_fmt(quote! { Display }));
+			fmts.push(gen_fmt(quote! { Display }, &displays));
 
 			if self.attrs.no_debug.is_some() {
-				fmts.push(gen_fmt(quote! { Debug }));
+				fmts.push(gen_fmt(quote! { Debug }, &debugs));
 			}
 		}
 

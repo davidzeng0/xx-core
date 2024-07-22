@@ -1,7 +1,5 @@
 use std::mem::take;
 
-use syn::parse::discouraged::Speculative;
-
 use super::*;
 
 pub mod branch;
@@ -14,22 +12,6 @@ use invoke::*;
 use lang::*;
 use traits::*;
 use transform::*;
-
-fn get_lang(attrs: &mut Vec<Attribute>) -> Result<Option<(Lang, Span)>> {
-	let Some(attr) = remove_attr_name_value(attrs, "lang") else {
-		return Ok(None);
-	};
-
-	let Expr::Lit(ExprLit { lit: Lit::Str(str), .. }) = &attr.value else {
-		return Err(Error::new_spanned(attr.value, "Expected a string"));
-	};
-
-	let lang = str
-		.value()
-		.parse()
-		.map_err(|()| Error::new_spanned(str, "Unknown lang item"))?;
-	Ok(Some((lang, attr.span())))
-}
 
 fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> {
 	let mut removed = Vec::new();
@@ -60,19 +42,6 @@ fn language_impl(mut attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStrea
 		(Lang::Task, AsyncItem::Trait(task)) => task_impl(attrs, use_lang, task)?,
 		_ => return Err(Error::new(span, "Invalid language item"))
 	})
-}
-
-fn async_items(item: Functions) -> Result<TokenStream> {
-	item.transform_all(
-		|func| {
-			if let Some(block) = &mut func.block {
-				TransformItems.visit_block_mut(block);
-			}
-
-			Ok(())
-		},
-		|_| true
-	)
 }
 
 fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStream> {
@@ -116,35 +85,43 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 			break;
 		};
 
-		let Some(ImplItem::Fn(run)) = imp.items.iter_mut().find(|item| match item {
-			ImplItem::Fn(func) => func.sig.ident == "run",
-			_ => false
-		}) else {
-			break;
-		};
+		for item in &mut imp.items {
+			match item {
+				ImplItem::Fn(func) => {
+					if func.sig.ident == "run" {
+						if let Some(unsafety) = func.sig.unsafety {
+							let msg = "Function must be safe to call";
 
-		if run.sig.unsafety.is_none() {
-			/* caller must ensure we're allowed to suspend */
-			run.sig.unsafety = Some(Default::default());
+							return Err(Error::new_spanned(unsafety, msg));
+						}
+
+						/* caller must ensure we're allowed to suspend */
+						func.sig.unsafety = Some(Default::default());
+
+						try_change_task_output(&mut func.sig.output);
+					}
+				}
+
+				ImplItem::Type(ty) => {
+					try_change_task_type(&mut ty.generics);
+				}
+
+				_ => ()
+			}
 		}
 
 		break;
 	}
 
 	let transform_functions = |attrs: AttributeArgs| {
-		item.clone().transform_all(
-			|func| transform_async(attrs.clone(), func),
-			|item| {
-				attrs.async_kind.0 == AsyncKind::Task ||
-					!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
-			}
-		)
+		item.clone()
+			.transform_all(|func| transform_async(attrs.clone(), func), |_| true)
 	};
 
 	match attrs.async_kind.0 {
 		AsyncKind::Default => (),
 		AsyncKind::TraitFn => return async_impl(attrs, item),
-		AsyncKind::Sync => return async_items(item),
+		AsyncKind::Sync => return item.transform_all(transform_items, |_| true),
 		_ => return transform_functions(attrs)
 	}
 

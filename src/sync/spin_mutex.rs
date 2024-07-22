@@ -1,16 +1,16 @@
 #![allow(clippy::module_name_repetitions)]
 
-use std::fmt::*;
+use std::fmt::{Debug, Formatter, Result};
 use std::ops::{Deref, DerefMut};
 use std::result;
 
 use super::*;
+use crate::cell::UnsafeCell;
 use crate::macros::errors;
-use crate::pointer::UnsafeCell;
 
 #[errors]
 pub enum TryLockError {
-	#[error("Try lock failed because the operation would block")]
+	#[display("Try lock failed because the operation would block")]
 	WouldBlock
 }
 
@@ -48,7 +48,7 @@ impl<T: ?Sized> Drop for SpinMutexGuard<'_, T> {
 
 impl<T: ?Sized + Debug> Debug for SpinMutexGuard<'_, T> {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
-		self.deref().fmt(fmt)
+		(**self).fmt(fmt)
 	}
 }
 

@@ -1,35 +1,36 @@
 use super::*;
 
-pub struct CustomError<E> {
+pub struct CustomError<E, K> {
 	backtrace: Option<Backtrace>,
-	error: E
+	error: E,
+	kind: K
 }
 
-impl<E: ErrorImpl> Display for CustomError<E> {
+impl<E: Display, K> Display for CustomError<E, K> {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
 		Display::fmt(&self.error, fmt)
 	}
 }
 
-impl<E: ErrorImpl> Debug for CustomError<E> {
+impl<E: Debug, K> Debug for CustomError<E, K> {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
 		Debug::fmt(&self.error, fmt)
 	}
 }
 
-impl<E: ErrorImpl> Error for CustomError<E> {
+impl<E: Error, K> Error for CustomError<E, K> {
 	fn source(&self) -> Option<&(dyn Error + 'static)> {
 		self.error.source()
 	}
 }
 
-impl<E: ErrorImpl> ErrorImpl for CustomError<E> {
+impl<E: ErrorImpl, K: CompactErrorKind> ErrorImpl for CustomError<E, K> {
 	fn kind(&self) -> ErrorKind {
-		self.error.kind()
+		self.kind.kind(&self.error)
 	}
 }
 
-impl<E> CustomError<E> {
+impl<E, K> CustomError<E, K> {
 	unsafe fn downcast_ptr<I>(this: MutNonNull<()>, type_id: TypeId) -> Option<MutNonNull<()>>
 	where
 		I: ErrorBounds
@@ -52,7 +53,7 @@ impl<E> CustomError<E> {
 	where
 		I: ErrorBounds
 	{
-		let this = this.cast::<DynError<CustomError<ManuallyDrop<I>>>>();
+		let this = this.cast::<DynError<CustomError<ManuallyDrop<I>, K>>>();
 		let out = out.cast::<MaybeUninit<I>>();
 
 		if type_id != TypeId::of::<I>() {
@@ -95,13 +96,13 @@ macro_rules! wrapper_type {
 		#[repr(transparent)]
 		struct $name<E>(pub E);
 
-		impl<E: ErrorBounds> Display for $name<E> {
+		impl<E: Display> Display for $name<E> {
 			fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
 				Display::fmt(&self.0, fmt)
 			}
 		}
 
-		impl<E: ErrorBounds> Debug for $name<E> {
+		impl<E: Debug> Debug for $name<E> {
 			fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
 				Debug::fmt(&self.0, fmt)
 			}
@@ -119,11 +120,11 @@ wrapper_type!(Basic);
 
 impl<E: ErrorBounds> Error for Basic<E> {}
 
-impl<E: ErrorBounds> CustomError<E> {
-	pub fn new_basic(error: E) -> MutNonNull<DynError<()>> {
-		CustomError::new(Basic(error)).into_dyn(&ErrorVTable {
+impl<E: ErrorBounds, K: CompactErrorKind> CustomError<E, K> {
+	pub fn new_basic(error: E, kind: K) -> MutNonNull<DynError<()>> {
+		CustomError::new(Basic(error), kind).into_dyn(&ErrorVTable {
 			kind: |_| ErrorKind::Other,
-			meta: CustomError::<Basic<E>>::meta,
+			meta: CustomError::<Basic<E>, K>::meta,
 			downcast_ptr: Self::downcast_ptr::<E>,
 			downcast_owned: Self::downcast_owned::<E>,
 			backtrace: Self::backtrace,
@@ -140,11 +141,11 @@ impl<E: ErrorBounds + Error> Error for Std<E> {
 	}
 }
 
-impl<E: ErrorBounds + Error> CustomError<E> {
-	pub fn new_std(error: E) -> MutNonNull<DynError<()>> {
-		CustomError::new(Std(error)).into_dyn(&ErrorVTable {
+impl<E: ErrorBounds + Error, K: CompactErrorKind> CustomError<E, K> {
+	pub fn new_std(error: E, kind: K) -> MutNonNull<DynError<()>> {
+		CustomError::new(Std(error), kind).into_dyn(&ErrorVTable {
 			kind: |_| ErrorKind::Other,
-			meta: CustomError::<Std<E>>::meta,
+			meta: CustomError::<Std<E>, K>::meta,
 			downcast_ptr: Self::downcast_ptr::<E>,
 			downcast_owned: Self::downcast_owned::<E>,
 			backtrace: Self::backtrace,
@@ -180,11 +181,11 @@ impl ErrorImpl for Boxed {
 	}
 }
 
-impl CustomError<BoxedError> {
-	pub fn new_boxed(error: BoxedError) -> MutNonNull<DynError<()>> {
-		CustomError::new(Boxed(error)).into_dyn(&ErrorVTable {
+impl<K: CompactErrorKind> CustomError<BoxedError, K> {
+	pub fn new_boxed(error: BoxedError, kind: K) -> MutNonNull<DynError<()>> {
+		CustomError::new(Boxed(error), kind).into_dyn(&ErrorVTable {
 			kind: |_| ErrorKind::Other,
-			meta: CustomError::<Boxed>::meta,
+			meta: CustomError::<Boxed, K>::meta,
 			downcast_ptr: Self::downcast_ptr::<BoxedError>,
 			downcast_owned: Self::downcast_owned::<BoxedError>,
 			backtrace: Self::backtrace,
@@ -193,7 +194,7 @@ impl CustomError<BoxedError> {
 	}
 }
 
-impl<E: ErrorImpl> CustomError<E> {
+impl<E: ErrorImpl, K: CompactErrorKind> CustomError<E, K> {
 	unsafe fn kind(this: MutNonNull<()>) -> ErrorKind {
 		let this = this.cast::<Self>();
 
@@ -208,12 +209,12 @@ impl<E: ErrorImpl> CustomError<E> {
 		unsafe { MutNonNull::new_unchecked(this.into()) }
 	}
 
-	fn new(error: E) -> Self {
-		Self { backtrace: capture_backtrace(), error }
+	fn new(error: E, kind: K) -> Self {
+		Self { backtrace: capture_backtrace(), error, kind }
 	}
 
-	pub fn new_error_impl(error: E) -> MutNonNull<DynError<()>> {
-		Self::new(error).into_dyn(&ErrorVTable {
+	pub fn new_error_impl(error: E, kind: K) -> MutNonNull<DynError<()>> {
+		Self::new(error, kind).into_dyn(&ErrorVTable {
 			kind: Self::kind,
 			meta: Self::meta,
 			downcast_ptr: Self::downcast_ptr::<E>,

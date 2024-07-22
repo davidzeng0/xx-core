@@ -4,22 +4,86 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-log = { version = "0.4", features = ["std"] }
-ctor = "0.2"
-enumflags2 = "0.7.10"
-memchr = "2.7.4"
-num-derive = "0.4.2"
-num-traits = "0.2.19"
-paste = "1.0.15"
-lazy_static = "1.5.0"
-static_assertions = "1.1.0"
-xx-proc-macro-support = { git = "https://github.com/davidzeng0/xx-proc-macro-support.git" }
-xx-core-macros = { path = "macros" }
+log = { version = "0.4", features = ["std"], optional = true }
+ctor = { version = "0.2", optional = true }
+enumflags2 = { version = "0.7.10", optional = true }
+memchr = { version = "2.7.4", optional = true }
+num-derive = { version = "0.4.2", optional = true }
+num-traits = { version = "0.2.19", optional = true }
+paste = { version = "1.0.15", optional = true }
+lazy_static = { version = "1.5.0", optional = true }
+static_assertions = { version = "1.1.0", optional = true }
+xx-macros = { git = "https://github.com/davidzeng0/xx-macros.git", optional = true }
+xx-core-macros = { path = "macros", optional = true }
 
 [features]
-default = ["log", "panic-log"]
-log = []
-panic-log = []
+async_std = ["io", "coroutines", "container", "sync", "memchr"]
+container = ["opt", "pointer", "cell"]
+coroutines = [
+	"fiber",
+	"future",
+	"log",
+	"impls",
+	"cell",
+	"log",
+	"static_assertions",
+]
+error = ["pointer", "static_assertions"]
+fiber = ["os", "opt", "pointer", "log", "impls"]
+future = ["closure", "pointer", "error", "impls"]
+impls = ["macros", "runtime"]
+io = ["pointer"]
+macros = ["dep:xx-macros", "dep:xx-core-macros", "paste", "opt"]
+opt = []
+os = [
+	"error",
+	"io",
+	"macros",
+	"pointer",
+	"impls",
+	"enumflags2",
+	"num-traits",
+	"dep:num-derive",
+]
+pointer = ["macros", "runtime"]
+sync = ["cell", "pointer", "cell", "error"]
+threadpool = ["container", "future", "os", "pointer", "log"]
+cell = ["macros", "pointer"]
+closure = []
+log = ["dep:log", "ctor", "lazy_static", "pointer"]
+runtime = ["log", "macros"]
+ctor = ["dep:ctor"]
+enumflags2 = ["dep:enumflags2"]
+lazy_static = ["dep:lazy_static"]
+memchr = ["dep:memchr"]
+num-traits = ["dep:num-traits"]
+paste = ["dep:paste"]
+static_assertions = ["dep:static_assertions"]
+
+default = [
+	"async_std",
+	"container",
+	"coroutines",
+	"error",
+	"fiber",
+	"future",
+	"impls",
+	"io",
+	"macros",
+	"opt",
+	"os",
+	"pointer",
+	"sync",
+	"threadpool",
+	"cell",
+	"closure",
+	"log",
+	"runtime",
+	"logger",
+	"panic-log",
+]
+logger = ["log", "impls"]
+panic-log = ["logger"]
 tracing = []
 tracing-ext = ["tracing"]
 
@@ -126,3 +190,5 @@ flat_map_option = "warn"
 option_as_ref_cloned = "warn"
 option_option = "warn"
 todo = "warn"
+unused_async = "warn"
+wildcard_imports = "warn"

@@ -99,7 +99,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				LifetimeAnnotations::Closure
 			)?;
 
-			ReplaceSelf {}.visit_item_fn_mut(cancel);
+			ReplaceSelf.visit_item_fn_mut(cancel);
 
 			let (ident, attrs, unsafety, inputs, output, block) = (
 				&cancel.sig.ident,

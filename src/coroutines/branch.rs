@@ -4,10 +4,10 @@
 	unreachable_pub
 )]
 
-use std::cell::Cell;
 use std::mem::replace;
 
 use super::*;
+use crate::cell::Cell;
 use crate::impls::OptionExt;
 
 /// # Safety

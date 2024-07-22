@@ -7,8 +7,8 @@ pub enum ClosureType {
 	Trait
 }
 
-#[strings(defaults, lowercase)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[strings(defaults, lowercase)]
 pub enum AsyncKind {
 	#[omit]
 	Default,
@@ -31,8 +31,8 @@ impl AsyncKind {
 	}
 }
 
-#[strings(defaults, snake)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[strings(defaults, snake)]
 pub enum Lang {
 	GetContext,
 	TaskWrap,
@@ -52,15 +52,15 @@ struct Ident(proc_macro2::Ident);
 
 impl Parse for Ident {
 	fn parse(input: ParseStream<'_>) -> Result<Self> {
-		let ident = input.step(|cursor| {
-			if let Some(ident) = cursor.ident() {
-				Ok(ident)
-			} else {
-				Err(cursor.error("Expected an identifier"))
-			}
-		})?;
-
-		Ok(Self(ident))
+		input
+			.step(|cursor| {
+				if let Some(ident) = cursor.ident() {
+					Ok(ident)
+				} else {
+					Err(cursor.error("Expected an identifier"))
+				}
+			})
+			.map(Self)
 	}
 }
 
@@ -99,7 +99,7 @@ impl ImplGen {
 	}
 
 	pub fn span(&self) -> Option<Span> {
-		self.impl_mut.or(self.impl_box)
+		self.impl_ref.or(self.impl_mut).or(self.impl_box)
 	}
 }
 
@@ -108,6 +108,21 @@ pub struct AttributeArgs {
 	pub async_kind: (AsyncKind, Span),
 	pub impl_gen: ImplGen,
 	pub language: Option<(Lang, Span)>
+}
+
+fn get_lang(attrs: &mut Vec<Attribute>) -> Result<Option<(Lang, Span)>> {
+	let Some(attr) = remove_attr_name_value(attrs, "lang") else {
+		return Ok(None);
+	};
+
+	let Expr::Lit(ExprLit { lit: Lit::Str(str), .. }) = &attr.value else {
+		return Err(Error::new_spanned(attr.value, "Expected a string"));
+	};
+
+	match str.value().parse() {
+		Ok(lang) => Ok(Some((lang, attr.span()))),
+		Err(()) => Err(Error::new_spanned(str, "Unknown lang item"))
+	}
 }
 
 impl AttributeArgs {
@@ -172,12 +187,13 @@ pub enum AsyncItem {
 
 impl Parse for AsyncItem {
 	fn parse(input: ParseStream<'_>) -> Result<Self> {
-		let fork = input.fork();
+		let lookahead = input.fork();
 
-		if let Ok(item) = ItemStruct::parse(&fork) {
-			input.advance_to(&fork);
+		lookahead.call(Attribute::parse_outer)?;
+		lookahead.parse::<Visibility>()?;
 
-			return Ok(Self::Struct(item));
+		if lookahead.peek(Token![struct]) {
+			return input.parse().map(Self::Struct);
 		}
 
 		Ok(match Functions::parse(input)? {

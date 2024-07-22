@@ -1,8 +1,7 @@
 #![allow(clippy::multiple_unsafe_ops_per_block)]
 
-use std::cell::Cell;
-
 use super::*;
+use crate::cell::{Cell, UnsafeCell};
 
 /// A worker thread capable of running async operations via fibers
 #[repr(C)]

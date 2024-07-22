@@ -1,5 +1,3 @@
-use num_traits::FromPrimitive;
-
 use super::dirent::FileType;
 use super::fcntl::AtFlag;
 use super::openat::into_raw_dirfd;

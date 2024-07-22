@@ -44,4 +44,6 @@ fn test_duration() {
 		Duration::from_nanos(75_555_555),
 		duration!(var2 / (var * 5))
 	);
+
+	assert_eq!(Duration::from_secs(var * 60), duration!(var minutes));
 }

@@ -7,55 +7,8 @@ use std::ops::BitAnd;
 use paste::paste;
 
 use super::*;
-use crate::impls::{FromBytes, ToBytes};
+use crate::io::typed::*;
 use crate::macros::macro_each;
-
-macro_rules! impl_primitive_bytes_encoding_endian {
-	($type:ty, $endian:ident, $trait_endian:ident) => {
-		paste! {
-			#[allow(non_camel_case_types)]
-			struct [<$type $endian>]($type);
-
-			impl ToBytes<{ size_of::<$type>() }> for [<$type $endian>] {
-				fn to_bytes(self) -> [u8; size_of::<$type>()] {
-					self.0.[<to_ $endian _bytes>]()
-				}
-			}
-
-			impl FromBytes<{ size_of::<$type>() }> for [<$type $endian>] {
-				fn from_bytes(bytes: [u8; size_of::<$type>()]) -> Self {
-					Self($type::[<from_ $endian _bytes>](bytes))
-				}
-			}
-
-			#[allow(dead_code)]
-			impl [<$type $endian>] {
-				const BYTES: usize = size_of::<$type>();
-			}
-		}
-	};
-}
-
-macro_rules! impl_primitive_type {
-	($type:ty, $bits:literal) => {
-		impl_primitive_bytes_encoding_endian!($type, le, LittleEndian);
-		impl_primitive_bytes_encoding_endian!($type, be, BigEndian);
-	};
-}
-
-macro_rules! impl_int {
-	($bits:literal) => {
-		paste! {
-			impl_primitive_type!([<i $bits>], $bits);
-			impl_primitive_type!([<u $bits>], $bits);
-		}
-	};
-}
-
-/* usize and isize omitted intentionally */
-macro_each!(impl_int, 8, 16, 32, 64, 128);
-impl_primitive_type!(f32, 32);
-impl_primitive_type!(f64, 64);
 
 #[asynchronous]
 async fn read_bytes<R>(reader: &mut R, bytes: &mut [u8]) -> Result<usize>
@@ -426,7 +379,8 @@ impl<'a, W: Write> FmtAdapter<'a, W> {
 	/// See [`scoped`]
 	///
 	/// [`scoped`]: crate::coroutines::scoped
-	async unsafe fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
+	#[allow(unsafe_code)]
+	unsafe fn write_args(&mut self, args: Arguments<'_>) -> Result<usize> {
 		match fmt::write(self, args) {
 			Ok(()) => Ok(self.wrote),
 			Err(_) => Err(self
@@ -507,7 +461,7 @@ pub trait WriteTyped: WriteSealed {
 
 		/* Safety: we are in an async function */
 		#[allow(unsafe_code)]
-		(unsafe { adapter.write_args(args).await })
+		(unsafe { adapter.write_args(args) })
 	}
 
 	/// Attempts to write the entire string, returning the number of bytes
@@ -536,9 +490,9 @@ pub trait WriteTyped: WriteSealed {
 	#[asynchronous(traitext)]
 	async fn write_type<T, const N: usize>(&mut self, val: T) -> Result<usize>
 	where
-		T: ToBytes<N>
+		T: IntoBytes<N>
 	{
-		self.try_write_all(&val.to_bytes()).await
+		self.try_write_all(&val.into_bytes()).await
 	}
 }
 

@@ -1,3 +1,20 @@
+use std::ffi::{CStr, CString};
+use std::marker::PhantomData;
+use std::mem::{size_of, size_of_val, transmute};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::path::Path;
+use std::time::Duration;
+
+use enumflags2::{bitflags, make_bitflags, BitFlag, BitFlags};
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+
+use self::syscall::*;
+use crate::error::*;
+use crate::io::UninitBuf;
+use crate::macros::syscall_define;
+use crate::pointer::*;
+
 pub mod dirent;
 pub mod epoll;
 pub mod error;
@@ -18,21 +35,6 @@ pub mod syscall;
 pub mod tcp;
 pub mod time;
 pub mod unistd;
-
-use std::ffi::{CStr, CString};
-use std::marker::PhantomData;
-use std::mem::{size_of, size_of_val, transmute};
-use std::os::fd::*;
-use std::path::Path;
-use std::time::Duration;
-
-use enumflags2::*;
-use syscall::*;
-
-use crate::error::*;
-use crate::impls::Buffer;
-use crate::macros::syscall_define;
-use crate::pointer::*;
 
 pub const INVALID_FD: RawFd = -1;
 
@@ -278,10 +280,10 @@ where
 	if bytes.len() >= MAX_STACK_ALLOCATION {
 		allocate_cstr(bytes, func)
 	} else {
-		let mut buf = Buffer::<MAX_STACK_ALLOCATION>::new();
+		let mut buf = UninitBuf::<MAX_STACK_ALLOCATION>::new();
 
-		buf.append(bytes);
-		buf.append(&[0]);
+		buf.extend_from_slice(bytes);
+		buf.extend_from_slice(&[0]);
 
 		let str = CStr::from_bytes_with_nul(&buf).map_err(|_| ErrorKind::invalid_cstr())?;
 

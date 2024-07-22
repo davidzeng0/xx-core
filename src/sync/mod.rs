@@ -1,3 +1,4 @@
+pub mod atomic;
 pub mod backoff;
 pub mod cache_padded;
 pub mod poison;

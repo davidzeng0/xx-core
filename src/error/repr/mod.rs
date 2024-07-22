@@ -1,7 +1,7 @@
 #![allow(unreachable_pub, clippy::multiple_unsafe_ops_per_block)]
 
-use std::any::*;
-use std::backtrace::*;
+use std::any::TypeId;
+use std::backtrace::{Backtrace, BacktraceStatus};
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::marker::PhantomData;
@@ -13,13 +13,37 @@ use crate::pointer::*;
 mod context;
 mod custom;
 mod dynamic;
-use context::*;
-use custom::*;
-use dynamic::*;
 
+use self::context::*;
+use self::custom::*;
+use self::dynamic::*;
 use super::internal::*;
 use super::private::*;
 use super::{BoxedError, Context, ErrorKind, OsError};
+
+pub trait CompactErrorKind: Send + Sync + 'static {
+	fn kind<E>(&self, error: &E) -> ErrorKind
+	where
+		E: ErrorImpl;
+}
+
+impl CompactErrorKind for () {
+	fn kind<E>(&self, error: &E) -> ErrorKind
+	where
+		E: ErrorImpl
+	{
+		error.kind()
+	}
+}
+
+impl CompactErrorKind for ErrorKind {
+	fn kind<E>(&self, _: &E) -> ErrorKind
+	where
+		E: ErrorImpl
+	{
+		*self
+	}
+}
 
 pub struct CustomRef<'a, const MUT: bool = false>(MutNonNull<DynError<()>>, PhantomData<&'a ()>);
 
@@ -152,29 +176,35 @@ impl<const MUT: bool> Display for CustomRef<'_, MUT> {
 pub struct Custom(MutNonNull<DynError<()>>);
 
 impl Custom {
-	pub fn new_boxed(error: BoxedError) -> Self {
-		Self(CustomError::new_boxed(error))
+	pub fn new_boxed<K>(error: BoxedError, kind: K) -> Self
+	where
+		K: CompactErrorKind
+	{
+		Self(CustomError::new_boxed(error, kind))
 	}
 
-	pub fn new_basic<E>(error: E) -> Self
+	pub fn new_basic<E, K>(error: E, kind: K) -> Self
 	where
-		E: ErrorBounds
+		E: ErrorBounds,
+		K: CompactErrorKind
 	{
-		Self(CustomError::new_basic(error))
+		Self(CustomError::new_basic(error, kind))
 	}
 
-	pub fn new_std<E>(error: E) -> Self
+	pub fn new_std<E, K>(error: E, kind: K) -> Self
 	where
-		E: ErrorBounds + Error
+		E: ErrorBounds + Error,
+		K: CompactErrorKind
 	{
-		Self(CustomError::new_std(error))
+		Self(CustomError::new_std(error, kind))
 	}
 
-	pub fn new_error_impl<E>(error: E) -> Self
+	pub fn new_error_impl<E, K>(error: E, kind: K) -> Self
 	where
-		E: ErrorImpl
+		E: ErrorImpl,
+		K: CompactErrorKind
 	{
-		Self(CustomError::new_error_impl(error))
+		Self(CustomError::new_error_impl(error, kind))
 	}
 
 	pub fn new_context<C: Context>(context: C, error: super::Error) -> Self {
@@ -267,6 +297,7 @@ impl Repr {
 	pub const fn new_os(code: OsError) -> Self {
 		const_assert!(Tag::Os as usize != 0);
 
+		#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 		let tagged = (code as usize) << 8 | Tag::Os as usize;
 
 		/* Safety: `Tag::Os` is non zero */
@@ -314,7 +345,12 @@ impl Repr {
 		)]
 		unsafe {
 			match tag {
+				#[cfg(feature = "os")]
 				Tag::Os => ErrorData::Os(transmute((bits >> 8) as u16)),
+
+				#[cfg(not(feature = "os"))]
+				#[allow(clippy::cast_possible_wrap)]
+				Tag::Os => ErrorData::Os((bits >> 8) as i32),
 
 				/* this won't compile unless they're the same size */
 				Tag::Simple => ErrorData::Simple(transmute((bits >> 8) as u8)),

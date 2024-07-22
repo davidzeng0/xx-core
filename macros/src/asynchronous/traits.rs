@@ -1,7 +1,7 @@
 use super::*;
 
 fn format_fn_ident(ident: &Ident) -> Ident {
-	format_ident!("__xx_async_impl_{}", ident)
+	format_ident!("__xx_atfni_{}", ident)
 }
 
 fn format_trait_ident(ident: &Ident) -> Ident {
@@ -39,10 +39,14 @@ fn wrapper_function(func: &mut TraitItemFn, this: &TokenStream) {
 
 	func.default = Some(parse_quote! {{ unsafe { #(#call)* } }});
 	func.attrs.push(parse_quote! {
-		#[allow(unsafe_op_in_unsafe_fn, clippy::used_underscore_binding)]
+		#[allow(
+			unsafe_op_in_unsafe_fn,
+			clippy::used_underscore_binding,
+			clippy::unused_async
+		)]
 	});
 
-	RemoveModifiers {}.visit_signature_mut(&mut func.sig);
+	RemoveModifiers.visit_signature_mut(&mut func.sig);
 }
 
 fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream> {
@@ -65,12 +69,10 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 
 		wrapper_function(&mut func, &this);
 
-		if func.sig.asyncness.is_some() {
-			transform_async(
-				attrs.clone(),
-				&mut Function::from_trait_fn(false, Some(&ext.generics), &mut func)
-			)?;
-		}
+		transform_async(
+			attrs.clone(),
+			&mut Function::from_trait_fn(false, Some(&ext.generics), &mut func)
+		)?;
 
 		ext.items.push(TraitItem::Fn(func));
 	}
@@ -104,9 +106,7 @@ fn async_impl_fn(attrs: &AttributeArgs, func: &mut Function<'_>) -> Result<()> {
 		#[doc(hidden)]
 	});
 
-	if func.sig.asyncness.is_some() {
-		transform_async(attrs.clone(), func)?;
-	}
+	transform_async(attrs.clone(), func)?;
 
 	Ok(())
 }
