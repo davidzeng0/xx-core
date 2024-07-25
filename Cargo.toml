@@ -87,6 +87,7 @@ logger = ["log", "impls"]
 panic-log = ["logger"]
 tracing = []
 tracing-ext = ["tracing"]
+xx-doc = []
 
 [lints.rust]
 elided_lifetimes_in_paths = "warn"
