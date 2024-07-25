@@ -1,8 +1,8 @@
 #![allow(clippy::module_name_repetitions)]
 
-use crate::macros::{macro_each, seal_trait};
+use crate::macros::{macro_each, sealed_trait};
 
-seal_trait!();
+sealed_trait!();
 
 pub trait UintExt: Sealed + Sized {
 	type Signed;

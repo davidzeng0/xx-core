@@ -5,6 +5,8 @@ use crate::runtime::call_no_unwind;
 
 mod block_on;
 pub mod closure;
+
+#[doc(inline)]
 pub use block_on::*;
 
 pub type ReqPtr<T> = Ptr<Request<T>>;

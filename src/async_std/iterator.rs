@@ -3,8 +3,6 @@
 use super::*;
 
 /// The async equivalent of [`std::iter::Iterator`]
-///
-/// This trait is object safe
 #[asynchronous(impl(mut, box))]
 pub trait AsyncIterator {
 	type Item;

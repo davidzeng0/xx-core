@@ -2,7 +2,7 @@ use super::*;
 #[cfg(feature = "cell")]
 use crate::cell::UnsafeCell;
 
-seal_trait!();
+sealed_trait!();
 
 pub trait AsPointer: Sealed {
 	type Target;
@@ -60,7 +60,7 @@ impl<T: ?Sized> AsPointer for UnsafeCell<T> {
 
 pub trait PointerOffset {
 	/// # Safety
-	/// See [`std::ptr::offset`]
+	/// See [`<*const ()>::offset`]
 	unsafe fn offset<T, const MUT: bool>(self, pointer: Pointer<T, MUT>) -> Pointer<T, MUT>;
 }
 
@@ -84,7 +84,7 @@ pub trait PointerIndex<const MUT: bool, Idx> {
 	type Output: ?Sized;
 
 	/// # Safety
-	/// See [`std::ptr::offset`]
+	/// See [`<*const ()>::offset`]
 	unsafe fn index(self, index: Idx) -> Pointer<Self::Output, MUT>;
 }
 

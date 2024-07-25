@@ -7,10 +7,10 @@ use std::str::from_utf8;
 
 use super::*;
 use crate::io::*;
-use crate::macros::{macro_each, seal_trait};
+use crate::macros::{macro_each, sealed_trait};
 use crate::opt::hint::*;
 
-macro_each!(seal_trait, Read, BufRead, Write);
+macro_each!(sealed_trait, (for Read), (for BufRead), (for Write));
 
 pub mod buf_reader;
 pub mod buf_writer;

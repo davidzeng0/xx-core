@@ -56,7 +56,7 @@ impl<T, const MUT: bool> Pointer<T, MUT> {
 	}
 
 	/// # Safety
-	/// See [`std::ptr::add`]
+	/// See [`<*const ()>::add`]
 	#[must_use]
 	pub const unsafe fn add(mut self, count: usize) -> Self {
 		/* Safety: guaranteed by caller */
@@ -65,7 +65,7 @@ impl<T, const MUT: bool> Pointer<T, MUT> {
 	}
 
 	/// # Safety
-	/// See [`std::ptr::sub`]
+	/// See [`<*const ()>::sub`]
 	#[must_use]
 	pub const unsafe fn sub(mut self, count: usize) -> Self {
 		/* Safety: guaranteed by caller */
@@ -74,7 +74,7 @@ impl<T, const MUT: bool> Pointer<T, MUT> {
 	}
 
 	/// # Safety
-	/// See [`std::ptr::offset`]
+	/// See [`<*const ()>::offset`]
 	#[must_use]
 	#[allow(clippy::impl_trait_in_params)]
 	pub unsafe fn offset(self, offset: impl internal::PointerOffset) -> Self {

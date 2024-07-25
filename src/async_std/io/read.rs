@@ -71,8 +71,6 @@ where
 }
 
 /// The async equivalent of [`std::io::Read`]
-///
-/// This trait is object safe
 #[asynchronous(impl(mut, box))]
 pub trait Read {
 	/// Read into `buf`, returning the amount of bytes read
@@ -86,7 +84,7 @@ pub trait Read {
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
 	///
-	/// See also [`std::io::Read::read_fully`]
+	/// See also [`std::io::Read::read_exact`]
 	async fn try_read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
@@ -113,7 +111,7 @@ pub trait Read {
 	/// Returns the number of bytes read, which is the same as
 	/// `buf.len()`
 	///
-	/// See also [`std::io::Read::read_fully`]
+	/// See also [`std::io::Read::read_exact`]
 	///
 	/// [`try_read_fully`]: Read::try_read_fully
 	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
@@ -302,8 +300,6 @@ macro_rules! read_wrapper {
 pub use read_wrapper;
 
 /// The async equivalent of [`std::io::BufRead`]
-///
-/// This trait is object safe
 #[asynchronous(impl(mut, box))]
 pub trait BufRead: Read {
 	/// Fill any remaining space in the internal buffer

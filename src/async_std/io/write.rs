@@ -30,8 +30,6 @@ where
 }
 
 /// The async equivalent of [`std::io::Write`]
-///
-/// This trait is object safe
 #[asynchronous(impl(mut, box))]
 pub trait Write {
 	/// Write from `buf`, returning the amount of bytes wrote
@@ -51,7 +49,7 @@ pub trait Write {
 	///
 	/// On interrupted, returns the number of bytes written if it is not zero
 	///
-	/// See also [`std::io::Write::try_write_all`]
+	/// See also [`std::io::Write::write_all`]
 	async fn try_write_all(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 

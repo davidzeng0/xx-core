@@ -140,10 +140,9 @@ fn parse_unnamed_units(input: ParseStream<'_>) -> Result<TokenStream> {
 	}
 
 	if scalars.len() > UNNAMED_SCALES.len() {
-		return Err(Error::new_spanned(
-			&scalars[UNNAMED_SCALES.len()],
-			"Too many separators"
-		));
+		let msg = "Too many separators";
+
+		return Err(Error::new_spanned(&scalars[UNNAMED_SCALES.len()], msg));
 	}
 
 	for (index, scalar) in scalars.into_iter().rev().enumerate() {

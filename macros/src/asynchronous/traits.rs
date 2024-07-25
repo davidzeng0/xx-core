@@ -1,7 +1,7 @@
 use super::*;
 
 fn format_fn_ident(ident: &Ident) -> Ident {
-	format_ident!("__xx_atfni_{}", ident)
+	format_ident!("__xx_iatfni_{}", ident)
 }
 
 fn format_trait_ident(ident: &Ident) -> Ident {
@@ -69,12 +69,14 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 
 		wrapper_function(&mut func, &this);
 
-		transform_async(
-			attrs.clone(),
-			&mut Function::from_trait_fn(false, Some(&ext.generics), &mut func)
+		let doc = transform_trait_func(
+			&mut Function::from_trait_fn(false, Some(&ext.generics), &mut func),
+			&traits_doc_fn,
+			|func| transform_async(attrs.clone(), func)
 		)?;
 
 		ext.items.push(TraitItem::Fn(func));
+		ext.items.push(TraitItem::Fn(doc));
 	}
 
 	let ident = &ext.ident;
@@ -83,6 +85,8 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 	new_generics.params.push(parse_quote! {
 		XXInternalTraitImplementer: #super_trait + ?Sized
 	});
+
+	let (new_generics, ..) = new_generics.split_for_impl();
 
 	Ok(quote! {
 		#[cfg(not(doc))]
@@ -97,18 +101,11 @@ fn async_impl_fn(attrs: &AttributeArgs, func: &mut Function<'_>) -> Result<()> {
 	func.is_root = false;
 	func.sig.ident = format_fn_ident(&func.sig.ident);
 
-	if func.sig.asyncness.is_some() && func.sig.unsafety.is_none() {
-		/* caller must ensure we're allowed to suspend */
-		func.sig.unsafety = Some(Default::default());
-	}
-
 	func.attrs.push(parse_quote! {
 		#[doc(hidden)]
 	});
 
-	transform_async(attrs.clone(), func)?;
-
-	Ok(())
+	transform_async(attrs.clone(), func)
 }
 
 macro_rules! assign_default {
@@ -148,12 +145,14 @@ where
 			TraitItem::Fn(mut func) => {
 				wrapper_function(&mut func, &this);
 
-				async_impl_fn(
-					&attrs,
-					&mut Function::from_trait_fn(false, Some(&imp.generics), &mut func)
+				let doc = transform_trait_func(
+					&mut Function::from_trait_fn(false, Some(&imp.generics), &mut func),
+					&traits_doc_fn,
+					|func| async_impl_fn(&attrs, func)
 				)?;
 
 				items.push(TraitItem::Fn(func));
+				items.push(TraitItem::Fn(doc));
 			}
 
 			_ => ()
@@ -205,7 +204,11 @@ pub fn async_trait(mut attrs: AttributeArgs, item: ItemTrait) -> Result<TokenStr
 	attrs.async_kind.0 = AsyncKind::TraitFn;
 
 	let functions = Functions::Trait(item);
-	let item = functions.transform_all(|func| async_impl_fn(&attrs, func), |_| true)?;
+	let item = functions.transform_all(
+		Some(&traits_doc_fn),
+		|func| async_impl_fn(&attrs, func),
+		|_| true
+	)?;
 
 	Ok(quote! { #item #ext #impls })
 }
@@ -214,6 +217,7 @@ pub fn async_impl(mut attrs: AttributeArgs, item: Functions) -> Result<TokenStre
 	attrs.async_kind.0 = AsyncKind::TraitFn;
 
 	item.transform_all(
+		Some(&traits_doc_fn),
 		|func| async_impl_fn(&attrs, func),
 		|item| matches!(item, Functions::Fn(_) | Functions::Impl(_))
 	)

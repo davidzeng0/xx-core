@@ -1,7 +1,10 @@
+use std::mem::take;
+
 use super::*;
 
 pub struct Function<'a> {
 	pub is_root: bool,
+	pub vis: Option<&'a mut Visibility>,
 	pub attrs: &'a mut Vec<Attribute>,
 	pub env_generics: Option<&'a Generics>,
 	pub sig: &'a mut Signature,
@@ -14,6 +17,7 @@ impl<'a> Function<'a> {
 	) -> Self {
 		Self {
 			is_root,
+			vis: Some(&mut func.vis),
 			attrs: &mut func.attrs,
 			env_generics,
 			sig: &mut func.sig,
@@ -26,6 +30,7 @@ impl<'a> Function<'a> {
 	) -> Self {
 		Self {
 			is_root,
+			vis: None,
 			attrs: &mut func.attrs,
 			env_generics,
 			sig: &mut func.sig,
@@ -76,7 +81,7 @@ impl Parse for Functions {
 		lookahead.parse::<Option<Abi>>()?;
 
 		if lookahead.parse::<Token![fn]>().is_err() {
-			return Err(lookahead.error("Expected a function, trait, or impl"));
+			return Err(item.error("Expected a function, trait, or impl"));
 		}
 
 		if let Ok(item) = item.parse() {
@@ -87,124 +92,154 @@ impl Parse for Functions {
 	}
 }
 
-pub fn create_doc_item_fn(func: &ImplItemFn) -> ImplItemFn {
-	let mut func = func.clone();
-
-	func.attrs = vec![parse_quote! { #[cfg(doc)] }];
-	func.block.stmts.clear();
-	func
+pub fn doc_attr() -> Attribute {
+	parse_quote! { #[cfg(any(doc, feature = "xx-doc"))] }
 }
 
-pub fn create_doc_trait_fn(func: &TraitItemFn) -> TraitItemFn {
-	let mut func = func.clone();
+pub fn not_doc_attr() -> Attribute {
+	parse_quote! { #[cfg(not(any(doc, feature = "xx-doc")))] }
+}
 
-	func.attrs = vec![parse_quote! { #[cfg(doc)] }];
-
-	if let Some(block) = func.default.as_mut() {
-		block.stmts.clear();
+pub fn doc_block(block: &Option<&mut Block>) -> TokenStream {
+	match block {
+		Some(_) => quote! { {} },
+		None => quote! { ; }
 	}
+}
 
-	func
+pub fn default_doc(func: &mut Function<'_>) -> Result<TokenStream> {
+	let (attrs, vis, sig) = (&func.attrs, &func.vis, &func.sig);
+	let block = doc_block(&func.block);
+
+	Ok(quote! {
+		#(#attrs)*
+		#vis #sig
+		#block
+	})
+}
+
+type DocFn<'a> = &'a dyn Fn(&mut Function<'_>) -> Result<TokenStream>;
+
+#[allow(clippy::missing_panics_doc)]
+pub fn transform_func<T>(
+	func: &mut Function<'_>, docs: DocFn<'_>, callback: T
+) -> Result<ImplItemFn>
+where
+	T: Fn(&mut Function<'_>) -> Result<()>
+{
+	let doc = docs(func)?;
+
+	callback(func)?;
+	func.attrs.push(not_doc_attr());
+
+	let mut doc_fn = parse2::<ImplItemFn>(doc).unwrap();
+
+	doc_fn.attrs.push(doc_attr());
+
+	Ok(doc_fn)
+}
+
+#[allow(clippy::missing_panics_doc)]
+pub fn transform_trait_func<T>(
+	func: &mut Function<'_>, docs: DocFn<'_>, callback: T
+) -> Result<TraitItemFn>
+where
+	T: Fn(&mut Function<'_>) -> Result<()>
+{
+	let doc = docs(func)?;
+
+	callback(func)?;
+	func.attrs.push(not_doc_attr());
+
+	let mut doc_fn = parse2::<TraitItemFn>(doc).unwrap();
+
+	doc_fn.attrs.push(doc_attr());
+
+	Ok(doc_fn)
 }
 
 impl Functions {
-	pub fn transform_all(
-		self, callback: impl Fn(&mut Function<'_>) -> Result<()>,
-		allowed: impl FnOnce(&Self) -> bool
-	) -> Result<TokenStream> {
+	pub fn transform_all<T, A>(
+		self, docs: Option<DocFn<'_>>, callback: T, allowed: A
+	) -> Result<TokenStream>
+	where
+		T: Fn(&mut Function<'_>) -> Result<()> + Copy,
+		A: FnOnce(&Self) -> bool
+	{
 		if !allowed(&self) {
 			return Err(Error::new_spanned(self, "Unexpected declaration"));
 		}
 
+		let docs = docs.unwrap_or(&default_doc);
+
 		Ok(match self {
 			Self::Fn(mut func) => {
-				let mut original = create_doc_item_fn(&func);
-
-				callback(&mut Function::from_item_fn(true, None, &mut func))?;
-
-				original.attrs.extend_from_slice(&func.attrs);
+				let doc = transform_func(
+					&mut Function::from_item_fn(true, None, &mut func),
+					docs,
+					callback
+				)?;
 
 				quote! {
-					#original
-
-					#[cfg(not(doc))]
 					#func
+					#doc
 				}
 			}
 
 			Self::TraitFn(mut func) => {
-				let mut original = create_doc_trait_fn(&func);
-
-				callback(&mut Function::from_trait_fn(true, None, &mut func))?;
-
-				original.attrs.extend_from_slice(&func.attrs);
+				let doc = transform_trait_func(
+					&mut Function::from_trait_fn(true, None, &mut func),
+					docs,
+					callback
+				)?;
 
 				quote! {
-					#original
-
-					#[cfg(not(doc))]
 					#func
+					#doc
 				}
 			}
 
 			Self::Impl(mut item) => {
-				let mut originals = Vec::new();
+				for impl_item in take(&mut item.items) {
+					let ImplItem::Fn(mut func) = impl_item else {
+						item.items.push(impl_item);
 
-				for impl_item in &mut item.items {
-					let ImplItem::Fn(func) = impl_item else {
 						continue;
 					};
 
-					let mut original = create_doc_item_fn(func);
+					let doc_fn = transform_func(
+						&mut Function::from_item_fn(false, Some(&item.generics), &mut func),
+						docs,
+						callback
+					)?;
 
-					callback(&mut Function::from_item_fn(
-						false,
-						Some(&item.generics),
-						func
-					))?;
-
-					original.attrs.extend_from_slice(&func.attrs);
-					originals.push(ImplItem::Fn(original));
-					func.attrs.push(parse_quote! { #[cfg(not(doc))] });
+					item.items.push(ImplItem::Fn(func));
+					item.items.push(ImplItem::Fn(doc_fn));
 				}
 
-				item.items.append(&mut originals);
 				item.to_token_stream()
 			}
 
 			Self::Trait(mut item) => {
-				let mut originals = Vec::new();
+				for trait_item in take(&mut item.items) {
+					let TraitItem::Fn(mut func) = trait_item else {
+						item.items.push(trait_item);
 
-				for trait_item in &mut item.items {
-					let TraitItem::Fn(func) = trait_item else {
 						continue;
 					};
 
-					let mut original = create_doc_trait_fn(func);
+					let doc_fn = transform_trait_func(
+						&mut Function::from_trait_fn(false, Some(&item.generics), &mut func),
+						docs,
+						callback
+					)?;
 
-					callback(&mut Function::from_trait_fn(
-						false,
-						Some(&item.generics),
-						func
-					))?;
-
-					original.attrs.extend_from_slice(&func.attrs);
-					originals.push(TraitItem::Fn(original));
-					func.attrs.push(parse_quote! { #[cfg(not(doc))] });
+					item.items.push(TraitItem::Fn(func));
+					item.items.push(TraitItem::Fn(doc_fn));
 				}
 
-				item.items.append(&mut originals);
 				item.to_token_stream()
 			}
 		})
 	}
-}
-
-pub fn transform_fn(
-	item: TokenStream, callback: impl Fn(&mut Function<'_>) -> Result<()>,
-	allowed: impl FnOnce(&Functions) -> bool
-) -> TokenStream {
-	try_expand(|| {
-		parse2::<Functions>(item).and_then(|parsed| parsed.transform_all(callback, allowed))
-	})
 }

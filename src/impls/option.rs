@@ -1,8 +1,8 @@
 #![allow(clippy::module_name_repetitions)]
 
-use crate::macros::{panic_nounwind, seal_trait, unreachable_unchecked};
+use crate::macros::{panic_nounwind, sealed_trait, unreachable_unchecked};
 
-seal_trait!();
+sealed_trait!();
 
 pub trait OptionExt<T>: Sealed + Sized {
 	fn expect_nounwind(self, msg: &str) -> T;

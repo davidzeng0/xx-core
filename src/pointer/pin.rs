@@ -41,7 +41,7 @@ impl<P: Clone> Clone for Pinned<P> {
 	}
 }
 
-seal_trait!(Pin);
+sealed_trait!(for Pin);
 
 pub trait PinExt: PinSealed {
 	/// # Safety

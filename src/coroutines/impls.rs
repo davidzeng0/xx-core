@@ -25,7 +25,7 @@ pub trait TaskExt: Task + Sized {
 impl<T: Task> TaskExt for T {}
 
 macro_rules! async_fn {
-	(([$($self:tt)*] $(, $call:ident, $kind:tt)?)) => {
+	(([$($self:tt)*] [$async_kind:ident] $([$call:ident, $kind:tt])?)) => {
 		paste! {
 			impl<F, T, Args, Output> [< AsyncFn $($kind)? >] <Args> for F
 			where
@@ -34,17 +34,24 @@ macro_rules! async_fn {
 			{
 				type Output = Output;
 
-				fn [< call $($call)? >](
+				#[cfg(not(any(doc, feature = "xx-doc")))]
+				#[asynchronous($async_kind)]
+				async fn [< call $($call)? >](
 					$($self)* self, args: Args
-				) -> impl for<'ctx> Task<Output<'ctx> = Self::Output> {
-					self(args)
+				) -> Self::Output {
+					self(args).await
 				}
+
+				#[cfg(any(doc, feature = "xx-doc"))]
+				async fn [< call $($call)? >](
+					$($self)* self, args: Args
+				) -> Self::Output {}
 			}
 		}
 	};
 }
 
-macro_each!(async_fn, ([], _once, Once), ([&mut], _mut, Mut), ([&]));
+macro_each!(async_fn, ([] [traitext] [_once, Once]), ([&mut] [traitfn] [_mut, Mut]), ([&] [traitfn]));
 
 macro_rules! map_fn {
 	(
@@ -52,7 +59,7 @@ macro_rules! map_fn {
 	) => {
 		paste! {
 			#[asynchronous(sync)]
-			pub trait [< AsyncFn $($kind)? Ext >] <Args>: [< AsyncFn $($kind)? >] <Args> + Sized {
+			pub trait [< AsyncFn $($kind)? Map >] <Args>: [< AsyncFn $($kind)? >] <Args> + Sized {
 				#[allow(unused_mut)]
 				fn [< map $($call)? >] <F>(
 					mut self, mut map: F
@@ -81,7 +88,7 @@ macro_rules! map_fn {
 			}
 
 			impl<F: [< AsyncFn $($kind)? >] <Args>, Args>
-				[< AsyncFn $($kind)? Ext >] <Args> for F {}
+				[< AsyncFn $($kind)? Map >] <Args> for F {}
 		}
 	};
 }

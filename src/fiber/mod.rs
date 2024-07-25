@@ -12,6 +12,8 @@ use crate::os::RawBuf;
 use crate::pointer::*;
 
 pub mod pool;
+
+#[doc(inline)]
 pub use pool::*;
 
 import_sysdeps!();

@@ -126,7 +126,7 @@ struct Variant {
 
 fn maybe_transparent(attr: MetaList) -> (TokenStream, bool) {
 	let is_transparent =
-		parse2::<Ident>(attr.tokens.clone()).is_ok_and(|ident| ident == "transparent");
+		matches!(parse2::<Ident>(attr.tokens.clone()), Ok(ident) if ident == "transparent");
 
 	(attr.tokens, is_transparent)
 }
@@ -134,16 +134,14 @@ fn maybe_transparent(attr: MetaList) -> (TokenStream, bool) {
 impl Variant {
 	fn new(attrs: &mut Vec<Attribute>, ident: &Ident, fields: &mut Fields) -> Result<Self> {
 		let fmt = remove_attr_list(attrs, "fmt").map(maybe_transparent);
-		let display = if fmt.is_none() {
-			remove_attr_list(attrs, "display").map(maybe_transparent)
-		} else {
-			fmt.clone()
-		};
 
-		let debug = if fmt.is_none() {
-			remove_attr_list(attrs, "debug").map(maybe_transparent)
+		let (display, debug) = if fmt.is_none() {
+			(
+				remove_attr_list(attrs, "display").map(maybe_transparent),
+				remove_attr_list(attrs, "debug").map(maybe_transparent)
+			)
 		} else {
-			fmt
+			(fmt.clone(), fmt)
 		};
 
 		let this = Self {
@@ -164,10 +162,10 @@ impl Variant {
 			return Err(Error::new_spanned(display, msg));
 		}
 
-		if let Some((display, true)) = &this.debug {
+		if let Some((debug, true)) = &this.debug {
 			let msg = "#[debug(transparent)] requires exactly one field";
 
-			return Err(Error::new_spanned(display, msg));
+			return Err(Error::new_spanned(debug, msg));
 		}
 
 		if let Some(from) = &this.fields.attributes.from {
@@ -297,7 +295,7 @@ enum Repr {
 fn add_bounds(
 	generics: &Generics, where_clause: Option<&WhereClause>, bounds: &[TypeParamBound]
 ) -> WhereClause {
-	let mut clause = where_clause.cloned().unwrap_or(WhereClause {
+	let mut clause = where_clause.cloned().unwrap_or_else(|| WhereClause {
 		where_token: Default::default(),
 		predicates: Punctuated::new()
 	});
@@ -369,8 +367,8 @@ impl Input {
 
 		let mut displays = Punctuated::<_, Token![,]>::new();
 		let mut debugs = Punctuated::<_, Token![,]>::new();
-		let mut kinds = Punctuated::<_, Token![,]>::new();
-		let mut sources = Punctuated::<_, Token![,]>::new();
+		let mut kinds = Vec::new();
+		let mut sources = Vec::new();
 		let mut froms = Vec::new();
 
 		let eq = match &self.repr {
@@ -404,10 +402,9 @@ impl Input {
 				for variant in variants {
 					if has_display {
 						let Some(display) = variant.display(&base, &fmt) else {
-							return Err(Error::new_spanned(
-								&variant.ident,
-								"Missing #[display(..)] attribute"
-							));
+							let msg = "Missing #[display(..)] attribute";
+
+							return Err(Error::new_spanned(&variant.ident, msg));
 						};
 
 						displays.push(display);
@@ -484,9 +481,6 @@ impl Input {
 			});
 		}
 
-		kinds.push(quote! { _ => ::xx_core::error::ErrorKind::Other });
-		sources.push(quote! { _ => None });
-
 		Ok(quote! {
 			#orig
 			#(#fmts)*
@@ -506,7 +500,8 @@ impl Input {
 				fn source(&self) -> ::std::option::Option<&(dyn ::std::error::Error + 'static)> {
 					#[allow(unused_variables)]
 					match self {
-						#sources
+						#(#sources,)*
+						_ => None
 					}
 				}
 			}
@@ -519,7 +514,8 @@ impl Input {
 				fn kind(&self) -> ::xx_core::error::ErrorKind {
 					#[allow(unused_variables)]
 					match self {
-						#kinds
+						#(#kinds,)*
+						_ => ::xx_core::error::ErrorKind::Other
 					}
 				}
 			}

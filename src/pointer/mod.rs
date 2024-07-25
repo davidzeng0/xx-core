@@ -8,7 +8,7 @@ use std::ptr::{self as pointer, null_mut, slice_from_raw_parts_mut};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::macros::{assert_unsafe_precondition, seal_trait, wrapper_functions};
+use crate::macros::{assert_unsafe_precondition, sealed_trait, wrapper_functions};
 
 pub mod internal;
 pub mod non_null;
@@ -17,8 +17,11 @@ pub mod ptr;
 
 pub use std::mem::offset_of;
 
+#[doc(inline)]
 pub use non_null::*;
+#[doc(inline)]
 pub use pin::*;
+#[doc(inline)]
 pub use ptr::*;
 
 #[macro_export]

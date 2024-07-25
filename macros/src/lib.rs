@@ -1,5 +1,3 @@
-#![allow(clippy::wildcard_imports)]
-
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::parse::{Parse, ParseStream, Parser};
@@ -10,6 +8,7 @@ use syn::*;
 use xx_macro_support::attribute::*;
 use xx_macro_support::fallible::*;
 use xx_macro_support::function::*;
+use xx_macro_support::impls::*;
 use xx_macro_support::visit_macro::*;
 use xx_macros::*;
 
@@ -20,10 +19,12 @@ mod future;
 mod make_closure;
 mod syscall;
 mod transform;
+mod visit;
 mod wrap_function;
 
 use self::make_closure::*;
 use self::transform::*;
+use self::visit::*;
 
 #[proc_macro_attribute]
 pub fn asynchronous(

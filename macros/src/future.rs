@@ -84,6 +84,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 			cancel_closure_type = make_explicit_closure(
 				&mut Function {
 					is_root: true,
+					vis: None,
 					attrs: &mut vec![],
 					env_generics: func.env_generics,
 					sig: &mut cancel.sig,
@@ -96,7 +97,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 						::xx_core::future::closure::CancelClosure<#capture>
 					}
 				},
-				LifetimeAnnotations::Closure
+				Some(Annotations::Uniform)
 			)?;
 
 			ReplaceSelf.visit_item_fn_mut(cancel);
@@ -146,18 +147,45 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				quote! { ::xx_core::future::closure::FutureClosure }
 			)
 		}),
-		LifetimeAnnotations::Auto
+		Some(Annotations::default())
 	)?;
 
 	Ok(())
+}
+
+fn doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
+	let mut attrs = func.attrs.clone();
+
+	if !func.is_root && remove_attr_path(&mut attrs, "future").is_none() {
+		return default_doc(func);
+	}
+
+	let mut sig = func.sig.clone();
+	let return_type = get_return_type(&sig.output);
+
+	transform_last_arg(&mut sig.inputs, &return_type)?;
+
+	sig.output = parse_quote! {
+		-> impl ::xx_core::future::Future<Output = #return_type>
+	};
+
+	let vis = &func.vis;
+
+	Ok(quote! {
+		#(#attrs)*
+		#vis #sig
+		{}
+	})
 }
 
 pub fn future(attr: TokenStream, item: TokenStream) -> TokenStream {
 	try_expand(|| {
 		ensure_empty(attr)?;
 
-		Ok(transform_fn(item, transform_func, |item| {
+		let item = parse2::<Functions>(item)?;
+
+		item.transform_all(Some(&doc_fn), transform_func, |item| {
 			!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
-		}))
+		})
 	})
 }

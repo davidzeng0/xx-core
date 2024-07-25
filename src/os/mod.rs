@@ -263,7 +263,7 @@ fn allocate_cstr<F, Output>(bytes: &[u8], func: F) -> Result<Output>
 where
 	F: FnOnce(&CStr) -> Result<Output>
 {
-	let str = CString::new(bytes).map_err(|_| ErrorKind::invalid_cstr())?;
+	let str = CString::new(bytes)?;
 
 	func(&str)
 }
@@ -285,7 +285,7 @@ where
 		buf.extend_from_slice(bytes);
 		buf.extend_from_slice(&[0]);
 
-		let str = CStr::from_bytes_with_nul(&buf).map_err(|_| ErrorKind::invalid_cstr())?;
+		let str = CStr::from_bytes_with_nul(&buf)?;
 
 		func(str)
 	}

@@ -51,22 +51,27 @@ fn tuple_args(args: &mut Punctuated<Pat, Token![,]>) {
 	args.push(Pat::Type(parse_quote! { #pats: #tys }));
 }
 
-#[derive(Default)]
-pub struct TransformAsync {
-	in_async: bool,
-	has_await: bool
-}
+pub struct TransformAsync(pub bool);
 
 impl TransformAsync {
+	fn visit_closure<F>(&mut self, visit: F)
+	where
+		F: FnOnce(&mut Self)
+	{
+		let has_await = self.0;
+
+		visit(self);
+
+		self.0 = has_await;
+	}
+
 	fn transform_async(&mut self, inner: &mut ExprAsync) -> Expr {
-		self.in_async = true;
-		self.visit_expr_async_mut(inner);
-		self.in_async = false;
+		self.visit_closure(|this| this.visit_expr_async_mut(inner));
 
 		let (attrs, capture, block) = (&inner.attrs, &inner.capture, &inner.block);
 		let context = Context::new();
 
-		parse_quote_spanned! { inner.async_token.span() =>
+		parse_quote! {
 			#(#attrs)*
 			::xx_core::coroutines::internal::as_task(
 				::xx_core::coroutines::internal::OpaqueClosure::new(
@@ -78,11 +83,8 @@ impl TransformAsync {
 	}
 
 	fn transform_await(&mut self, inner: &mut ExprAwait) -> Expr {
+		self.0 = true;
 		self.visit_expr_await_mut(inner);
-
-		if !self.in_async {
-			self.has_await = true;
-		}
 
 		let (attrs, base) = (&inner.attrs, &inner.base);
 		let ident = Context::ident();
@@ -123,7 +125,7 @@ impl TransformAsync {
 				}
 			}
 
-			TransformItems.visit_expr_closure_mut(closure);
+			TransformSync.visit_expr_closure_mut(closure);
 
 			return Expr::Closure(closure.clone());
 		}
@@ -134,11 +136,9 @@ impl TransformAsync {
 
 		closure.inputs.push(Pat::Type(parse_quote! { #context }));
 
-		self.in_async = true;
-		self.visit_expr_mut(body);
-		self.in_async = false;
+		self.visit_closure(|this| this.visit_expr_mut(body));
 
-		let attrs = &closure.attrs;
+		let attrs = take(&mut closure.attrs);
 
 		parse_quote_spanned! { span =>
 			#(#attrs)*
@@ -164,13 +164,13 @@ impl VisitMut for TransformAsync {
 	}
 }
 
-pub struct TransformItems;
+pub struct TransformSync;
 
-impl VisitMut for TransformItems {
+impl VisitMut for TransformSync {
 	fn visit_item_mut(&mut self, _: &mut Item) {}
 
 	fn visit_expr_mut(&mut self, expr: &mut Expr) {
-		let mut visit = TransformAsync::default();
+		let mut visit = TransformAsync(false);
 
 		*expr = match expr {
 			Expr::Async(inner) => visit.transform_async(inner),
@@ -233,9 +233,11 @@ fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
 	}
 }
 
-fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
+fn lending_task_impl(lt: &Lifetime, ident: &Ident, output: &Type) -> TokenStream {
 	let mut ret = output.clone();
 	let context = Context::ty();
+	let new = Ident::new("new", ident.span());
+	let run = Ident::new("run", ident.span());
 
 	ReplaceLifetime(lt).visit_type_mut(&mut ret);
 
@@ -249,7 +251,7 @@ fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 
 			impl<F: FnOnce(&Context) -> #ret> XXInternalAsyncSupportWrap<F> {
 				#[inline(always)]
-				pub const fn new(func: F) -> Self {
+				pub const fn #new(func: F) -> Self {
 					Self(func)
 				}
 			}
@@ -258,7 +260,7 @@ fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 				type Output<#lt> = #output;
 
 				#[inline(always)]
-				unsafe fn run(self, context: #context) -> #ret {
+				unsafe fn #run(self, context: #context) -> #ret {
 					self.0(context)
 				}
 			}
@@ -266,44 +268,8 @@ fn lending_task_impl(lt: &Lifetime, output: &Type) -> TokenStream {
 	}
 }
 
-#[derive(Default)]
-struct AddLifetimes(Vec<Lifetime>);
-
-impl AddLifetimes {
-	fn next_lifetime(&mut self, span: Span) -> Lifetime {
-		let lifetime = Lifetime::new(&format!("'__xx_hrlt_{}", self.0.len() + 1), span);
-
-		self.0.push(lifetime.clone());
-
-		lifetime
-	}
-}
-
-impl VisitMut for AddLifetimes {
-	fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
-		if reference.lifetime.is_some() {
-			return;
-		}
-
-		if !matches!(reference.elem.as_ref(), Type::ImplTrait(_)) {
-			visit_type_reference_mut(self, reference);
-		}
-
-		reference.lifetime = Some(self.next_lifetime(reference.span()));
-	}
-
-	fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
-		if lifetime.ident == "_" {
-			*lifetime = self.next_lifetime(lifetime.span());
-		} else {
-			self.0.push(lifetime.clone());
-		}
-	}
-}
-
 #[allow(clippy::missing_panics_doc)]
 fn modify_bounds(bounds: &mut Punctuated<TypeParamBound, Token![+]>) -> Result<()> {
-	let path_segments = ["xx_core", "coroutines", "ops"];
 	let async_fns = ["AsyncFnOnce", "AsyncFnMut", "AsyncFn"];
 
 	for bound in bounds {
@@ -311,49 +277,17 @@ fn modify_bounds(bounds: &mut Punctuated<TypeParamBound, Token![+]>) -> Result<(
 			continue;
 		};
 
-		let Some(last) = path.segments.last() else {
-			continue;
-		};
-
-		if !async_fns.contains(&last.ident.to_string().as_ref()) ||
-			!matches!(last.arguments, PathArguments::Parenthesized(_))
-		{
-			continue;
-		}
-
-		if path.segments.len() != 1 {
-			let start_index = if path.leading_colon.is_some() {
-				0
-			} else {
-				let Some(pos) = path_segments
-					.iter()
-					.position(|name| path.segments[0].ident == name)
-				else {
-					continue;
-				};
-
-				pos
-			};
-
-			if path_segments.len() - start_index != path.segments.len() - 1 {
-				continue;
-			}
-
-			if path_segments[start_index..]
-				.iter()
-				.zip(&path.segments)
-				.any(|(expect, segment)| segment.ident != expect || !segment.arguments.is_none())
-			{
-				continue;
-			}
-		}
-
 		let last = path.segments.last_mut().unwrap();
+
+		if !async_fns.contains(&last.ident.to_string().as_ref()) {
+			continue;
+		}
+
 		let PathArguments::Parenthesized(args) = &mut last.arguments else {
-			unreachable!()
+			continue;
 		};
 
-		let mut op = AddLifetimes::default();
+		let mut op = AddLifetime::new(parse_quote! { '__xx_hrlt }, Annotations::default());
 		let mut tys = Vec::new();
 
 		for mut ty in take(&mut args.inputs) {
@@ -368,7 +302,7 @@ fn modify_bounds(bounds: &mut Punctuated<TypeParamBound, Token![+]>) -> Result<(
 			<#inputs, Output = #output>
 		});
 
-		for lt in op.0 {
+		if !op.added_lifetimes.is_empty() {
 			let bound = lifetimes.get_or_insert_with(|| BoundLifetimes {
 				for_token: Default::default(),
 				lt_token: Default::default(),
@@ -376,7 +310,9 @@ fn modify_bounds(bounds: &mut Punctuated<TypeParamBound, Token![+]>) -> Result<(
 				gt_token: Default::default()
 			});
 
-			bound.lifetimes.push(parse_quote! { #lt });
+			for lt in op.added_lifetimes {
+				bound.lifetimes.push(parse_quote! { #lt });
+			}
 		}
 	}
 
@@ -385,53 +321,60 @@ fn modify_bounds(bounds: &mut Punctuated<TypeParamBound, Token![+]>) -> Result<(
 
 fn modify_traits(func: &mut Function<'_>) -> Result<()> {
 	for param in &mut func.sig.generics.params {
-		let GenericParam::Type(ty) = param else {
-			continue;
-		};
-
-		modify_bounds(&mut ty.bounds)?;
+		if let GenericParam::Type(ty) = param {
+			modify_bounds(&mut ty.bounds)?;
+		}
 	}
 
 	if let Some(clause) = &mut func.sig.generics.where_clause {
 		for predicate in &mut clause.predicates {
-			let WherePredicate::Type(ty) = predicate else {
-				continue;
-			};
-
-			modify_bounds(&mut ty.bounds)?;
+			if let WherePredicate::Type(ty) = predicate {
+				modify_bounds(&mut ty.bounds)?;
+			}
 		}
 	}
 
 	for input in &mut func.sig.inputs {
 		let FnArg::Typed(pat) = input else { continue };
-		let Type::ImplTrait(imp) = pat.ty.as_mut() else {
-			continue;
-		};
 
-		modify_bounds(&mut imp.bounds)?;
+		if let Type::ImplTrait(imp) = pat.ty.as_mut() {
+			modify_bounds(&mut imp.bounds)?;
+		}
 	}
 
 	if let ReturnType::Type(_, ty) = &mut func.sig.output {
 		if let Type::ImplTrait(imp) = ty.as_mut() {
 			modify_bounds(&mut imp.bounds)?;
-		};
+		}
 	}
 
 	Ok(())
 }
 
-pub fn transform_items(func: &mut Function<'_>) -> Result<()> {
+pub fn transform_sync(func: &mut Function<'_>) -> Result<()> {
 	if let Some(block) = &mut func.block {
-		TransformItems.visit_block_mut(block);
+		TransformSync.visit_block_mut(block);
 	}
 
 	modify_traits(func)
 }
 
+fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> {
+	let mut removed = Vec::new();
+
+	for target in targets {
+		while let Some(attr) = remove_attr_kind(attrs, target, |_| true) {
+			removed.push(attr);
+		}
+	}
+
+	removed
+}
+
 pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Result<()> {
 	let Some(asyncness) = func.sig.asyncness.take() else {
 		return if !func.is_root {
-			transform_items(func)
+			transform_sync(func)
 		} else {
 			let message = "The `async` keyword is missing from the function declaration";
 
@@ -441,51 +384,66 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 
 	modify_traits(func)?;
 
-	let closure_type = attrs.async_kind.0.closure_type();
-
 	attrs.parse_additional(func.attrs)?;
 
+	let closure_type = attrs.async_kind.0.closure_type();
 	let func_attrs = remove_attrs(func.attrs, &["inline", "must_use", "cold"]);
-
-	let lang = match &attrs.language {
-		Some((lang, span)) => {
-			let Some(block) = &mut func.block else {
-				#[allow(clippy::needless_borrows_for_generic_args)]
-				return Err(Error::new_spanned(&func.sig, "An empty block is required"));
-			};
-
-			if !block.stmts.is_empty() {
-				return Err(Error::new_spanned(block, "This block must be empty"));
-			}
-
-			block.stmts.push(parse_quote_spanned! { *span =>
-				#[allow(unused_imports)]
-				use ::xx_core::coroutines::lang;
-			});
-
-			block.stmts.push(Stmt::Expr(
-				match lang {
-					Lang::GetContext => {
-						let context = Context::ident();
-
-						parse_quote! { #context }
-					}
-					_ => unreachable!()
-				},
-				None
-			));
-
-			Some(lang)
-		}
-
-		None => None
-	};
 
 	let mut context_lifetime = None;
 
-	if let Some(GenericParam::Lifetime(param)) = func.sig.generics.params.first_mut() {
-		context_lifetime = remove_attr_path(&mut param.attrs, "cx").map(|_| param.lifetime.clone());
+	for param in &mut func.sig.generics.params {
+		let GenericParam::Lifetime(param) = param else {
+			continue;
+		};
+
+		let Some(attr) = remove_attr_path(&mut param.attrs, "cx") else {
+			continue;
+		};
+
+		if context_lifetime.is_some() {
+			return Err(Error::new_spanned(attr, "Duplicate context lifetime"));
+		}
+
+		context_lifetime = Some(param.lifetime.clone());
 	}
+
+	let lang = if let Some((lang, span)) = &attrs.language {
+		if let Some(lifetime) = &context_lifetime {
+			let msg = "Context lifetime forbidden in lang items";
+
+			return Err(Error::new_spanned(lifetime, msg));
+		}
+
+		let Some(block) = &mut func.block else {
+			#[allow(clippy::needless_borrows_for_generic_args)]
+			return Err(Error::new_spanned(&func.sig, "An empty block is required"));
+		};
+
+		if !block.stmts.is_empty() {
+			return Err(Error::new_spanned(block, "This block must be empty"));
+		}
+
+		block.stmts.push(parse_quote_spanned! { *span =>
+			#[allow(unused_imports)]
+			use ::xx_core::coroutines::lang;
+		});
+
+		block.stmts.push(Stmt::Expr(
+			match lang {
+				Lang::GetContext => {
+					let context = Context::ident();
+
+					parse_quote! { #context }
+				}
+				_ => unreachable!()
+			},
+			None
+		));
+
+		Some(lang)
+	} else {
+		None
+	};
 
 	let lifetime = if let Some(lifetime) = &context_lifetime {
 		if func.sig.generics.params.len() != 1 {
@@ -495,12 +453,6 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 		}
 
 		func.sig.generics.params.clear();
-
-		if lang.is_some() {
-			let msg = "Context lifetime forbidden in lang items";
-
-			return Err(Error::new_spanned(lifetime, msg));
-		}
 
 		if !matches!(closure_type, ClosureType::Standard | ClosureType::Trait) {
 			let msg = "Unsupported closure type for this operation";
@@ -519,11 +471,11 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 	};
 
 	if let Some(block) = &mut func.block {
-		let mut visit = TransformAsync::default();
+		let mut visit = TransformAsync(false);
 
 		visit.visit_block_mut(block);
 
-		if !visit.has_await && lang.is_none() && attrs.async_kind.0 != AsyncKind::TraitFn {
+		if !visit.0 && lang.is_none() && attrs.async_kind.0 != AsyncKind::TraitFn {
 			let warning = parse_quote_spanned! { asyncness.span() =>
 				const _: () = { async fn warning() {} };
 			};
@@ -537,6 +489,9 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 
 	if closure_type == ClosureType::None {
 		func.sig.inputs.push(parse_quote! { #context });
+
+		/* caller must ensure we're allowed to suspend */
+		func.sig.unsafety = Some(Default::default());
 	} else {
 		let map_return_type = |rt: &mut Type| {
 			let return_type = rt.to_token_stream();
@@ -558,9 +513,9 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 		};
 
 		let annotations = if closure_type != ClosureType::Trait && lang.is_none() {
-			LifetimeAnnotations::Auto
+			Some(Annotations::default())
 		} else {
-			LifetimeAnnotations::None
+			None
 		};
 
 		make_opaque_closure(
@@ -574,7 +529,7 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 
 	if let Some(block) = &mut func.block {
 		let task_impl = if let Some(lt) = &context_lifetime {
-			lending_task_impl(lt, &return_type)
+			lending_task_impl(lt, &func.sig.ident, &return_type)
 		} else {
 			task_impl(&func_attrs, &func.sig.ident)
 		};
@@ -588,4 +543,125 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 	}
 
 	Ok(())
+}
+
+fn doc(kind: AsyncKind, func: &mut Function<'_>) -> Result<TokenStream> {
+	modify_traits(func)?;
+
+	if !func.is_root && func.sig.asyncness.is_none() {
+		return default_doc(func);
+	}
+
+	let (mut attrs, mut sig) = (func.attrs.clone(), func.sig.clone());
+	let lang = get_lang(&mut attrs)?;
+
+	#[allow(clippy::single_match)]
+	match lang {
+		Some((Lang::GetContext, _)) => sig.generics.params.push(parse_quote! { 'current }),
+		_ => ()
+	}
+
+	for attr in &mut sig.generics.params {
+		if let GenericParam::Lifetime(param) = attr {
+			remove_attr_path(&mut param.attrs, "cx");
+		}
+	}
+
+	match kind {
+		AsyncKind::Task => sig.output = parse_quote! { -> Self::Output<'static> },
+		AsyncKind::TraitFn => {
+			let clause = sig
+				.generics
+				.where_clause
+				.get_or_insert_with(|| WhereClause {
+					where_token: Default::default(),
+					predicates: Punctuated::new()
+				});
+
+			clause.predicates.push(parse_quote! {
+				Self: xx_core::coroutines::internal::DocDynSafe
+			});
+		}
+
+		_ => ()
+	}
+
+	let (vis, block) = (&func.vis, doc_block(&func.block));
+
+	Ok(quote! {
+		#(#attrs)*
+		#vis #sig
+		#block
+	})
+}
+
+pub fn task_doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
+	doc(AsyncKind::Task, func)
+}
+
+pub fn traits_doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
+	doc(AsyncKind::TraitFn, func)
+}
+
+fn do_task_impl(item: &mut Functions) -> Result<TokenStream> {
+	let Functions::Impl(imp) = item else {
+		return Err(Error::new_spanned(item, "Unexpected declaration"));
+	};
+
+	let Some((_, path, _)) = imp.trait_.as_ref() else {
+		return Err(Error::new_spanned(imp, "Missing trait"));
+	};
+
+	if let Some(ImplItem::Fn(func)) = imp
+		.items
+		.iter_mut()
+		.find(|item| matches!(item, ImplItem::Fn(func) if func.sig.ident == "run"))
+	{
+		if let Some(unsafety) = func.sig.unsafety {
+			let msg = "Function must be safe to call";
+
+			return Err(Error::new_spanned(unsafety, msg));
+		}
+
+		try_change_task_output(&mut func.sig.output);
+	}
+
+	if let Some(ImplItem::Type(ty)) = imp
+		.items
+		.iter_mut()
+		.find(|item| matches!(item, ImplItem::Type(_)))
+	{
+		try_change_task_type(&mut ty.generics);
+	}
+
+	let ty = quote_spanned! { path.span() =>
+		impl #path
+	};
+
+	Ok(quote! {
+		const _: () = {
+			const fn type_check(task: impl ::xx_core::coroutines::Task) -> #ty {
+				task
+			}
+		};
+	})
+}
+
+pub fn transform_items(mut item: Functions, attrs: AttributeArgs) -> Result<TokenStream> {
+	let type_check = if attrs.async_kind.0 == AsyncKind::Task {
+		Some(do_task_impl(&mut item)?)
+	} else {
+		None
+	};
+
+	let transformed = item.transform_all(
+		Some(&|func| doc(attrs.async_kind.0, func)),
+		|func| transform_async(attrs.clone(), func),
+		|_| true
+	)?;
+
+	Ok(quote! {
+		#transformed
+		#type_check
+	})
 }

@@ -1,19 +1,22 @@
 use super::*;
 
+#[asynchronous(traitext)]
 pub trait AsyncFnOnce<Args = ()> {
 	type Output;
 
-	fn call_once(self, args: Args) -> impl for<'ctx> Task<Output<'ctx> = Self::Output>;
+	async fn call_once(self, args: Args) -> Self::Output;
 }
 
+#[asynchronous]
 pub trait AsyncFnMut<Args = ()> {
 	type Output;
 
-	fn call_mut(&mut self, args: Args) -> impl for<'ctx> Task<Output<'ctx> = Self::Output>;
+	async fn call_mut(&mut self, args: Args) -> Self::Output;
 }
 
+#[asynchronous]
 pub trait AsyncFn<Args = ()> {
 	type Output;
 
-	fn call(&self, args: Args) -> impl for<'ctx> Task<Output<'ctx> = Self::Output>;
+	async fn call(&self, args: Args) -> Self::Output;
 }

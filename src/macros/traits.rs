@@ -1,16 +1,19 @@
 use super::*;
 
 #[macro_export]
-macro_rules! seal_trait {
-	() => {
-		mod private_sealed {
-			pub trait Sealed {}
-		}
+macro_rules! sealed_trait {
+	($($name:ident)?) => {
+		$crate::paste::paste! {
+			#[allow(non_snake_case)]
+			mod [< __private_seal_ $($name)? >] {
+				pub trait [< $($name)? Sealed >] {}
+			}
 
-		use private_sealed::Sealed;
+			use [< __private_seal_ $($name)? >]::[< $($name)? Sealed >];
+		}
 	};
 
-	($trait:ident) => {
+	(for $trait:ident) => {
 		$crate::paste::paste! {
 			#[allow(non_snake_case)]
 			mod [< __private_seal_ $trait >] {
@@ -22,6 +25,10 @@ macro_rules! seal_trait {
 			use [< __private_seal_ $trait >]::[< $trait Sealed >];
 		}
 	};
+
+	(($($tokens:tt)*)) => {
+		$crate::macros::sealed_trait!($($tokens)*);
+	}
 }
 
-pub use seal_trait;
+pub use sealed_trait;

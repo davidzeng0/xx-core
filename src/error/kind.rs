@@ -148,34 +148,6 @@ pub enum ErrorKind {
 	Uncategorized
 }
 
-impl ErrorKind {
-	#[must_use]
-	pub const fn invalid_utf8() -> &'static SimpleMessage {
-		&SimpleMessage {
-			kind: Self::InvalidData,
-			message: "Processed invalid UTF-8"
-		}
-	}
-
-	#[must_use]
-	pub const fn no_addrs() -> &'static SimpleMessage {
-		&SimpleMessage { kind: Self::NoData, message: "Address list empty" }
-	}
-
-	#[must_use]
-	pub const fn invalid_cstr() -> &'static SimpleMessage {
-		&SimpleMessage {
-			kind: Self::InvalidInput,
-			message: "Path string contained a null byte"
-		}
-	}
-
-	#[must_use]
-	pub const fn connect_timed_out() -> &'static SimpleMessage {
-		&SimpleMessage { kind: Self::TimedOut, message: "Connect timed out" }
-	}
-}
-
 impl Display for ErrorKind {
 	fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
 		fmt.write_str(self.as_str())

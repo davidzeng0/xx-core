@@ -2,9 +2,9 @@
 
 use std::fmt::Debug;
 
-use crate::macros::{panic_nounwind, seal_trait, unreachable_unchecked};
+use crate::macros::{panic_nounwind, sealed_trait, unreachable_unchecked};
 
-seal_trait!();
+sealed_trait!();
 
 pub trait ResultExt<T, E>: Sealed + Sized {
 	fn expect_nounwind(self, msg: &str) -> T

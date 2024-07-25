@@ -7,143 +7,6 @@ where
 	parse_quote! { '__xx_iclslt }
 }
 
-const SELF_IDENT: &str = "this";
-
-pub struct ReplaceSelf;
-
-impl VisitMut for ReplaceSelf {
-	fn visit_item_mut(&mut self, _: &mut Item) {}
-
-	fn visit_fn_arg_mut(&mut self, arg: &mut FnArg) {
-		let FnArg::Receiver(rec) = arg else { return };
-
-		let (attrs, mut mutability, ty) = (&rec.attrs, rec.mutability, &rec.ty);
-		let ident = Ident::new(SELF_IDENT, Span::mixed_site());
-
-		if rec.reference.is_some() {
-			mutability = None;
-		}
-
-		*arg = parse_quote! {
-			#(#attrs)*
-			#mutability #ident: #ty
-		}
-	}
-
-	fn visit_ident_mut(&mut self, ident: &mut Ident) {
-		if ident == "self" {
-			*ident = Ident::new(SELF_IDENT, Span::mixed_site());
-		}
-	}
-
-	fn visit_macro_mut(&mut self, mac: &mut Macro) {
-		visit_macro_body(self, mac);
-	}
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LifetimeAnnotations {
-	Auto,
-	Closure,
-	None
-}
-
-struct AddLifetime {
-	annotations: LifetimeAnnotations,
-	explicit_lifetimes: Vec<Lifetime>,
-	added_lifetimes: Vec<Lifetime>
-}
-
-impl AddLifetime {
-	const fn new(annotations: LifetimeAnnotations) -> Self {
-		Self {
-			annotations,
-			explicit_lifetimes: Vec::new(),
-			added_lifetimes: Vec::new()
-		}
-	}
-}
-
-impl AddLifetime {
-	fn next_lifetime(&mut self, span: Span) -> Lifetime {
-		if self.annotations == LifetimeAnnotations::Closure {
-			return closure_lifetime();
-		}
-
-		let lifetime = Lifetime::new(
-			&format!(
-				"{}_{}",
-				closure_lifetime::<TokenStream>(),
-				self.added_lifetimes.len() + 1
-			),
-			span
-		);
-
-		self.added_lifetimes.push(lifetime.clone());
-
-		lifetime
-	}
-}
-
-impl VisitMut for AddLifetime {
-	fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
-		if let Some(lifetime) = &reference.lifetime {
-			self.explicit_lifetimes.push(lifetime.clone());
-
-			return;
-		}
-
-		if !matches!(reference.elem.as_ref(), Type::ImplTrait(_)) {
-			visit_type_reference_mut(self, reference);
-		}
-
-		reference.lifetime = Some(self.next_lifetime(reference.span()));
-	}
-
-	fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
-		if lifetime.ident == "_" {
-			*lifetime = self.next_lifetime(lifetime.span());
-		} else {
-			self.explicit_lifetimes.push(lifetime.clone());
-		}
-	}
-
-	fn visit_receiver_mut(&mut self, rec: &mut Receiver) {
-		if let Some(reference) = &mut rec.reference {
-			if let Some(lifetime) = &reference.1 {
-				self.explicit_lifetimes.push(lifetime.clone());
-
-				return;
-			}
-
-			let Type::Reference(ty_ref) = rec.ty.as_mut() else {
-				unreachable!();
-			};
-
-			let lifetime = self.next_lifetime(reference.0.span());
-
-			reference.1 = Some(lifetime.clone());
-			ty_ref.lifetime = Some(lifetime);
-
-			return;
-		}
-
-		visit_type_mut(self, rec.ty.as_mut());
-	}
-
-	fn visit_type_impl_trait_mut(&mut self, impl_trait: &mut TypeImplTrait) {
-		impl_trait.bounds.push(TypeParamBound::Lifetime(
-			self.next_lifetime(impl_trait.span())
-		));
-	}
-
-	fn visit_signature_mut(&mut self, sig: &mut Signature) {
-		for arg in &mut sig.inputs {
-			self.visit_fn_arg_mut(arg);
-		}
-	}
-}
-
 fn capture_lifetimes(sig: &Signature, env_generics: Option<&Generics>) -> TokenStream {
 	let mut addl_bounds = Punctuated::<TypeParamBound, Token![+]>::new();
 
@@ -170,13 +33,13 @@ fn capture_lifetimes(sig: &Signature, env_generics: Option<&Generics>) -> TokenS
 }
 
 fn add_lifetimes(
-	sig: &mut Signature, env_generics: Option<&Generics>, annotations: LifetimeAnnotations
+	sig: &mut Signature, env_generics: Option<&Generics>, annotations: Option<Annotations>
 ) -> TokenStream {
-	if annotations == LifetimeAnnotations::None {
+	let Some(annotations) = annotations else {
 		return quote! {};
-	}
+	};
 
-	let mut op = AddLifetime::new(annotations);
+	let mut op = AddLifetime::new(closure_lifetime(), annotations);
 
 	op.visit_signature_mut(sig);
 
@@ -227,11 +90,7 @@ fn add_lifetimes(
 		sig.generics.params.push(parse_quote! { #lifetime });
 	}
 
-	for lifetime in op
-		.added_lifetimes
-		.iter()
-		.chain(op.explicit_lifetimes.iter())
-	{
+	for lifetime in op.added_lifetimes.iter().chain(&op.explicit_lifetimes) {
 		clause
 			.predicates
 			.push(parse_quote! { #lifetime: #closure_lt });
@@ -282,7 +141,7 @@ fn make_args(args_pat_type: &[(TokenStream, TokenStream)]) -> (TokenStream, Toke
 pub fn make_explicit_closure(
 	func: &mut Function<'_>, args: &[(TokenStream, TokenStream)], closure_type: TokenStream,
 	transform_return: impl Fn(TokenStream, TokenStream) -> TokenStream,
-	annotations: LifetimeAnnotations
+	annotations: Option<Annotations>
 ) -> Result<TokenStream> {
 	add_lifetimes(func.sig, func.env_generics, annotations);
 
@@ -330,7 +189,6 @@ pub fn make_explicit_closure(
 	let return_type = get_return_type(&func.sig.output);
 	let closure_return_type = transform_return(types.clone(), return_type.to_token_stream());
 
-	func.attrs.push(parse_quote! { #[inline(always)] });
 	func.sig.output = parse_quote! { -> #closure_return_type };
 
 	if let Some(block) = &mut func.block {
@@ -343,6 +201,8 @@ pub fn make_explicit_closure(
 				| #destruct: #types, #args | -> #return_type #block
 			)
 		}};
+
+		func.attrs.push(parse_quote! { #[inline(always)] });
 	}
 
 	Ok(closure_return_type)
@@ -358,21 +218,23 @@ pub fn make_opaque_closure(
 	func: &mut Function<'_>, args: &[(TokenStream, TokenStream)],
 	transform_return: impl Fn(&mut Type) -> TokenStream,
 	closure_type: OpaqueClosureType<impl Fn(TokenStream) -> (TokenStream, TokenStream)>,
-	annotations: LifetimeAnnotations
+	annotations: Option<Annotations>
 ) -> Result<TokenStream> {
 	let addl_lifetimes = add_lifetimes(func.sig, func.env_generics, annotations);
 
-	let (args, args_types) = make_args(args);
-
 	let mut return_type = get_return_type(&func.sig.output);
 	let closure_return_type = transform_return(&mut return_type);
+
+	let (args, args_types) = make_args(args);
 
 	let (closure_return_type, trait_impl_wrap) = match closure_type {
 		OpaqueClosureType::Custom(transform) => {
 			let (trait_type, trait_impl) = transform(closure_return_type);
 
 			(
-				parse_quote_spanned! { trait_type.span() => impl #trait_type },
+				parse_quote_spanned! { trait_type.span() =>
+					impl #trait_type
+				},
 				Some(trait_impl)
 			)
 		}
@@ -393,14 +255,14 @@ pub fn make_opaque_closure(
 		}
 
 		**block = parse_quote! {{ #closure }};
+
+		func.attrs.push(parse_quote! { #[inline(always)] });
 	}
 
-	func.attrs.push(parse_quote! { #[inline(always)] });
+	func.sig.output = parse_quote! { -> #closure_return_type #addl_lifetimes };
 	func.attrs.push(parse_quote! {
 		#[allow(clippy::type_complexity)]
 	});
-
-	func.sig.output = parse_quote! { -> #closure_return_type #addl_lifetimes };
 
 	Ok(closure_return_type)
 }

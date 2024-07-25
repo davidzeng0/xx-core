@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Splits a stream into a read half and a write half.
+/// Splits a stream into a borrowed read half and a write half.
 pub trait SplitMut {
 	type Reader<'a>: Read
 	where
@@ -19,6 +19,7 @@ pub trait SplitMut {
 	fn try_split(&mut self) -> Result<(Self::Reader<'_>, Self::Writer<'_>)>;
 }
 
+/// Splits a stream into a read half and a write half.
 pub trait Split {
 	type Reader: Read;
 	type Writer: Write;

@@ -31,26 +31,28 @@ pub fn task_impl(
 ) -> Result<TokenStream> {
 	attrs.async_kind.0 = AsyncKind::Task;
 
-	for item in &mut item.items {
-		match item {
-			TraitItem::Fn(func) => {
-				/* caller must ensure we're allowed to suspend */
-				func.sig.unsafety = Some(Default::default());
+	if let Some(TraitItem::Fn(func)) = item
+		.items
+		.iter_mut()
+		.find(|item| matches!(item, TraitItem::Fn(_)))
+	{
+		try_change_task_output(&mut func.sig.output);
 
-				try_change_task_output(&mut func.sig.output);
+		let doc = transform_trait_func(
+			&mut Function::from_trait_fn(true, None, func),
+			&task_doc_fn,
+			|func| transform_async(attrs.clone(), func)
+		)?;
 
-				transform_async(
-					attrs.clone(),
-					&mut Function::from_trait_fn(true, None, func)
-				)?;
-			}
+		item.items.push(TraitItem::Fn(doc));
+	}
 
-			TraitItem::Type(ty) => {
-				try_change_task_type(&mut ty.generics);
-			}
-
-			_ => ()
-		}
+	if let Some(TraitItem::Type(ty)) = item
+		.items
+		.iter_mut()
+		.find(|item| matches!(item, TraitItem::Type(_)))
+	{
+		try_change_task_type(&mut ty.generics);
 	}
 
 	Ok(quote! {
@@ -66,6 +68,7 @@ pub fn task_wrap_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribut
 	let ident = &item.ident;
 	let context = Context::new();
 	let context_ident = &context.ident;
+	let not_doc_attr = not_doc_attr();
 
 	quote! {
 		#item
@@ -84,6 +87,7 @@ pub fn task_wrap_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribut
 				}
 			}
 
+			#not_doc_attr
 			impl<F: FnOnce(&Context) -> Output, Output> Task for #ident<F, Output> {
 				type Output<'ctx> = Output;
 
@@ -119,8 +123,8 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				for #ident<F, 0> {
 				type Output = Output;
 
-				#[asynchronous(traitext)]
 				#[inline(always)]
+				#[asynchronous(traitext)]
 				async fn call_once(self, args: Args) -> Output {
 					self.0(args, get_context().await)
 				}
@@ -130,8 +134,8 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				for #ident<F, 1> {
 				type Output = Output;
 
-				#[asynchronous(traitext)]
 				#[inline(always)]
+				#[asynchronous(traitfn)]
 				async fn call_mut(&mut self, args: Args) -> Output {
 					self.0(args, get_context().await)
 				}
@@ -141,8 +145,8 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 				for #ident<F, 2> {
 				type Output = Output;
 
-				#[asynchronous(traitext)]
 				#[inline(always)]
+				#[asynchronous(traitfn)]
 				async fn call(&self, args: Args) -> Output {
 					self.0(args, get_context().await)
 				}

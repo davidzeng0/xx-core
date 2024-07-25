@@ -54,11 +54,9 @@ impl Parse for Ident {
 	fn parse(input: ParseStream<'_>) -> Result<Self> {
 		input
 			.step(|cursor| {
-				if let Some(ident) = cursor.ident() {
-					Ok(ident)
-				} else {
-					Err(cursor.error("Expected an identifier"))
-				}
+				cursor
+					.ident()
+					.ok_or_else(|| cursor.error("Expected an identifier"))
 			})
 			.map(Self)
 	}
@@ -106,18 +104,16 @@ impl ImplGen {
 #[derive(Clone)]
 pub struct AttributeArgs {
 	pub async_kind: (AsyncKind, Span),
-	pub impl_gen: ImplGen,
-	pub language: Option<(Lang, Span)>
+	pub language: Option<(Lang, Span)>,
+	pub impl_gen: ImplGen
 }
 
-fn get_lang(attrs: &mut Vec<Attribute>) -> Result<Option<(Lang, Span)>> {
+pub fn get_lang(attrs: &mut Vec<Attribute>) -> Result<Option<(Lang, Span)>> {
 	let Some(attr) = remove_attr_name_value(attrs, "lang") else {
 		return Ok(None);
 	};
 
-	let Expr::Lit(ExprLit { lit: Lit::Str(str), .. }) = &attr.value else {
-		return Err(Error::new_spanned(attr.value, "Expected a string"));
-	};
+	let str = attr.value.as_lit_str()?;
 
 	match str.value().parse() {
 		Ok(lang) => Ok(Some((lang, attr.span()))),

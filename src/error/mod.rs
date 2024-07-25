@@ -1,22 +1,25 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::backtrace::Backtrace;
-use std::ffi::NulError;
+use std::ffi::{FromBytesWithNulError, NulError};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::str::Utf8Error;
+use std::string::FromUtf8Error;
 use std::{error, io, result};
 
-use crate::macros::seal_trait;
+use crate::macros::sealed_trait;
 #[cfg(feature = "os")]
 use crate::os::error::OsError;
 #[cfg(not(feature = "os"))]
 pub type OsError = i32;
 
+pub mod common;
 mod kind;
 mod repr;
 
 type BoxedError = Box<dyn error::Error + Send + Sync + 'static>;
 
+#[doc(inline)]
 pub use kind::*;
 pub use repr::SimpleMessage;
 
@@ -58,7 +61,7 @@ use self::internal::*;
 use self::private::*;
 use self::repr::*;
 
-seal_trait!();
+sealed_trait!();
 
 impl<T> Sealed for Result<T> {}
 
@@ -243,10 +246,33 @@ impl<T: ErrorImpl> From<T> for Error {
 	}
 }
 
+impl From<Utf8Error> for Error {
+	fn from(_: Utf8Error) -> Self {
+		common::INVALID_UTF8.into()
+	}
+}
+
+impl From<FromUtf8Error> for Error {
+	fn from(_: FromUtf8Error) -> Self {
+		common::INVALID_UTF8.into()
+	}
+}
+
+impl From<NulError> for Error {
+	fn from(_: NulError) -> Self {
+		common::INVALID_CSTR.into()
+	}
+}
+
+impl From<FromBytesWithNulError> for Error {
+	fn from(_: FromBytesWithNulError) -> Self {
+		common::INVALID_CSTR.into()
+	}
+}
+
 impl<T: PartialEq + ErrorImpl> PartialEq<T> for Error {
 	fn eq(&self, other: &T) -> bool {
-		self.downcast_ref::<T>()
-			.is_some_and(|inner| inner.eq(other))
+		self.downcast_ref::<T>() == Some(other)
 	}
 }
 
@@ -292,18 +318,6 @@ impl ErrorImpl for io::Error {
 
 	fn kind(&self) -> ErrorKind {
 		self.kind().into()
-	}
-}
-
-impl From<NulError> for Error {
-	fn from(_: NulError) -> Self {
-		ErrorKind::invalid_cstr().into()
-	}
-}
-
-impl From<Utf8Error> for Error {
-	fn from(_: Utf8Error) -> Self {
-		ErrorKind::invalid_utf8().into()
 	}
 }
 

@@ -21,15 +21,10 @@ pub mod select;
 pub mod spawn;
 pub mod worker;
 
-#[doc(hidden)]
 pub mod internal;
 
-pub use context::*;
-pub use executor::*;
-pub use join::*;
-pub use select::*;
-pub use spawn::*;
-pub use worker::*;
+#[doc(inline)]
+pub use {context::*, executor::*, join::*, select::*, spawn::*, worker::*};
 
 use self::branch::*;
 use self::ops::*;
