@@ -5,8 +5,7 @@ use std::panic::{set_hook, Location, PanicHookInfo};
 
 pub use log::{max_level as get_max_level, set_max_level, Level, LevelFilter};
 
-// use crate::pointer::*;
-
+#[doc(hidden)]
 pub mod internal;
 #[cfg(feature = "logger")]
 mod logger;

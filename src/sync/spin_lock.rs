@@ -2,7 +2,7 @@ use std::hint::spin_loop;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::yield_now;
 
-// A spin lock for when the critical section is short and predictable
+/// A spin lock for when the critical section is short and predictable
 pub struct SpinLock(AtomicBool);
 
 impl SpinLock {

@@ -22,7 +22,7 @@ pub type Complete<T> = unsafe fn(ReqPtr<T>, Ptr<()>, T);
 /// which will cancel at least one Future with the same key
 ///
 /// Each request pointer should be unique, as it may be possible that
-/// only one future can be queued for each request
+/// only one future can be started for each request
 ///
 /// The lifetime of the request must last until the callback is executed
 pub struct Request<T> {

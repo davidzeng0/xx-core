@@ -122,7 +122,7 @@ unsafe extern "C" fn exit_fiber_to_pool(arg: Ptr<()>) {
 	}
 }
 
-#[repr(C)]
+#[cfg_attr(not(any(doc, feature = "xx-doc")), repr(C))]
 pub struct Fiber {
 	context: Context,
 	stack: Map<'static>

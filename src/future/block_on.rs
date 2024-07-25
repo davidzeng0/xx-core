@@ -121,7 +121,9 @@ impl<Resume, Output> Pin for Waiter<Resume, Output> {
 /// to signal to the `block`ing function that it should return
 ///
 /// # Safety
-/// `block` must block until the future finishes
+/// `block` must block until the future finishes. it is safe to unwind after
+/// the future finishes, but may result in a memory leak
+///
 /// `resume` must never unwind
 pub unsafe fn block_on<Block, Resume, F>(block: Block, resume: Resume, future: F) -> F::Output
 where

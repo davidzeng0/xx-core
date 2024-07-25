@@ -195,7 +195,7 @@ impl Data {
 	}
 }
 
-#[repr(C)]
+#[cfg_attr(not(any(doc, feature = "xx-doc")), repr(C))]
 pub struct Context {
 	environment: u32,
 	worker: Ptr<Worker>,
@@ -396,7 +396,7 @@ impl<'ctx> InterruptGuard<'ctx> {
 		self.context.data.guards.update(|guards| {
 			guards
 				.checked_add_signed(rel)
-				/* this can never happen unless memory corruption. useful to check anyway as
+				/* this can never happen unless there is UB. useful to check anyway as
 				 * it doesn't have to be fast
 				 */
 				.expect_nounwind("Interrupt guards count overflowed")

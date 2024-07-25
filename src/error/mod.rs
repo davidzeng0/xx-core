@@ -40,6 +40,7 @@ mod private {
 	impl<T: Display + Send + Sync + 'static> Context for T {}
 }
 
+#[doc(hidden)]
 pub mod internal {
 	use super::*;
 

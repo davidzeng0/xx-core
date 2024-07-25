@@ -4,7 +4,7 @@ use super::*;
 use crate::cell::Cell;
 
 /// Per thread executor, responsible for running worker threads
-#[repr(C)]
+#[cfg_attr(not(any(doc, feature = "xx-doc")), repr(C))]
 pub struct Executor {
 	current: Cell<Ptr<Worker>>,
 	main: Worker,

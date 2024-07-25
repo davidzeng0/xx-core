@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::macros::{assert_unsafe_precondition, sealed_trait, wrapper_functions};
 
+#[doc(hidden)]
 pub mod internal;
 pub mod non_null;
 pub mod pin;

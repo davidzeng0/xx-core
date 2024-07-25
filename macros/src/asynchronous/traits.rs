@@ -89,10 +89,10 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 	let (new_generics, ..) = new_generics.split_for_impl();
 
 	Ok(quote! {
-		#[cfg(not(doc))]
+		#[cfg(not(any(doc, feature = "xx-doc")))]
 		#ext
 
-		#[cfg(not(doc))]
+		#[cfg(not(any(doc, feature = "xx-doc")))]
 		impl #new_generics #ident #type_generics for XXInternalTraitImplementer #where_clause {}
 	})
 }

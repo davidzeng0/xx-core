@@ -4,7 +4,7 @@ use super::*;
 use crate::cell::{Cell, UnsafeCell};
 
 /// A worker thread capable of running async operations via fibers
-#[repr(C)]
+#[cfg_attr(not(any(doc, feature = "xx-doc")), repr(C))]
 pub struct Worker {
 	fiber: UnsafeCell<Fiber>,
 	executor: Ptr<Executor>,
