@@ -74,15 +74,3 @@ declare_attribute_macro! {
 		error::errors(attr, item)
 	}
 }
-
-declare_attribute_macro! {
-	pub fn extendable(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-		extend::extendable(attr, item)
-	}
-}
-
-declare_attribute_macro! {
-	pub fn extends(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-		extend::extends(attr, item)
-	}
-}
