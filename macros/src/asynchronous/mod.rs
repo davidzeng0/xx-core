@@ -97,7 +97,7 @@ pub fn asynchronous(attrs: TokenStream, item: TokenStream) -> Result<TokenStream
 	match attrs.async_kind.0 {
 		AsyncKind::Implicit => (),
 		AsyncKind::TraitFn => return async_impl(attrs, item),
-		AsyncKind::Sync => return item.transform_all(None, transform_sync, |_| true),
+		AsyncKind::Sync => return item.transform_all(Some(&sync_doc_fn), transform_sync, |_| true),
 		_ => return transform_items(item, attrs)
 	}
 

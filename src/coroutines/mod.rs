@@ -1,6 +1,6 @@
 use crate::error::*;
 use crate::fiber::*;
-use crate::future::closure::*;
+use crate::future::internal::*;
 use crate::future::{self, future, Cancel, Complete, Future, Progress, ReqPtr, Request};
 use crate::macros::{assert_unsafe_precondition, unreachable_unchecked};
 pub use crate::macros::{asynchronous, join, select};
@@ -82,8 +82,12 @@ pub unsafe fn scoped<T, Output>(context: &Context, task: T) -> Output
 where
 	T: for<'ctx> Task<Output<'ctx> = Output>
 {
+	#[cfg(any(doc, feature = "xx-doc"))]
+	unreachable!();
+
+	#[cfg(not(any(doc, feature = "xx-doc")))]
 	/* Safety: guaranteed by caller */
-	unsafe { context.run(task) }
+	(unsafe { context.run(task) })
 }
 
 /// Block on a future `F`, suspending until it completes

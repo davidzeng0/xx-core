@@ -77,7 +77,7 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 	let not_doc_attr = not_doc_attr();
 
 	Ok(quote! {
-		#not_doc_attr
+		#[doc(hidden)]
 		#ext
 
 		#not_doc_attr

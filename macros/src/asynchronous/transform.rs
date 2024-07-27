@@ -608,6 +608,10 @@ pub fn traits_doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
 	doc(AsyncKind::TraitFn, func)
 }
 
+pub fn sync_doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
+	doc(AsyncKind::Sync, func)
+}
+
 fn do_task_impl(item: &mut Functions) -> Result<TokenStream> {
 	let Functions::Impl(imp) = item else {
 		return Err(Error::new_spanned(item, "Unexpected declaration"));

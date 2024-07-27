@@ -209,6 +209,7 @@ impl Context {
 	/// # Safety
 	/// See [`scoped`]
 	#[inline(always)]
+	#[cfg(not(any(doc, feature = "xx-doc")))]
 	pub(super) unsafe fn run<T>(&self, task: T) -> T::Output<'_>
 	where
 		T: Task

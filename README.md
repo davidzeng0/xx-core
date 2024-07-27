@@ -6,6 +6,8 @@
 
 Core modules.
 
+[Documentation](https://davidzeng0.github.io/xx-core) (Partially documented, still WIP)
+
 - Macros
 - Logging
 - Os

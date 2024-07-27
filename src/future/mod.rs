@@ -6,7 +6,7 @@ use crate::runtime::call_no_unwind;
 mod block_on;
 
 #[doc(hidden)]
-pub mod closure;
+pub mod internal;
 
 #[doc(inline)]
 pub use block_on::*;

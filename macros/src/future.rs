@@ -53,7 +53,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 
 		let default_cancel_capture = join_tuple(types);
 
-		quote! { ::xx_core::future::closure::CancelClosure<#default_cancel_capture> }
+		quote! { ::xx_core::future::internal::CancelClosure<#default_cancel_capture> }
 	};
 
 	let request = Ident::new("__req", Span::mixed_site());
@@ -94,10 +94,10 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 					block: Some(&mut cancel.block)
 				},
 				&[(quote! { () }, quote! { () })],
-				quote! { ::xx_core::future::closure::CancelClosure },
+				quote! { ::xx_core::future::internal::CancelClosure },
 				|capture, ret| {
 					quote_spanned! { ret.span() =>
-						::xx_core::future::closure::CancelClosure<#capture>
+						::xx_core::future::internal::CancelClosure<#capture>
 					}
 				},
 				Some(Annotations::Uniform)
@@ -166,7 +166,7 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				quote_spanned! { ret.span() =>
 					::xx_core::future::Future<Output = #return_type, Cancel = #cancel_closure_type>
 				},
-				quote! { ::xx_core::future::closure::FutureClosure }
+				quote! { ::xx_core::future::internal::FutureClosure }
 			)
 		}),
 		Some(Annotations::default())
@@ -187,16 +187,22 @@ fn doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
 
 	transform_last_arg(&mut sig.inputs, &return_type)?;
 
+	sig.inputs.pop();
 	sig.output = parse_quote! {
 		-> impl ::xx_core::future::Future<Output = #return_type>
 	};
 
 	let vis = &func.vis;
 
+	let block = match func.block {
+		Some(_) => quote! {{ ::xx_core::future::internal::get_future() }},
+		None => quote! { ; }
+	};
+
 	Ok(quote! {
 		#(#attrs)*
 		#vis #sig
-		{}
+		#block
 	})
 }
 

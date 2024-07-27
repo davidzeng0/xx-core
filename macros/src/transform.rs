@@ -102,7 +102,7 @@ pub fn not_doc_attr() -> Attribute {
 
 pub fn doc_block(block: &Option<&mut Block>) -> TokenStream {
 	match block {
-		Some(_) => quote! { {} },
+		Some(_) => quote! { { ::std::unreachable!() } },
 		None => quote! { ; }
 	}
 }

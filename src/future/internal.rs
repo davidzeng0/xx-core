@@ -28,3 +28,27 @@ unsafe impl<Capture> Cancel for CancelClosure<Capture> {
 		self.call(())
 	}
 }
+
+#[cfg(any(doc, feature = "xx-doc"))]
+pub fn get_future<Output>() -> impl Future<Output = Output> {
+	use std::marker::PhantomData;
+
+	struct Fut<Output>(PhantomData<Output>);
+
+	unsafe impl<Output> Future for Fut<Output> {
+		type Cancel = ();
+		type Output = Output;
+
+		unsafe fn run(self, request: ReqPtr<Output>) -> Progress<Output, ()> {
+			unreachable!();
+		}
+	}
+
+	unsafe impl Cancel for () {
+		unsafe fn run(self) -> Result<()> {
+			unreachable!();
+		}
+	}
+
+	Fut(PhantomData)
+}

@@ -43,7 +43,9 @@ macro_rules! async_fn {
 				#[cfg(any(doc, feature = "xx-doc"))]
 				async fn [< call $($call)? >](
 					$($self)* self, args: Args
-				) -> Self::Output {}
+				) -> Self::Output {
+					unreachable!();
+				}
 			}
 		}
 	};
@@ -56,9 +58,10 @@ macro_rules! map_fn {
 		($($call:ident, $kind:tt)?)
 	) => {
 		paste! {
-			#[asynchronous(sync)]
 			pub trait [< AsyncFn $($kind)? Map >] <Args>: [< AsyncFn $($kind)? >] <Args> + Sized {
+				#[cfg(not(any(doc, feature = "xx-doc")))]
 				#[allow(unused_mut)]
+				#[asynchronous(sync)]
 				fn [< map $($call)? >] <F>(
 					mut self, mut map: F
 				) -> impl [< AsyncFn $($kind)? >] <Args, Output = F::Output>
@@ -72,7 +75,19 @@ macro_rules! map_fn {
 					}
 				}
 
+				#[cfg(any(doc, feature = "xx-doc"))]
+				fn [< map $($call)? >] <F>(
+					mut self, mut map: F
+				) -> impl [< AsyncFn $($kind)? >] <Args, Output = F::Output>
+				where
+					F: [< AsyncFn $($kind)? >] <Self::Output>
+				{
+					internal::DocAsyncFn::new()
+				}
+
+				#[cfg(not(any(doc, feature = "xx-doc")))]
 				#[allow(unused_mut)]
+				#[asynchronous(sync)]
 				fn [< map $($call)? _sync >] <F, Output>(
 					mut self, mut map: F
 				) -> impl [< AsyncFn $($kind)? >] <Args, Output = Output>
@@ -82,6 +97,16 @@ macro_rules! map_fn {
 					move |args: Args| async move {
 						map(self. [< call $($call)? >] (args).await)
 					}
+				}
+
+				#[cfg(any(doc, feature = "xx-doc"))]
+				fn [< map $($call)? _sync >] <F, Output>(
+					mut self, mut map: F
+				) -> impl [< AsyncFn $($kind)? >] <Args, Output = Output>
+				where
+					F: [< Fn $($kind)? >](Self::Output) -> Output
+				{
+					internal::DocAsyncFn::new()
 				}
 			}
 

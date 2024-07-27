@@ -20,6 +20,7 @@ struct SpawnWorker<E, T: for<'ctx> Task<Output<'ctx> = Output>, Output> {
 	data: SpawnData<E, T, Output>
 }
 
+#[cfg(not(any(doc, feature = "xx-doc")))]
 impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWorker<E, T, Output> {
 	/// # Safety
 	/// `arg` must be dereferenceable as a &mut Self.
@@ -162,8 +163,12 @@ where
 		Ok(())
 	}
 
+	#[cfg(any(doc, feature = "xx-doc"))]
+	unreachable!();
+
+	#[cfg(not(any(doc, feature = "xx-doc")))]
 	/* Safety: guaranteed by caller */
-	unsafe { SpawnWorker::spawn(env, task).run(request) }
+	(unsafe { SpawnWorker::spawn(env, task).run(request) })
 }
 
 /// Utility function that calls the above with the
@@ -207,6 +212,7 @@ struct Spawn<Output> {
 	handle: UnsafeCell<SpawnHandle<Output>>
 }
 
+#[cfg(not(any(doc, feature = "xx-doc")))]
 impl<Output> Spawn<Output> {
 	/// # Safety
 	/// must only be called when the task completes
@@ -375,6 +381,10 @@ where
 	E: Environment,
 	T: for<'ctx> Task<Output<'ctx> = Output>
 {
+	#[cfg(any(doc, feature = "xx-doc"))]
+	unreachable!();
+
+	#[cfg(not(any(doc, feature = "xx-doc")))]
 	/* Safety: guaranteed by caller */
-	unsafe { Spawn::run(env, task) }
+	(unsafe { Spawn::run(env, task) })
 }
