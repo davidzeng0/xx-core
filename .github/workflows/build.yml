@@ -31,7 +31,6 @@ jobs:
           sudo apt install -y libc6-dbg &
 
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash &
-          rustup default nightly && rustup component add clippy &
 
           wait
 
@@ -50,3 +49,4 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: codecov.json
           slug: davidzeng0/xx-core
+
