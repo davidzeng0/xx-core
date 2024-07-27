@@ -19,7 +19,7 @@ jobs:
         run: |
           rustup update
           cargo doc --no-deps
-          echo '<meta http-equiv="refresh" content="0; url=xx-core">' > target/doc/index.html
+          echo '<meta http-equiv="refresh" content="0; url=xx_core">' > target/doc/index.html
           rm target/doc/.lock
       - name: Upload pages
         uses: actions/upload-pages-artifact@v3
