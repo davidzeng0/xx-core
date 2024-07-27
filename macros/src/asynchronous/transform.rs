@@ -612,7 +612,7 @@ pub fn sync_doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
 	doc(AsyncKind::Sync, func)
 }
 
-fn do_task_impl(item: &mut Functions) -> Result<TokenStream> {
+fn impl_for_task(item: &mut Functions) -> Result<TokenStream> {
 	let Functions::Impl(imp) = item else {
 		return Err(Error::new_spanned(item, "Unexpected declaration"));
 	};
@@ -658,7 +658,7 @@ fn do_task_impl(item: &mut Functions) -> Result<TokenStream> {
 
 pub fn transform_items(mut item: Functions, attrs: AttributeArgs) -> Result<TokenStream> {
 	let type_check = if attrs.async_kind.0 == AsyncKind::Task {
-		Some(do_task_impl(&mut item)?)
+		Some(impl_for_task(&mut item)?)
 	} else {
 		None
 	};

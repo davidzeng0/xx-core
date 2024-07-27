@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 use crate::error::*;
 use crate::macros::{import_sysdeps, macro_each, syscall_impl};
 
@@ -9,11 +11,9 @@ pub use SyscallNumber::*;
 use super::error::*;
 use super::*;
 
-#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Copy)]
 pub struct SyscallParameter(pub usize);
 
-#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Copy)]
 pub struct SyscallResult(pub isize);
 
@@ -207,7 +207,6 @@ impl<T> IntoRawArray for Option<&mut [T]> {
 }
 
 #[macro_export]
-#[allow(clippy::module_name_repetitions)]
 macro_rules! syscall_raw {
 	($num:expr) => {
 		$crate::os::syscall::syscall0($num)
@@ -238,27 +237,22 @@ macro_rules! syscall_raw {
 	};
 }
 
-#[allow(clippy::module_name_repetitions)]
 pub use syscall_raw;
 
 #[macro_export]
-#[allow(clippy::module_name_repetitions)]
 macro_rules! syscall_int {
 	($($arg: expr),+) => {
 		$crate::os::error::result_from_int($crate::os::syscall::syscall_raw!($($arg),+))
 	};
 }
 
-#[allow(clippy::module_name_repetitions)]
 pub use syscall_int;
 
 #[macro_export]
-#[allow(clippy::module_name_repetitions)]
 macro_rules! syscall_pointer {
 	($($arg: expr),+) => {
 		$crate::os::error::result_from_ptr($crate::os::syscall::syscall_raw!($($arg),+))
 	};
 }
 
-#[allow(clippy::module_name_repetitions)]
 pub use syscall_pointer;
