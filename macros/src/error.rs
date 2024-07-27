@@ -53,11 +53,11 @@ struct VariantAttrs {
 impl VariantAttrs {
 	fn get_attrs(&mut self, field: &mut Field, index: usize) {
 		if self.from.is_none() {
-			self.from = remove_attr_path(&mut field.attrs, "from");
+			self.from = field.attrs.remove_path("from");
 		}
 
 		if self.source.is_none() {
-			let attr = remove_attr_path(&mut field.attrs, "source");
+			let attr = field.attrs.remove_path("source");
 
 			self.source = attr.map(|source| (source, index));
 		}
@@ -78,22 +78,20 @@ impl VariantFields {
 
 		match fields {
 			Fields::Named(fields) => {
-				for (index, field) in fields.named.iter_mut().enumerate() {
-					attributes.get_attrs(field, index);
-
+				for (i, field) in fields.named.iter_mut().enumerate() {
 					let ident = field.ident.clone().unwrap();
 
+					attributes.get_attrs(field, i);
 					members.push((Member::Named(ident), field.ty.clone()));
 				}
 			}
 
 			Fields::Unnamed(fields) => {
-				for (index, field) in fields.unnamed.iter_mut().enumerate() {
-					attributes.get_attrs(field, index);
-
+				for (i, field) in fields.unnamed.iter_mut().enumerate() {
 					#[allow(clippy::cast_possible_truncation)]
-					let index = Index { index: index as u32, span: field.ty.span() };
+					let index = Index { index: i as u32, span: field.ty.span() };
 
+					attributes.get_attrs(field, i);
 					members.push((Member::Unnamed(index), field.ty.clone()));
 				}
 			}
@@ -125,20 +123,20 @@ struct Variant {
 }
 
 fn maybe_transparent(attr: MetaList) -> (TokenStream, bool) {
-	let is_transparent =
-		matches!(parse2::<Ident>(attr.tokens.clone()), Ok(ident) if ident == "transparent");
+	let parsed = parse2::<Ident>(attr.tokens.clone());
+	let transparent = matches!(parsed, Ok(ident) if ident == "transparent");
 
-	(attr.tokens, is_transparent)
+	(attr.tokens, transparent)
 }
 
 impl Variant {
 	fn new(attrs: &mut Vec<Attribute>, ident: &Ident, fields: &mut Fields) -> Result<Self> {
-		let fmt = remove_attr_list(attrs, "fmt").map(maybe_transparent);
+		let fmt = attrs.remove_list("fmt").map(maybe_transparent);
 
 		let (display, debug) = if fmt.is_none() {
 			(
-				remove_attr_list(attrs, "display").map(maybe_transparent),
-				remove_attr_list(attrs, "debug").map(maybe_transparent)
+				attrs.remove_list("display").map(maybe_transparent),
+				attrs.remove_list("debug").map(maybe_transparent)
 			)
 		} else {
 			(fmt.clone(), fmt)
@@ -147,7 +145,7 @@ impl Variant {
 		let this = Self {
 			display,
 			debug,
-			kind: remove_attr_name_value(attrs, "kind").map(|attr| attr.value),
+			kind: attrs.remove_name_value("kind").map(|attr| attr.value),
 			ident: ident.clone(),
 			fields: VariantFields::new(fields)
 		};
@@ -295,10 +293,7 @@ enum Repr {
 fn add_bounds(
 	generics: &Generics, where_clause: Option<&WhereClause>, bounds: &[TypeParamBound]
 ) -> WhereClause {
-	let mut clause = where_clause.cloned().unwrap_or_else(|| WhereClause {
-		where_token: Default::default(),
-		predicates: Punctuated::new()
-	});
+	let mut clause = where_clause.cloned().unwrap_or_else(WhereClause::default);
 
 	for ty in generics.type_params() {
 		let ty = &ty.ident;
@@ -523,13 +518,9 @@ impl Input {
 	}
 }
 
-fn expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
+pub fn errors(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 	let attrs = Attributes::parse(attr)?;
 	let input = Input::parse(item, attrs)?;
 
 	input.expand()
-}
-
-pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {
-	try_expand(|| expand(attr, item))
 }

@@ -15,19 +15,10 @@ fn wrapper_function(func: &mut TraitItemFn, this: &TokenStream) {
 	call.push(quote! { #this::#ident });
 
 	if !func.sig.generics.params.is_empty() {
-		let mut generics = func.sig.generics.clone();
-
-		generics.params = generics
-			.params
-			.into_iter()
-			.filter(|generic| !matches!(generic, GenericParam::Lifetime(_)))
-			.collect();
-		let (_, type_generics, _) = generics.split_for_impl();
-
-		call.push(type_generics.as_turbofish().into_token_stream());
+		call.push(func.sig.generics.to_types_turbofish());
 	}
 
-	let mut args = get_args(&func.sig.inputs, true);
+	let mut args = func.sig.inputs.get_pats(true);
 
 	if func.sig.asyncness.is_some() {
 		let context = Context::ident();
@@ -39,11 +30,7 @@ fn wrapper_function(func: &mut TraitItemFn, this: &TokenStream) {
 
 	func.default = Some(parse_quote! {{ unsafe { #(#call)* } }});
 	func.attrs.push(parse_quote! {
-		#[allow(
-			unsafe_op_in_unsafe_fn,
-			clippy::used_underscore_binding,
-			clippy::unused_async
-		)]
+		#[allow(clippy::used_underscore_binding, clippy::unused_async)]
 	});
 
 	RemoveModifiers.visit_signature_mut(&mut func.sig);
@@ -72,7 +59,7 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 		let doc = transform_trait_func(
 			&mut Function::from_trait_fn(false, Some(&ext.generics), &mut func),
 			&traits_doc_fn,
-			|func| transform_async(attrs.clone(), func)
+			|func| transform_async(attrs, func)
 		)?;
 
 		ext.items.push(TraitItem::Fn(func));
@@ -87,25 +74,23 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 	});
 
 	let (new_generics, ..) = new_generics.split_for_impl();
+	let not_doc_attr = not_doc_attr();
 
 	Ok(quote! {
-		#[cfg(not(any(doc, feature = "xx-doc")))]
+		#not_doc_attr
 		#ext
 
-		#[cfg(not(any(doc, feature = "xx-doc")))]
+		#not_doc_attr
 		impl #new_generics #ident #type_generics for XXInternalTraitImplementer #where_clause {}
 	})
 }
 
-fn async_impl_fn(attrs: &AttributeArgs, func: &mut Function<'_>) -> Result<()> {
+fn async_impl_fn(attrs: AttributeArgs, func: &mut Function<'_>) -> Result<()> {
 	func.is_root = false;
 	func.sig.ident = format_fn_ident(&func.sig.ident);
+	func.attrs.push(parse_quote! { #[doc(hidden)] });
 
-	func.attrs.push(parse_quote! {
-		#[doc(hidden)]
-	});
-
-	transform_async(attrs.clone(), func)
+	transform_async(attrs, func)
 }
 
 macro_rules! assign_default {
@@ -148,7 +133,7 @@ where
 				let doc = transform_trait_func(
 					&mut Function::from_trait_fn(false, Some(&imp.generics), &mut func),
 					&traits_doc_fn,
-					|func| async_impl_fn(&attrs, func)
+					|func| async_impl_fn(attrs, func)
 				)?;
 
 				items.push(TraitItem::Fn(func));
@@ -174,39 +159,40 @@ where
 	})
 }
 
-fn gen_impls(attrs: &AttributeArgs, item: &ItemTrait) -> Result<TokenStream> {
+fn gen_impls(attrs: AttributeArgs, item: &ItemTrait) -> Result<TokenStream> {
 	let mut impls = Vec::<TokenStream>::new();
-	let impl_gen = &attrs.impl_gen;
 
-	if impl_gen.impl_ref.is_some() {
-		impls.push(gen_impl(item, attrs.clone(), |ty| quote! { &#ty })?);
-	}
+	if let Some(impl_gen) = &attrs.impl_gen {
+		if impl_gen.impl_ref.is_some() {
+			impls.push(gen_impl(item, attrs, |ty| quote! { &#ty })?);
+		}
 
-	if impl_gen.impl_mut.is_some() {
-		impls.push(gen_impl(item, attrs.clone(), |ty| quote! { &mut #ty })?);
-	}
+		if impl_gen.impl_mut.is_some() {
+			impls.push(gen_impl(item, attrs, |ty| quote! { &mut #ty })?);
+		}
 
-	if impl_gen.impl_box.is_some() {
-		impls.push(gen_impl(
-			item,
-			attrs.clone(),
-			|ty| quote! { ::std::boxed::Box<#ty> }
-		)?);
+		if impl_gen.impl_box.is_some() {
+			impls.push(gen_impl(
+				item,
+				attrs,
+				|ty| quote! { ::std::boxed::Box<#ty> }
+			)?);
+		}
 	}
 
 	Ok(quote! { #(#impls)* })
 }
 
 pub fn async_trait(mut attrs: AttributeArgs, item: ItemTrait) -> Result<TokenStream> {
-	let ext = trait_ext(attrs.clone(), item.clone())?;
-	let impls = gen_impls(&attrs, &item)?;
+	let ext = trait_ext(attrs, item.clone())?;
+	let impls = gen_impls(attrs, &item)?;
 
 	attrs.async_kind.0 = AsyncKind::TraitFn;
 
 	let functions = Functions::Trait(item);
 	let item = functions.transform_all(
 		Some(&traits_doc_fn),
-		|func| async_impl_fn(&attrs, func),
+		|func| async_impl_fn(attrs, func),
 		|_| true
 	)?;
 
@@ -218,7 +204,7 @@ pub fn async_impl(mut attrs: AttributeArgs, item: Functions) -> Result<TokenStre
 
 	item.transform_all(
 		Some(&traits_doc_fn),
-		|func| async_impl_fn(&attrs, func),
+		|func| async_impl_fn(attrs, func),
 		|item| matches!(item, Functions::Fn(_) | Functions::Impl(_))
 	)
 }

@@ -46,12 +46,11 @@ impl Parse for WrapperFunctions {
 			}
 		}
 
-		if inner.is_none() && inner_mut.is_none() {
-			return Err(input.error("Expected an inner expression"));
-		}
-
-		let inner = inner.or_else(|| inner_mut.clone()).unwrap();
-		let inner_mut = inner_mut.unwrap_or_else(|| inner.clone());
+		let (inner, inner_mut) = match (inner, inner_mut) {
+			(Some(inner), Some(inner_mut)) => (inner, inner_mut),
+			(Some(inner), None) | (None, Some(inner)) => (inner.clone(), inner),
+			(None, None) => return Err(input.error("Expected an inner expression"))
+		};
 
 		let mut functions = Vec::new();
 
@@ -106,6 +105,35 @@ impl Parse for WrapperFunctions {
 	}
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Chain {
+	None,
+	Ref,
+	Owned
+}
+
+fn get_chain(func: &Function) -> Chain {
+	let Some(receiver) = func.sig.receiver() else {
+		return Chain::None;
+	};
+
+	if *receiver.ty != func.sig.output.to_type() {
+		return Chain::None;
+	}
+
+	if receiver.reference.is_some() {
+		return Chain::Ref;
+	}
+
+	if let Type::Path(TypePath { qself: None, path }) = receiver.ty.as_ref() {
+		if matches!(path.get_ident(), Some(ident) if ident == "Self") {
+			return Chain::Owned;
+		}
+	}
+
+	Chain::None
+}
+
 impl WrapperFunctions {
 	fn expand(&self) -> TokenStream {
 		let mut fns = Vec::new();
@@ -126,9 +154,14 @@ impl WrapperFunctions {
 			call.push(quote_spanned! { function.sig.span() => (#inner) });
 
 			let ident = &function.sig.ident;
-			let pats = get_args(&function.sig.inputs, false);
+			let pats = function.sig.inputs.get_pats(false);
 
 			call.push(quote_spanned! { function.sig.span() => .#ident });
+
+			if !function.sig.generics.params.is_empty() {
+				call.push(function.sig.generics.to_types_turbofish());
+			}
+
 			call.push(quote_spanned! { pats.span() => (#pats) });
 
 			if function.sig.asyncness.is_some() {
@@ -137,22 +170,22 @@ impl WrapperFunctions {
 
 			let mut sig = function.sig.clone();
 			let mut attrs = function.attrs.clone();
-			let mut stmts = Vec::new();
 
 			attrs.push(parse_quote! { #[inline(always)] });
 			attrs.push(parse_quote! { #[allow(unsafe_op_in_unsafe_fn)] });
-			stmts.push(quote! { #(#call)* });
 			sig.ident = function.ident.clone();
 
-			if let Some(attr) = remove_attr_path(&mut attrs, "chain") {
-				stmts.push(quote_spanned! { attr.span() => ; self });
-			}
+			let body = match get_chain(function) {
+				Chain::None => quote! { #(#call)* },
+				Chain::Ref => quote! { #(#call)*; self },
+				Chain::Owned => quote! { (#inner) = #(#call)*; self }
+			};
 
 			fns.push(ItemFn {
 				attrs,
 				vis: function.vis.clone(),
 				sig,
-				block: parse_quote! {{ #(#stmts)* }}
+				block: parse_quote! {{ #body }}
 			});
 		}
 
@@ -160,6 +193,6 @@ impl WrapperFunctions {
 	}
 }
 
-pub fn wrapper_functions(item: TokenStream) -> TokenStream {
-	try_expand(|| parse2::<WrapperFunctions>(item).map(|functions| functions.expand()))
+pub fn wrapper_functions(item: TokenStream) -> Result<TokenStream> {
+	parse2::<WrapperFunctions>(item).map(|functions| functions.expand())
 }

@@ -3,15 +3,44 @@ use std::mem::take;
 use super::*;
 
 pub mod branch;
-mod invoke;
 mod lang;
+mod options;
 mod traits;
 mod transform;
 
-use self::invoke::*;
 use self::lang::*;
+use self::options::*;
 use self::traits::*;
 use self::transform::*;
+
+#[derive(Clone)]
+pub enum AsyncItem {
+	Fn(ImplItemFn),
+	TraitFn(TraitItemFn),
+	Trait(ItemTrait),
+	Impl(ItemImpl),
+	Struct(ItemStruct)
+}
+
+impl Parse for AsyncItem {
+	fn parse(input: ParseStream<'_>) -> Result<Self> {
+		let lookahead = input.fork();
+
+		lookahead.call(Attribute::parse_outer)?;
+		lookahead.parse::<Visibility>()?;
+
+		if lookahead.peek(Token![struct]) {
+			return input.parse().map(Self::Struct);
+		}
+
+		Ok(match Functions::parse(input)? {
+			Functions::Fn(item) => Self::Fn(item),
+			Functions::TraitFn(item) => Self::TraitFn(item),
+			Functions::Trait(item) => Self::Trait(item),
+			Functions::Impl(item) => Self::Impl(item)
+		})
+	}
+}
 
 #[allow(clippy::missing_panics_doc)]
 fn language_impl(mut attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStream> {
@@ -33,23 +62,24 @@ fn language_impl(mut attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStrea
 	})
 }
 
-fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStream> {
+pub fn asynchronous(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
+	let mut attrs = AttributeArgs::parse.parse2(attrs)?;
 	let mut item = parse2::<AsyncItem>(item)?;
 
-	match &mut item {
-		AsyncItem::Struct(item) => attrs.parse_additional(&mut item.attrs)?,
-		AsyncItem::Trait(item) => attrs.parse_additional(&mut item.attrs)?,
-		AsyncItem::Impl(imp) => attrs.parse_additional(&mut imp.attrs)?,
-		_ => ()
-	}
-
-	if let Some(span) = attrs.impl_gen.span() {
+	if let Some(gen) = attrs.impl_gen {
 		if !matches!(
 			(&item, attrs.async_kind.0),
-			(AsyncItem::Trait(_), AsyncKind::Default | AsyncKind::TraitFn)
+			(AsyncItem::Trait(_), AsyncKind::Implicit)
 		) {
-			return Err(Error::new(span, "Not allowed here"));
+			return Err(Error::new(gen.span, "Not allowed"));
 		}
+	}
+
+	match &mut item {
+		AsyncItem::Struct(item) => attrs.parse_attrs(&mut item.attrs)?,
+		AsyncItem::Trait(item) => attrs.parse_attrs(&mut item.attrs)?,
+		AsyncItem::Impl(imp) => attrs.parse_attrs(&mut imp.attrs)?,
+		_ => ()
 	}
 
 	if attrs.language.is_some() {
@@ -65,28 +95,20 @@ fn try_transform(mut attrs: AttributeArgs, item: TokenStream) -> Result<TokenStr
 	};
 
 	match attrs.async_kind.0 {
-		AsyncKind::Default => (),
+		AsyncKind::Implicit => (),
 		AsyncKind::TraitFn => return async_impl(attrs, item),
 		AsyncKind::Sync => return item.transform_all(None, transform_sync, |_| true),
 		_ => return transform_items(item, attrs)
 	}
 
-	match &item {
-		Functions::Trait(item) => async_trait(attrs, item.clone()),
-		Functions::Impl(imp) if imp.trait_.is_some() => async_impl(attrs, item.clone()),
+	match item {
+		Functions::Trait(item) => async_trait(attrs, item),
+		Functions::Impl(ref imp) if imp.trait_.is_some() => async_impl(attrs, item),
 		Functions::Fn(_) | Functions::Impl(_) => transform_items(item, attrs),
-		Functions::TraitFn(_) => {
+		Functions::TraitFn(func) => {
 			let message = "Trait functions must specify `#[asynchronous(traitfn)]`";
 
-			Err(Error::new(Span::call_site(), message))
+			Err(Error::new_spanned(func, message))
 		}
 	}
-}
-
-pub fn asynchronous(attrs: TokenStream, item: TokenStream) -> TokenStream {
-	try_expand(|| {
-		let attrs = AttributeArgs::parse.parse2(attrs)?;
-
-		try_transform(attrs, item)
-	})
 }

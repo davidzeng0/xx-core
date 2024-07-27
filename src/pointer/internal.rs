@@ -60,7 +60,7 @@ impl<T: ?Sized> AsPointer for UnsafeCell<T> {
 
 pub trait PointerOffset {
 	/// # Safety
-	/// See [`<*const ()>::offset`]
+	/// See the pointer `offset` function
 	unsafe fn offset<T, const MUT: bool>(self, pointer: Pointer<T, MUT>) -> Pointer<T, MUT>;
 }
 
@@ -84,7 +84,7 @@ pub trait PointerIndex<const MUT: bool, Idx> {
 	type Output: ?Sized;
 
 	/// # Safety
-	/// See [`<*const ()>::offset`]
+	/// See the pointer `offset` function
 	unsafe fn index(self, index: Idx) -> Pointer<Self::Output, MUT>;
 }
 

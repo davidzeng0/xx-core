@@ -417,7 +417,7 @@ impl ThreadPool {
 	#[future]
 	pub unsafe fn submit(&self, work: MutPtr<Work<'_>>, request: _) -> bool {
 		#[cancel]
-		fn cancel(&self, cancel: CancelWork, request: _) -> Result<()> {
+		fn cancel(&self, cancel: CancelWork) -> Result<()> {
 			self.cancel_direct(cancel);
 
 			Ok(())
@@ -426,7 +426,7 @@ impl ThreadPool {
 		/* Safety: caller must uphold Future's contract */
 		let token = unsafe { self.submit_direct(work, request) };
 
-		Progress::Pending(cancel(self, token, request))
+		Progress::Pending(cancel(self, token))
 	}
 
 	#[allow(clippy::missing_panics_doc, clippy::unwrap_used)]

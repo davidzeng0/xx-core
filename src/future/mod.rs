@@ -4,6 +4,8 @@ use crate::pointer::*;
 use crate::runtime::call_no_unwind;
 
 mod block_on;
+
+#[doc(hidden)]
 pub mod closure;
 
 #[doc(inline)]

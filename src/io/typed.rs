@@ -1,6 +1,4 @@
-use paste::paste;
-
-use crate::macros::macro_each;
+use crate::macros::{macro_each, paste};
 
 pub trait IntoBytes<const N: usize> {
 	fn into_bytes(self) -> [u8; N];

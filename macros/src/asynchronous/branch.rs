@@ -306,8 +306,8 @@ impl Parse for Select {
 	}
 }
 
-pub fn select(item: TokenStream) -> TokenStream {
-	try_expand(|| parse2::<Select>(item).and_then(|select| select.expand()))
+pub fn select(item: TokenStream) -> Result<TokenStream> {
+	parse2::<Select>(item).and_then(|select| select.expand())
 }
 
 struct Join {
@@ -344,12 +344,15 @@ impl Parse for Join {
 	}
 }
 
-pub fn join(_: TokenStream) -> TokenStream {
+pub fn join(_: TokenStream) -> Result<TokenStream> {
 	// let join = match parse2::<Join>(item) {
 	// 	Ok(join) => join,
 	// 	Err(err) => return err.to_compile_error()
 	// };
 
 	// join.expand()
-	Error::new(Span::call_site(), "This macro currently does not work").to_compile_error()
+	Err(Error::new(
+		Span::call_site(),
+		"This macro currently does not work"
+	))
 }

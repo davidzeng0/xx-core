@@ -1,7 +1,5 @@
-use paste::paste;
-
 use super::*;
-use crate::macros::macro_each;
+use crate::macros::{macro_each, paste};
 
 #[asynchronous(traitext)]
 pub trait TaskExt: Task + Sized {

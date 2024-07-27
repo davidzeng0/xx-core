@@ -355,7 +355,7 @@ impl<
 	#[future]
 	pub unsafe fn run(this_ptr: MutPtr<Self>, request: _) -> BranchOutput<F1::Output, F2::Output> {
 		#[cancel]
-		fn cancel(self: MutPtr<Self>, request: _) -> Result<()> {
+		fn cancel(self: MutPtr<Self>) -> Result<()> {
 			/* Safety: caller must uphold Future's contract */
 			unsafe { Self::cancel_all(self) }
 		}
@@ -408,7 +408,7 @@ impl<
 			}
 		}
 
-		Progress::Pending(cancel(this_ptr, request))
+		Progress::Pending(cancel(this_ptr))
 	}
 }
 

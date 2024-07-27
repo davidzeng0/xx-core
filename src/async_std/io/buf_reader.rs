@@ -250,6 +250,7 @@ macro_rules! impl_bufread {
 			async fn seek_abs(&mut self, abs: u64, seek: SeekFrom) -> Result<u64> {
 				let stream_pos = self.stream_position().await?;
 
+				#[allow(unstable_name_collisions)]
 				if let Some(rel) = abs.checked_signed_diff(stream_pos) {
 					self.seek_relative(rel).await
 				} else {

@@ -67,7 +67,7 @@ impl<T> AtomicWaiter<T> {
 		F: FnOnce() -> bool
 	{
 		#[cancel]
-		fn cancel(&self, request: _) -> Result<()> {
+		fn cancel(&self) -> Result<()> {
 			/* wake may already be in progress */
 			let result = self.cancel_wait(request);
 
@@ -99,7 +99,7 @@ impl<T> AtomicWaiter<T> {
 		}
 
 		match error {
-			None => Progress::Pending(cancel(self, request)),
+			None => Progress::Pending(cancel(self)),
 			Some(err) => Progress::Done(Err(err))
 		}
 	}
@@ -213,7 +213,7 @@ impl<T: Clone> RawWaitList<T> {
 	#[future]
 	unsafe fn suspend(&self, waiter: &mut Waiter<T>, request: _) -> WaitResult<MaybePanic<T>> {
 		#[cancel]
-		fn cancel(waiter: MutPtr<Waiter<T>>, request: _) -> Result<()> {
+		fn cancel(waiter: MutPtr<Waiter<T>>) -> Result<()> {
 			/* Safety: we linked this node earlier */
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
 			(unsafe { ptr!(waiter=>node.unlink_unchecked()) });
@@ -238,7 +238,7 @@ impl<T: Clone> RawWaitList<T> {
 		 */
 		unsafe { self.list.append(&waiter.node) };
 
-		Progress::Pending(cancel(ptr!(waiter), request))
+		Progress::Pending(cancel(ptr!(waiter)))
 	}
 
 	pub async fn wait(&self) -> WaitResult<T> {
@@ -385,7 +385,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		F: FnOnce() -> bool
 	{
 		#[cancel]
-		fn cancel(&self, waiter: MutPtr<Waiter<T>>, request: _) -> Result<()> {
+		fn cancel(&self, waiter: MutPtr<Waiter<T>>) -> Result<()> {
 			#[allow(clippy::unwrap_used)]
 			let list = self.list.lock();
 
@@ -431,7 +431,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		/* Safety: guaranteed by caller */
 		unsafe { list.append(&waiter.node) };
 
-		Progress::Pending(cancel(self, ptr!(waiter), request))
+		Progress::Pending(cancel(self, ptr!(waiter)))
 	}
 
 	pub async fn wait<F>(&self, should_block: F) -> WaitResult<T>

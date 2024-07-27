@@ -36,11 +36,11 @@ fn transform_last_arg(inputs: &mut Punctuated<FnArg, Token![,]>, return_type: &T
 }
 
 fn transform_func(func: &mut Function<'_>) -> Result<()> {
-	if !func.is_root && remove_attr_path(func.attrs, "future").is_none() {
+	if !func.is_root && func.attrs.remove_path("future").is_none() {
 		return Ok(());
 	}
 
-	let return_type = get_return_type(&func.sig.output);
+	let return_type = func.sig.output.to_type();
 
 	let mut cancel_closure_type = {
 		let mut types = vec![quote! { ::xx_core::future::ReqPtr<#return_type> }];
@@ -56,21 +56,22 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 		quote! { ::xx_core::future::closure::CancelClosure<#default_cancel_capture> }
 	};
 
+	let request = Ident::new("__req", Span::mixed_site());
+
 	if let Some(block) = &mut func.block {
 		for stmt in &mut block.stmts {
 			let Stmt::Item(Item::Fn(cancel)) = stmt else {
 				continue;
 			};
 
-			if remove_attr_path(&mut cancel.attrs, "cancel").is_none() {
+			let Some(attr) = cancel.attrs.remove_path("cancel") else {
 				continue;
-			}
+			};
 
 			let Visibility::Inherited = cancel.vis else {
-				return Err(Error::new_spanned(
-					&cancel.vis,
-					"Visibility not allowed here"
-				));
+				let msg = "Visibility not allowed here";
+
+				return Err(Error::new_spanned(&cancel.vis, msg));
 			};
 
 			not_allowed(&cancel.sig.constness, "`const` not allowed here")?;
@@ -79,7 +80,9 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 			not_allowed(&cancel.sig.generics.lt_token, "Generics not allowed here")?;
 			not_allowed(&cancel.sig.variadic, "Variadics not allowed here")?;
 
-			transform_last_arg(&mut cancel.sig.inputs, &return_type)?;
+			cancel.sig.inputs.push(parse_quote! {
+				request: ::xx_core::future::ReqPtr<#return_type>
+			});
 
 			cancel_closure_type = make_explicit_closure(
 				&mut Function {
@@ -100,10 +103,11 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				Some(Annotations::Uniform)
 			)?;
 
+			cancel.sig.inputs.pop();
+
 			ReplaceSelf.visit_item_fn_mut(cancel);
 
-			let (ident, attrs, unsafety, inputs, output, block) = (
-				&cancel.sig.ident,
+			let (attrs, unsafety, inputs, output, block) = (
 				&cancel.attrs,
 				&cancel.sig.unsafety,
 				&cancel.sig.inputs,
@@ -111,14 +115,32 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 				&cancel.block
 			);
 
-			*stmt = parse_quote_spanned! { cancel.span() =>
+			let ident = format_ident!("{}", cancel.sig.ident, span = attr.span());
+			let color = Ident::new("drop", cancel.sig.ident.span());
+
+			*stmt = parse_quote! {
 				#[allow(unused_variables)]
 				#(#attrs)*
-				let #ident = | #inputs | #output #unsafety #block;
+				let #ident = {
+					const _: () = {
+						let _ = ::std::mem::#color::<()>;
+					};
+
+					let request = #request;
+
+					move | #inputs | #output #unsafety #block
+				};
 			};
 
 			break;
 		}
+
+		block.stmts.insert(
+			0,
+			parse_quote! {
+				let #request = request;
+			}
+		);
 	}
 
 	transform_last_arg(&mut func.sig.inputs, &return_type)?;
@@ -156,12 +178,12 @@ fn transform_func(func: &mut Function<'_>) -> Result<()> {
 fn doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
 	let mut attrs = func.attrs.clone();
 
-	if !func.is_root && remove_attr_path(&mut attrs, "future").is_none() {
+	if !func.is_root && attrs.remove_path("future").is_none() {
 		return default_doc(func);
 	}
 
 	let mut sig = func.sig.clone();
-	let return_type = get_return_type(&sig.output);
+	let return_type = sig.output.to_type();
 
 	transform_last_arg(&mut sig.inputs, &return_type)?;
 
@@ -178,14 +200,12 @@ fn doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
 	})
 }
 
-pub fn future(attr: TokenStream, item: TokenStream) -> TokenStream {
-	try_expand(|| {
-		ensure_empty(attr)?;
+pub fn future(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
+	let item = parse2::<Functions>(item)?;
 
-		let item = parse2::<Functions>(item)?;
+	attr.require_empty()?;
 
-		item.transform_all(Some(&doc_fn), transform_func, |item| {
-			!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
-		})
+	item.transform_all(Some(&doc_fn), transform_func, |item| {
+		!matches!(item, Functions::Trait(_) | Functions::TraitFn(_))
 	})
 }

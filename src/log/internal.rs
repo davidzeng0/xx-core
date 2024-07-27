@@ -4,6 +4,7 @@ use std::str::from_utf8;
 pub use log::{log, log_enabled};
 
 use super::*;
+use crate::io::UninitBuf;
 use crate::pointer::*;
 
 #[allow(
@@ -70,14 +71,11 @@ pub fn log_struct<T, const MUT: bool>(
 ) where
 	T: ?Sized
 {
-	let mut fmt_buf = Cursor::new([0u8; 64]);
+	let mut fmt_buf = UninitBuf::<64>::new();
 	let _ = format_struct(&mut fmt_buf, addr, name);
 
-	#[allow(clippy::cast_possible_truncation)]
-	let pos = fmt_buf.position() as usize;
-
 	log!(
-		target: from_utf8(&fmt_buf.get_ref()[0..pos]).unwrap_or("<error>"),
+		target: from_utf8(&fmt_buf).unwrap_or("<error>"),
 		level,
 		"{}",
 		args

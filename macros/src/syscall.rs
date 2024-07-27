@@ -29,15 +29,15 @@ impl Parse for SyscallImpl {
 
 			input.parse::<Token![;]>()?;
 
-			let kind_str = kind.to_string();
+			let kind_str: &str = &kind.to_string();
 
-			if matches!(kind_str.as_ref(), "out" | "num") && regs.len() != 1 {
+			if matches!(kind_str, "out" | "num") && regs.len() != 1 {
 				let msg = format!("There can only be one `{}` register", kind_str);
 
 				return Err(Error::new_spanned(kind, msg));
 			}
 
-			match kind_str.as_ref() {
+			match kind_str {
 				"out" => out = Some(regs[0].clone()),
 				"num" => num = Some(regs[0].clone()),
 				"arg" => args = regs,
@@ -99,8 +99,8 @@ impl SyscallImpl {
 	}
 }
 
-pub fn syscall_impl(item: TokenStream) -> TokenStream {
-	try_expand(|| parse2::<SyscallImpl>(item).map(|syscall| syscall.expand()))
+pub fn syscall_impl(item: TokenStream) -> Result<TokenStream> {
+	parse2::<SyscallImpl>(item).map(|syscall| syscall.expand())
 }
 
 struct ArrayOptions {
@@ -130,7 +130,7 @@ fn parse_options(meta: &Meta) -> Result<ArrayOptions> {
 			return Err(Error::new_spanned(meta, msg));
 		};
 
-		if nv.path.get_ident().is_some_and(|ident| ident != "len") {
+		if nv.path.require_ident()? != "len" {
 			return Err(Error::new_spanned(nv.path, "Unknown option"));
 		}
 
@@ -171,7 +171,7 @@ fn get_raw_args(
 			return Err(Error::new_spanned(&ty.pat, "Pattern not allowed here"));
 		};
 
-		let array = remove_attr_kind(&mut ty.attrs, "array", |_| true);
+		let array = ty.attrs.remove_if("array", |_| true);
 		let mut pat_ty = ty.clone();
 
 		let Some(array) = array else {
@@ -224,13 +224,13 @@ fn get_raw_args(
 	Ok((raw_args, vars, into_raw))
 }
 
-fn expand_syscall_define(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
+pub fn syscall_define(attrs: TokenStream, item: TokenStream) -> Result<TokenStream> {
 	let number: Expr = parse2(attrs)?;
 	let mut func: ForeignItemFn = parse2(item)?;
 
 	let (raw_args, vars, into_raw) = get_raw_args(&mut func.sig.inputs)?;
 	let (attrs, vis, sig) = (&func.attrs, &func.vis, &func.sig);
-	let args: Vec<_> = get_args(&raw_args, false).into_iter().collect();
+	let args: Vec<_> = raw_args.get_pats(false).into_iter().collect();
 
 	let mut raw_sig = sig.clone();
 
@@ -268,8 +268,4 @@ fn expand_syscall_define(attrs: TokenStream, item: TokenStream) -> Result<TokenS
 			unsafe { #raw_ident(#into_raw) }
 		}
 	})
-}
-
-pub fn syscall_define(attrs: TokenStream, item: TokenStream) -> TokenStream {
-	try_expand(|| expand_syscall_define(attrs, item))
 }

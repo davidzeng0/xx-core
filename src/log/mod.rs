@@ -1,6 +1,6 @@
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::fmt::Arguments;
-use std::io::{stderr, BufWriter, Cursor, Result, Stderr, Write};
+use std::io::{stderr, BufWriter, Result, Stderr, Write};
 use std::panic::{set_hook, Location, PanicHookInfo};
 
 pub use log::{max_level as get_max_level, set_max_level, Level, LevelFilter};

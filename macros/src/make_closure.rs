@@ -39,7 +39,8 @@ fn add_lifetimes(
 		return quote! {};
 	};
 
-	let mut op = AddLifetime::new(closure_lifetime(), annotations);
+	let closure_lt = closure_lifetime::<Lifetime>();
+	let mut op = AddLifetime::new(closure_lt.clone(), annotations);
 
 	op.visit_signature_mut(sig);
 
@@ -47,15 +48,10 @@ fn add_lifetimes(
 		return quote! {};
 	}
 
-	let closure_lt = closure_lifetime::<TokenStream>();
-
 	let clause = sig
 		.generics
 		.where_clause
-		.get_or_insert_with(|| WhereClause {
-			where_token: Default::default(),
-			predicates: Punctuated::new()
-		});
+		.get_or_insert_with(WhereClause::default);
 
 	let mut add_bounds = |params: &Punctuated<GenericParam, Token![,]>| {
 		for param in params {
@@ -186,7 +182,7 @@ pub fn make_explicit_closure(
 	});
 
 	let (args, _) = make_args(args);
-	let return_type = get_return_type(&func.sig.output);
+	let return_type = func.sig.output.to_type();
 	let closure_return_type = transform_return(types.clone(), return_type.to_token_stream());
 
 	func.sig.output = parse_quote! { -> #closure_return_type };
@@ -194,11 +190,15 @@ pub fn make_explicit_closure(
 	if let Some(block) = &mut func.block {
 		ReplaceSelf.visit_block_mut(block);
 
+		let cls = quote_spanned! { block.span() =>
+			| #destruct: #types, #args | -> #return_type #block
+		};
+
 		**block = parse_quote! {{
 			#closure_type::new(
 				#[allow(clippy::used_underscore_binding)]
 				{ #construct },
-				| #destruct: #types, #args | -> #return_type #block
+				#cls
 			)
 		}};
 
@@ -222,7 +222,7 @@ pub fn make_opaque_closure(
 ) -> Result<TokenStream> {
 	let addl_lifetimes = add_lifetimes(func.sig, func.env_generics, annotations);
 
-	let mut return_type = get_return_type(&func.sig.output);
+	let mut return_type = func.sig.output.to_type();
 	let closure_return_type = transform_return(&mut return_type);
 
 	let (args, args_types) = make_args(args);

@@ -5,7 +5,7 @@ pub fn try_change_task_output(output: &mut ReturnType) {
 		return;
 	};
 
-	let Type::Path(TypePath { qself: None, path }) = &mut **ty else {
+	let Type::Path(TypePath { qself: None, path }) = ty.as_mut() else {
 		return;
 	};
 
@@ -41,7 +41,7 @@ pub fn task_impl(
 		let doc = transform_trait_func(
 			&mut Function::from_trait_fn(true, None, func),
 			&task_doc_fn,
-			|func| transform_async(attrs.clone(), func)
+			|func| transform_async(attrs, func)
 		)?;
 
 		item.items.push(TraitItem::Fn(doc));

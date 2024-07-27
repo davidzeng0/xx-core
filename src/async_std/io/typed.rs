@@ -4,11 +4,9 @@ use std::fmt::{self, Arguments};
 use std::mem::size_of;
 use std::ops::BitAnd;
 
-use paste::paste;
-
 use super::*;
 use crate::io::typed::*;
-use crate::macros::macro_each;
+use crate::macros::{macro_each, paste};
 
 #[asynchronous]
 async fn read_bytes<R>(reader: &mut R, bytes: &mut [u8]) -> Result<usize>

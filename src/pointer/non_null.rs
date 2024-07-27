@@ -68,7 +68,7 @@ impl<T, const MUT: bool> NonNullPtr<T, MUT> {
 	}
 
 	/// # Safety
-	/// See [`<*const ()>::add`]
+	///  See the pointer `add` function
 	#[must_use]
 	pub const unsafe fn add(mut self, count: usize) -> Self {
 		/* Safety: guaranteed by caller */
@@ -77,7 +77,8 @@ impl<T, const MUT: bool> NonNullPtr<T, MUT> {
 	}
 
 	/// # Safety
-	/// See [`<*const ()>::sub`]
+	///
+	/// See the pointer `sub` function
 	#[must_use]
 	pub const unsafe fn sub(mut self, count: usize) -> Self {
 		/* Safety: guaranteed by caller */
@@ -86,7 +87,7 @@ impl<T, const MUT: bool> NonNullPtr<T, MUT> {
 	}
 
 	/// # Safety
-	/// See [`<*const ()>::offset`]
+	/// See the pointer `offset` function
 	#[must_use]
 	#[allow(clippy::impl_trait_in_params)]
 	pub unsafe fn offset(self, offset: impl internal::PointerOffset) -> Self {

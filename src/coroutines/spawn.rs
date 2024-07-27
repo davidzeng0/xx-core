@@ -101,7 +101,7 @@ impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWork
 	#[future]
 	unsafe fn spawn(env: E, task: T, request: _) -> SpawnResult<Output> {
 		#[cancel]
-		fn cancel(context: NonNull<Context>, request: _) -> Result<()> {
+		fn cancel(context: NonNull<Context>) -> Result<()> {
 			/* Safety: guaranteed by Future's contract */
 			unsafe { Context::interrupt(context.as_pointer()) }
 		}
@@ -134,7 +134,7 @@ impl<E: Environment, T: for<'ctx> Task<Output<'ctx> = Output>, Output> SpawnWork
 				/* Safety: pending task returns a valid pointer to a bool */
 				unsafe { ptr!(*is_async) = true };
 
-				Progress::Pending(cancel(context, request))
+				Progress::Pending(cancel(context))
 			}
 
 			/* Safety: must be either pending or done */
@@ -157,7 +157,7 @@ where
 	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	#[cancel]
-	fn cancel(context: NonNull<Context>, request: _) -> Result<()> {
+	fn cancel(context: NonNull<Context>) -> Result<()> {
 		/* use this fn to generate the cancel closure type */
 		Ok(())
 	}
@@ -178,7 +178,7 @@ where
 	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	#[cancel]
-	fn cancel(context: NonNull<Context>, request: _) -> Result<()> {
+	fn cancel(context: NonNull<Context>) -> Result<()> {
 		Ok(())
 	}
 
@@ -301,7 +301,7 @@ impl<Output> JoinHandle<Output> {
 	#[future]
 	fn join(self, request: _) -> SpawnResult<Output> {
 		#[cancel]
-		fn cancel(self, request: _) -> Result<()> {
+		fn cancel(self) -> Result<()> {
 			/* Safety: guaranteed by Future's contract. we may already be cancelling */
 			unsafe { self.try_cancel() }
 		}
@@ -312,7 +312,7 @@ impl<Output> JoinHandle<Output> {
 		/* we could make JoinHandle return Progress::Done instead of checking below,
 		 * but we want to avoid calling future::block_on if possible
 		 */
-		Progress::Pending(cancel(self, request))
+		Progress::Pending(cancel(self))
 	}
 
 	#[must_use]

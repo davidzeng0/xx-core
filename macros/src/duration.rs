@@ -8,6 +8,8 @@ enum Unit {
 	Day,
 
 	#[alt = "h"]
+	#[alt = "hr"]
+	#[alt = "hrs"]
 	#[alt = "hours"]
 	Hour,
 
@@ -56,12 +58,13 @@ const NAMED_SCALES: &[(Unit, f64)] = &[
 ];
 
 #[derive(Default)]
-struct ParsedDuration {
+struct Duration {
 	expr: Punctuated<Expr, Token![+]>,
+	seps: Vec<TokenStream>,
 	nanos: f64
 }
 
-impl ParsedDuration {
+impl Duration {
 	fn push(&mut self, scale: f64, scalar: Expr) -> Result<()> {
 		#[allow(clippy::cast_precision_loss)]
 		if let Expr::Lit(ExprLit { lit: Lit::Int(lit), .. }) = scalar {
@@ -76,40 +79,57 @@ impl ParsedDuration {
 
 		Ok(())
 	}
+
+	fn add_sep(&mut self, sep: Span) {
+		let sep = format_ident!("Sep{}", self.seps.len(), span = sep);
+
+		self.seps.push(quote! {
+			enum #sep {}
+		});
+	}
 }
 
-impl ToTokens for ParsedDuration {
+impl ToTokens for Duration {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
-		let nanos = self.nanos;
+		let (expr, seps, nanos) = (&self.expr, &self.seps, self.nanos);
 
-		self.expr.to_tokens(tokens);
+		let nanos = if nanos != 0.0 {
+			Some(if !expr.is_empty() {
+				quote! { + #nanos }
+			} else {
+				quote! { #nanos }
+			})
+		} else {
+			None
+		};
 
-		if nanos == 0.0 {
-			return;
-		}
+		quote! {{
+			const _: () = {
+				#(#seps)*
+			};
 
-		if !self.expr.is_empty() {
-			quote! { + }.to_tokens(tokens);
-		}
-
-		quote! { #nanos }.to_tokens(tokens);
+			#expr #nanos
+		}}
+		.to_tokens(tokens);
 	}
 }
 
 fn parse_named_units(input: ParseStream<'_>) -> Result<TokenStream> {
-	let mut parsed = ParsedDuration::default();
+	let mut parsed = Duration::default();
 
 	loop {
 		let scalar = input.parse::<Expr>()?;
 		let unit_ident = input.parse::<Ident>()?;
+
 		let unit: Unit = unit_ident
 			.to_string()
 			.parse()
-			.map_err(|()| Error::new_spanned(unit_ident, "Unknown unit"))?;
+			.map_err(|()| Error::new_spanned(&unit_ident, "Unknown unit"))?;
 		let scale = NAMED_SCALES[(unit as usize)..]
 			.iter()
 			.fold(1.0, |acc, value| acc * value.1);
 		parsed.push(scale, scalar)?;
+		parsed.add_sep(unit_ident.span());
 
 		if input.is_empty() {
 			break;
@@ -122,7 +142,7 @@ fn parse_named_units(input: ParseStream<'_>) -> Result<TokenStream> {
 const UNNAMED_SCALES: &[f64] = &[24.0, 60.0, 60.0, 1_000_000_000.0];
 
 fn parse_unnamed_units(input: ParseStream<'_>) -> Result<TokenStream> {
-	let mut parsed = ParsedDuration::default();
+	let mut parsed = Duration::default();
 	let mut scalars = Vec::new();
 
 	loop {
@@ -132,11 +152,13 @@ fn parse_unnamed_units(input: ParseStream<'_>) -> Result<TokenStream> {
 			break;
 		}
 
-		if !input.peek(Token![::]) {
-			input.parse::<Token![:]>()?;
+		let sep = if !input.peek(Token![::]) {
+			input.parse::<Token![:]>()?.span()
 		} else {
-			input.parse::<Token![::]>()?;
-		}
+			input.parse::<Token![::]>()?.span()
+		};
+
+		parsed.add_sep(sep);
 	}
 
 	if scalars.len() > UNNAMED_SCALES.len() {
@@ -182,17 +204,15 @@ fn parse_inverse(expr: Expr) -> Result<TokenStream> {
 	}})
 }
 
-pub fn duration(item: TokenStream) -> TokenStream {
-	try_expand(|| {
-		let nanos = if let Ok(expr) = parse2::<Expr>(item.clone()) {
-			parse_inverse(expr)?
-		} else {
-			parse_time_string.parse2(item)?
-		};
+pub fn duration(item: TokenStream) -> Result<TokenStream> {
+	let nanos = if let Ok(expr) = parse2::<Expr>(item.clone()) {
+		parse_inverse(expr)?
+	} else {
+		parse_time_string.parse2(item)?
+	};
 
-		Ok(quote! {{
-			#[allow(clippy::unnecessary_cast)]
-			::std::time::Duration::from_nanos((#nanos) as u64)
-		}})
-	})
+	Ok(quote! {{
+		#[allow(clippy::unnecessary_cast)]
+		::std::time::Duration::from_nanos((#nanos) as u64)
+	}})
 }

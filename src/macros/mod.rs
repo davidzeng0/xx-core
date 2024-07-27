@@ -1,17 +1,17 @@
 #[doc(inline)]
 pub use xx_core_macros::*;
 #[doc(inline)]
+pub use xx_macro_support::macros::*;
+pub use xx_macro_support::paste::paste;
+#[doc(inline)]
 pub use xx_macros::*;
 
 #[cfg(feature = "runtime")]
 pub mod runtime;
-pub mod traits;
 
 #[cfg(feature = "runtime")]
 #[doc(inline)]
 pub use runtime::*;
-#[doc(inline)]
-pub use traits::*;
 
 #[macro_export]
 macro_rules! macro_each {
