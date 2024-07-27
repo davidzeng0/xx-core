@@ -125,7 +125,7 @@ impl Log for Logger {
 }
 
 #[track_caller]
-fn panic_hook(info: &PanicHookInfo<'_>) {
+fn panic_hook(info: &PanicInfo<'_>) {
 	let msg = match info.payload().downcast_ref::<&'static str>() {
 		Some(s) => *s,
 		None => match info.payload().downcast_ref::<String>() {
