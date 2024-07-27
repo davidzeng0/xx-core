@@ -17,6 +17,7 @@ jobs:
         uses: actions/configure-pages@v4
       - name: Build docs
         run: |
+          rustup update
           cargo doc --no-deps
           echo '<meta http-equiv="refresh" content="0; url=xx-core">' > target/doc/index.html
           rm target/doc/.lock
