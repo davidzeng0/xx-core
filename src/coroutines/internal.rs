@@ -47,6 +47,7 @@ pub struct OpaqueAsyncFn<F, const T: usize>(F);
 pub trait DocDynSafe: Sized {}
 
 #[cfg(any(doc, feature = "xx-doc"))]
+#[doc(hidden)]
 impl<T> DocDynSafe for T {}
 
 #[cfg(any(doc, feature = "xx-doc"))]

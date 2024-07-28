@@ -8,15 +8,16 @@ Core modules.
 
 [Documentation](https://davidzeng0.github.io/xx-core) (Partially documented, still WIP)
 
-- Macros
-- Logging
-- Os
-- Fibers
-- Coroutines (see [this](src/coroutines/README.md))
 - Async library
+- Macros
+- Os
+- Fibers and coroutines (see [this](src/coroutines/README.md))
 - Data structures
 - Extension impls
-- Optimization hints
-- Error handling
 - Synchronization
 - Thread pool
+- Common utilities
+	- Logging
+	- Error handling
+	- Optimization hints
+	- Pointers, Cells

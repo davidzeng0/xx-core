@@ -1,24 +1,13 @@
 #![allow(clippy::module_name_repetitions)]
 
+use std::fmt;
 use std::hint::spin_loop;
 use std::ops::{Deref, DerefMut};
 use std::panic::{RefUnwindSafe, UnwindSafe};
-use std::{fmt, result};
+use std::sync::{LockResult, TryLockError, TryLockResult};
 
 use super::*;
 use crate::sync::poison::*;
-
-#[errors(?Debug + ?Display)]
-pub enum LockError<T> {
-	#[display(transparent)]
-	Poisoned(#[from] PoisonError<T>),
-
-	#[display("Lock failed: the operation would block and the current task is interrupted")]
-	#[kind = ErrorKind::Interrupted]
-	Interrupted
-}
-
-pub type LockResult<T> = result::Result<T, LockError<T>>;
 
 pub struct MutexGuard<'a, T: ?Sized> {
 	lock: &'a Mutex<T>,
@@ -158,14 +147,12 @@ impl<T: ?Sized> Mutex<T> {
 		}
 	}
 
-	/// # Panics
-	/// If the lock needs to wait and current worker is interrupted
-	pub async fn lock(&self) -> LockResult<MutexGuard<'_, T>> {
+	pub async fn lock(&self) -> TryLockResult<MutexGuard<'_, T>> {
 		if !self.try_lock_internal() {
 			let locked = self.lock_contended().await;
 
 			if !locked {
-				return Err(LockError::Interrupted);
+				return Err(TryLockError::WouldBlock);
 			}
 		}
 

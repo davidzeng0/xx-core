@@ -492,6 +492,10 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 	if closure_type == ClosureType::None {
 		func.sig.inputs.push(parse_quote! { #context });
 
+		if func.sig.unsafety.is_some() {
+			return Ok(());
+		}
+
 		/* caller must ensure we're allowed to suspend */
 		func.sig.unsafety = Some(Default::default());
 
@@ -500,54 +504,56 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 				#[deny(unsafe_op_in_unsafe_fn)]
 			});
 		}
-	} else {
-		let map_return_type = |rt: &mut Type| {
-			let return_type = rt.to_token_stream();
 
-			if let Some(lt) = &cx_lt {
-				ReplaceLifetime(lt).visit_type_mut(rt);
-			}
+		return Ok(());
+	}
 
-			return_type
-		};
+	let map_return_type = |rt: &mut Type| {
+		let return_type = rt.to_token_stream();
 
-		let impl_type = |rt: TokenStream| {
-			(
-				quote_spanned! { rt.span() =>
-					for<#for_lt> ::xx_core::coroutines::Task<Output<#for_lt> = #rt>
-				},
-				quote! { XXInternalAsyncSupportWrap }
-			)
-		};
-
-		let annotations = if closure_type != ClosureType::Trait && attrs.language.is_none() {
-			Some(Annotations::default())
-		} else {
-			None
-		};
-
-		make_opaque_closure(
-			func,
-			&[(context.ident, context.ty)],
-			map_return_type,
-			OpaqueClosureType::Custom(impl_type),
-			annotations
-		)?;
-
-		if let Some(block) = &mut func.block {
-			let task_impl = if let Some(lt) = &cx_lt {
-				lending_task_impl(lt, &func.sig.ident, &return_type)
-			} else {
-				task_impl(&func_attrs, &func.sig.ident)
-			};
-
-			let stmts = &block.stmts;
-
-			**block = parse_quote! {{
-				#task_impl
-				#(#stmts)*
-			}};
+		if let Some(lt) = &cx_lt {
+			ReplaceLifetime(lt).visit_type_mut(rt);
 		}
+
+		return_type
+	};
+
+	let impl_type = |rt: TokenStream| {
+		(
+			quote_spanned! { rt.span() =>
+				for<#for_lt> ::xx_core::coroutines::Task<Output<#for_lt> = #rt>
+			},
+			quote! { XXInternalAsyncSupportWrap }
+		)
+	};
+
+	let annotations = if closure_type != ClosureType::Trait && attrs.language.is_none() {
+		Some(Annotations::default())
+	} else {
+		None
+	};
+
+	make_opaque_closure(
+		func,
+		&[(context.ident, context.ty)],
+		map_return_type,
+		OpaqueClosureType::Custom(impl_type),
+		annotations
+	)?;
+
+	if let Some(block) = &mut func.block {
+		let task_impl = if let Some(lt) = &cx_lt {
+			lending_task_impl(lt, &func.sig.ident, &return_type)
+		} else {
+			task_impl(&func_attrs, &func.sig.ident)
+		};
+
+		let stmts = &block.stmts;
+
+		**block = parse_quote! {{
+			#task_impl
+			#(#stmts)*
+		}};
 	}
 
 	Ok(())
@@ -591,7 +597,7 @@ fn doc(kind: AsyncKind, func: &mut Function<'_>) -> Result<TokenStream> {
 		_ => ()
 	}
 
-	let (vis, block) = (&func.vis, doc_block(&func.block));
+	let (vis, block) = (&func.vis, doc_block(func));
 
 	Ok(quote! {
 		#(#attrs)*

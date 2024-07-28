@@ -1,7 +1,7 @@
 use std::mem::{forget, MaybeUninit};
 use std::result;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{Arc, PoisonError, RwLock, TryLockError, TryLockResult};
+use std::sync::{Arc, RwLock};
 
 use super::*;
 use crate::cell::UnsafeCell;

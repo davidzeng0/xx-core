@@ -1,16 +1,46 @@
 use super::*;
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Chain {
+	None,
+	Ref,
+	Owned
+}
+
 struct Function {
 	attrs: Vec<Attribute>,
 	ident: Ident,
 	vis: Visibility,
-	sig: Signature
+	sig: Signature,
+	chain: Chain
 }
 
 struct WrapperFunctions {
 	inner: Expr,
 	inner_mut: Expr,
 	functions: Vec<Function>
+}
+
+fn get_chain(sig: &Signature) -> Chain {
+	let Some(receiver) = sig.receiver() else {
+		return Chain::None;
+	};
+
+	if *receiver.ty != sig.output.to_type() {
+		return Chain::None;
+	}
+
+	if receiver.reference.is_some() {
+		return Chain::Ref;
+	}
+
+	if let Type::Path(TypePath { qself: None, path }) = receiver.ty.as_ref() {
+		if matches!(path.get_ident(), Some(ident) if ident == "Self") {
+			return Chain::Owned;
+		}
+	}
+
+	Chain::None
 }
 
 impl Parse for WrapperFunctions {
@@ -58,7 +88,7 @@ impl Parse for WrapperFunctions {
 			let attrs = input.call(Attribute::parse_outer)?;
 
 			let vis: Visibility = input.parse()?;
-			let sig: Signature;
+			let mut sig: Signature;
 			let mut ident: Option<Ident> = None;
 
 			if let Ok(fn_token) = input.parse::<Token![fn]>() {
@@ -98,50 +128,32 @@ impl Parse for WrapperFunctions {
 			let ident = ident.unwrap_or_else(|| sig.ident.clone());
 
 			input.parse::<Token![;]>()?;
-			functions.push(Function { attrs, ident, vis, sig });
+
+			let chain = get_chain(&sig);
+
+			if chain == Chain::Owned {
+				let Some(FnArg::Receiver(receiver)) = sig.inputs.first_mut() else {
+					unreachable!();
+				};
+
+				receiver.mutability = Some(Default::default());
+			}
+
+			functions.push(Function { attrs, ident, vis, sig, chain });
 		}
 
 		Ok(Self { inner, inner_mut, functions })
 	}
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Chain {
-	None,
-	Ref,
-	Owned
-}
-
-fn get_chain(func: &Function) -> Chain {
-	let Some(receiver) = func.sig.receiver() else {
-		return Chain::None;
-	};
-
-	if *receiver.ty != func.sig.output.to_type() {
-		return Chain::None;
-	}
-
-	if receiver.reference.is_some() {
-		return Chain::Ref;
-	}
-
-	if let Type::Path(TypePath { qself: None, path }) = receiver.ty.as_ref() {
-		if matches!(path.get_ident(), Some(ident) if ident == "Self") {
-			return Chain::Owned;
-		}
-	}
-
-	Chain::None
-}
-
 impl WrapperFunctions {
 	fn expand(&self) -> TokenStream {
 		let mut fns = Vec::new();
 
-		for function in &self.functions {
+		for func in &self.functions {
 			let mut call = Vec::new();
 
-			let inner = if function
+			let inner = if func
 				.sig
 				.receiver()
 				.is_some_and(|rec| rec.mutability.is_some())
@@ -151,31 +163,31 @@ impl WrapperFunctions {
 				&self.inner
 			};
 
-			call.push(quote_spanned! { function.sig.span() => (#inner) });
+			call.push(quote_spanned! { func.sig.span() => (#inner) });
 
-			let ident = &function.sig.ident;
-			let pats = function.sig.inputs.get_pats(false);
+			let ident = &func.sig.ident;
+			let pats = func.sig.inputs.get_pats(false);
 
-			call.push(quote_spanned! { function.sig.span() => .#ident });
+			call.push(quote_spanned! { func.sig.span() => .#ident });
 
-			if !function.sig.generics.params.is_empty() {
-				call.push(function.sig.generics.to_types_turbofish());
+			if !func.sig.generics.params.is_empty() {
+				call.push(func.sig.generics.to_types_turbofish());
 			}
 
 			call.push(quote_spanned! { pats.span() => (#pats) });
 
-			if function.sig.asyncness.is_some() {
-				call.push(quote_spanned! { function.sig.span() => .await });
+			if func.sig.asyncness.is_some() {
+				call.push(quote_spanned! { func.sig.span() => .await });
 			}
 
-			let mut sig = function.sig.clone();
-			let mut attrs = function.attrs.clone();
+			let mut sig = func.sig.clone();
+			let mut attrs = func.attrs.clone();
 
 			attrs.push(parse_quote! { #[inline(always)] });
 			attrs.push(parse_quote! { #[allow(unsafe_op_in_unsafe_fn)] });
-			sig.ident = function.ident.clone();
+			sig.ident = func.ident.clone();
 
-			let body = match get_chain(function) {
+			let body = match func.chain {
 				Chain::None => quote! { #(#call)* },
 				Chain::Ref => quote! { #(#call)*; self },
 				Chain::Owned => quote! { (#inner) = #(#call)*; self }
@@ -183,7 +195,7 @@ impl WrapperFunctions {
 
 			fns.push(ItemFn {
 				attrs,
-				vis: function.vis.clone(),
+				vis: func.vis.clone(),
 				sig,
 				block: parse_quote! {{ #body }}
 			});

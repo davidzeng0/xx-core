@@ -194,9 +194,14 @@ fn doc_fn(func: &mut Function<'_>) -> Result<TokenStream> {
 
 	let vis = &func.vis;
 
-	let block = match func.block {
-		Some(_) => quote! {{ ::xx_core::future::internal::get_future() }},
-		None => quote! { ; }
+	let block = match &mut func.block {
+		Some(block) => quote_spanned! { block.span() => {
+			::xx_core::future::internal::get_future()
+		}},
+
+		None => quote_spanned! { func.sig.span() =>
+			;
+		}
 	};
 
 	Ok(quote! {

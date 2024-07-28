@@ -81,36 +81,29 @@ impl<T> Request<T> {
 	}
 }
 
-/// A cancel token, allowing the user to cancel a running future
+/// A cancel token for cancelling an in progress future
+///
+/// Cancelling is on a best-effort basis. If the cancellation fails, the user
+/// should ignore the error and hope that the future completes in a reasonable
+/// amount of time. Unless running critically low on memory, or some other
+/// extreme edge case, cancellations should always succeed. Even if the cancel
+/// operation returns `Ok(())`, that does not mean a cancel was successful,
+/// because cancellations may be asynchronous.
+///
+/// After initiating a cancel, you must wait for the callback to be called
+/// before releasing any data passed into the future, including the request
 ///
 /// # Safety
-/// If `run` panics, the callback must not be called from within, and the future
-/// is assumed to still be in progress
+/// Implementers must not expect captured references to live until the cancel
+/// operation itself finishes, only until the callback is called.
+///
+/// If [`Cancel::run`] panics, the callback must not be called from within, and
+/// the future is assumed to still be in progress
 pub unsafe trait Cancel {
-	/// Cancelling is on a best-effort basis
+	/// Cancel the future
 	///
-	/// If the cancellation fails, the user should
-	/// ignore the error and hope that the future
-	/// completes in a reasonable amount of time
-	///
-	/// Unless running critically low on memory,
-	/// or some other extreme edge case, cancellations
-	/// should always succeed
-	///
-	/// Even if the cancel operation returns an Ok(),
-	/// that does not necessarily mean a cancel was successful,
-	/// because cancellations may be asynchronous
-	///
-	/// After cancelling, you must wait for the callback
-	/// to be called before releasing the [`Request`] or any data passed into
-	/// the future
-	///
-	/// Cancel implementers must not expect captured references to
-	/// live until the (possibly asynchronous) cancel finishes, only until the
-	/// future callback is called
-	///
-	/// It is possible that the callback is
-	/// immediately executed in the call to cancel
+	/// It is possible that the callback is immediately executed in the call to
+	/// cancel.
 	///
 	/// # Safety
 	/// The future must be in progress and this function cannot be called more
@@ -130,26 +123,47 @@ pub enum Progress<Output, C: Cancel> {
 	Done(Output)
 }
 
+/// A [`Future`] is a primitive for a computation that may not be available
+/// immediately.
+///
+/// When a future is created, it contains all the necessary information to
+/// perform an operation.
+///
+/// The future is started with a call to [`Future::run`]. A request is passed to
+/// this function as a callback for when the operation completes.
+///
+/// The future may complete immediately, in which case the callback will not be
+/// called. Otherwise, a [`Cancel`] token is returned to allow the caller to
+/// request the operation be cancelled.
+///
 /// # Safety
-/// Must not use any references once the callback is called
-/// If `run` panics, the future must not be in progress, and the callback must
-/// not be called
+/// Any pointers and references passed to the future by the caller must only
+/// live while the operation is active. Once the implementation executes the
+/// callback, they must not be accessed.
+///
+///
+/// If [`Future::run`] panics, the future is considered completed, implementers
+/// must no longer use any pointers or references, and the callback must not be
+/// called
+///
+/// If the future can be constructed with raw pointers and integers in safe
+/// code, the constructor must be marked as unsafe, as safe blocking
+/// functions cannot guarantee all lifetimes are captured and live for the
+/// blocking duration
 #[must_use = "Future does nothing until `Future::run` is called"]
 pub unsafe trait Future {
 	type Output;
 	type Cancel: Cancel;
 
-	/// Run the future
+	/// Run the future.
 	///
-	/// The user is responsible for ensuring all pointers/references passed
-	/// to the future implementer stays valid until the callback is called
-	///
-	/// If the future can be constructed with raw pointers and integers in safe
-	/// code, the constructor must be marked as unsafe, as safe blocking
-	/// functions cannot guarantee all lifetimes are captured and life for the
-	/// blocking duration
+	/// The `request` contains a user data pointer and a callback for when the
+	/// future completes. Changing the values after a future is started is
+	/// unspecified behavior and discouraged. If the request is completed from
+	/// another thread, it may result in undefined behavior.
 	///
 	/// # Safety
-	/// All pointers must live until the callback is called
+	/// The caller is responsible for ensuring all pointers/references passed
+	/// to the future implementer stays valid until the callback is called
 	unsafe fn run(self, request: ReqPtr<Self::Output>) -> Progress<Self::Output, Self::Cancel>;
 }

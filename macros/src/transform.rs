@@ -100,16 +100,21 @@ pub fn not_doc_attr() -> Attribute {
 	parse_quote! { #[cfg(not(any(doc, feature = "xx-doc")))] }
 }
 
-pub fn doc_block(block: &Option<&mut Block>) -> TokenStream {
-	match block {
-		Some(_) => quote! { { ::std::unreachable!() } },
-		None => quote! { ; }
+pub fn doc_block(func: &Function<'_>) -> TokenStream {
+	match &func.block {
+		Some(block) => quote_spanned! { block.span() => {
+			::std::unreachable!()
+		}},
+
+		None => quote_spanned! { func.sig.span() =>
+			;
+		}
 	}
 }
 
 pub fn default_doc(func: &mut Function<'_>) -> Result<TokenStream> {
 	let (attrs, vis, sig) = (&func.attrs, &func.vis, &func.sig);
-	let block = doc_block(&func.block);
+	let block = doc_block(func);
 
 	Ok(quote! {
 		#(#attrs)*

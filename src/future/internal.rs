@@ -44,6 +44,7 @@ pub fn get_future<Output>() -> impl Future<Output = Output> {
 		}
 	}
 
+	#[doc(hidden)]
 	unsafe impl Cancel for () {
 		unsafe fn run(self) -> Result<()> {
 			unreachable!();
