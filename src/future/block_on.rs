@@ -114,8 +114,8 @@ impl<Resume, Output> Pin for Waiter<Resume, Output> {
 
 /// Block on a future
 ///
-/// `block` is a function that doesn't return until the future finishes,
-/// and is called with the future's cancel handle
+/// `block` is called with the future's cancel handle when the future is in
+/// progress
 ///
 /// `resume` is a function that is called when the future finishes,
 /// to signal to the `block`ing function that it should return
@@ -125,6 +125,9 @@ impl<Resume, Output> Pin for Waiter<Resume, Output> {
 /// the future finishes, but may result in a memory leak
 ///
 /// `resume` must never unwind
+///
+/// `resume` may be called from another thread. The specifics are implementation
+/// specific
 pub unsafe fn block_on<Block, Resume, F>(block: Block, resume: Resume, future: F) -> F::Output
 where
 	Block: FnOnce(F::Cancel),
@@ -146,6 +149,91 @@ where
 		};
 	}
 
-	/* Safety: contract upheld by caller */
+	/* Safety: block must block until the future is complete */
 	unsafe { waiter.output() }
+}
+
+#[cfg(feature = "os")]
+#[allow(clippy::missing_panics_doc)]
+unsafe fn block_on_sync_impl<F, C>(future: F, should_cancel: C) -> F::Output
+where
+	F: Future,
+	C: Fn() -> bool
+{
+	use crate::debug;
+	use crate::impls::ResultExt;
+	use crate::os::futex::Notify;
+
+	let notify = Notify::new();
+
+	pin!(notify);
+
+	let block = |cancel: F::Cancel| {
+		let mut cancel = Some(cancel);
+
+		loop {
+			#[allow(clippy::unwrap_used)]
+			if cancel.is_some() && should_cancel() {
+				/* Safety: the future is in progress */
+				let result = unsafe { cancel.take().unwrap().run() };
+
+				if let Err(err) = result {
+					debug!(">> Cancel failed: {:?}", err);
+				}
+			}
+
+			/* Safety: pinned */
+			let notified = unsafe { notify.wait().expect_nounwind("Block failed") };
+
+			if notified {
+				break;
+			}
+		}
+	};
+
+	/* Safety: pinned */
+	let resume = || unsafe { notify.notify().expect_nounwind("Notify failed") };
+
+	/* Safety: we are blocked until the future completes */
+	unsafe { block_on(block, resume, future) }
+}
+
+#[cfg(not(feature = "os"))]
+unsafe fn block_on_sync_impl<F, C>(future: F, should_cancel: C) -> F::Output
+where
+	F: Future,
+	C: Fn() -> bool
+{
+	use std::thread;
+
+	let thread = thread::current();
+	let block = |cancel: F::Cancel| {
+		if should_cancel() {
+			/* Safety: the future is in progress */
+			unsafe { cancel.run() };
+		}
+
+		thread::park();
+	};
+
+	/* Safety: we are blocked until the future completes */
+	unsafe { block_on(block, move || thread.unpark(), future) }
+}
+
+/// Block the current thread while waiting for a future to complete. The future
+/// must be completed from another thread, and the current thread is
+/// unable to make any progress while waiting
+///
+/// `should_cancel` is a function that is called when the thread gets
+/// interrupted. If it returns `true`, the future is signalled to be cancelled
+///
+/// # Safety
+/// `should_cancel` must never unwind
+pub unsafe fn block_on_sync<F, C>(future: F, should_cancel: C) -> F::Output
+where
+	F: Future,
+	C: Fn() -> bool
+{
+	/* Safety: guaranteed by caller */
+	unsafe { block_on_sync_impl(future, should_cancel) }
 }

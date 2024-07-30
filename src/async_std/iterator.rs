@@ -1,3 +1,5 @@
+//! Traits, helpers, and type definitions for async iteration
+
 use super::*;
 
 /// The async equivalent of [`std::iter::Iterator`]

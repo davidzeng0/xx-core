@@ -154,6 +154,15 @@ macro_rules! common_impl {
 				let _ = self.tx_waiters.wait(|| self.spare_capacity() == 0).await;
 			}
 
+			/// # Safety
+			/// `should_cancel` must never unwind
+			pub unsafe fn blocking_send_wait<C>(&self, should_cancel: C) where C: Fn() -> bool {
+				let should_block = || self.spare_capacity() == 0;
+
+				/* Safety: guaranteed by caller */
+				let _ = unsafe { self.tx_waiters.blocking_wait(should_block, should_cancel) };
+			}
+
 			pub async fn send_closed(&self) -> result::Result<(), WaitError> {
 				self.tx_waiters.wait(|| true).await
 			}
@@ -268,10 +277,23 @@ impl<T> MCChannel<T> {
 	pub async fn recv_wait(&self) {
 		let _ = self.rx_waiters.wait(|| self.len() == 0).await;
 	}
+
+	/// # Safety
+	/// `should_cancel` must never unwind
+	pub unsafe fn blocking_recv_wait<C>(&self, should_cancel: C)
+	where
+		C: Fn() -> bool
+	{
+		let should_block = || self.len() == 0;
+
+		/* Safety: guaranteed by caller */
+		let _ = unsafe { self.rx_waiters.blocking_wait(should_block, should_cancel) };
+	}
 }
 
 macro_rules! channel_impl {
-	($channel:ident) => {
+	($channel:ident, $name:literal) => {
+		#[doc = concat!("The receiver of a `", $name, "` channel")]
 		pub struct Receiver<T> {
 			channel: Arc<$channel<T>>
 		}
@@ -284,6 +306,7 @@ macro_rules! channel_impl {
 				Self { channel }
 			}
 
+			/// Attempt to receive a value in the channel without suspending
 			pub fn try_recv(&self) -> RecvResult<T> {
 				match self.channel.try_recv() {
 					Some(value) => Ok(value),
@@ -291,6 +314,7 @@ macro_rules! channel_impl {
 				}
 			}
 
+			/// Receive a value, suspending if the channel is currently empty
 			pub async fn recv(&self) -> RecvResult<T> {
 				let mut backoff = Backoff::new();
 
@@ -301,7 +325,8 @@ macro_rules! channel_impl {
 						return result;
 					}
 
-					if backoff.is_completed() {
+					#[allow(clippy::arithmetic_side_effects)]
+					if backoff.is_completed() || !acquire_budget(backoff.step() as u32 + 1).await {
 						self.channel.recv_wait().await;
 
 						backoff.reset();
@@ -311,16 +336,69 @@ macro_rules! channel_impl {
 				}
 			}
 
+			/// Receive a value synchronously, suspending the current thread if the
+			/// channel is currently empty. Do **not** call this function from a thread
+			/// that is driving async tasks
+			///
+			/// `should_cancel` is a function that is called when the thread gets
+			/// interrupted. If it returns `true`, the operation is signalled to be
+			/// cancelled
+			///
+			/// # Safety
+			/// `should_cancel` must never unwind
+			pub unsafe fn blocking_recv_cancellable<C>(&self, should_cancel: C) -> RecvResult<T>
+			where
+				C: Fn() -> bool
+			{
+				let mut backoff = Backoff::new();
+
+				loop {
+					let result = self.try_recv();
+
+					if !matches!(result, Err(RecvError::Empty)) || should_cancel() {
+						return result;
+					}
+
+					if backoff.is_completed() {
+						/* Safety: guaranteed by caller */
+						unsafe { self.channel.blocking_recv_wait(&should_cancel) };
+
+						backoff.reset();
+					} else {
+						backoff.snooze();
+					}
+				}
+			}
+
+			/// A non-cancellable version of [`blocking_recv_cancellable`]. Do **not**
+			/// call this function from a thread that is driving async tasks
+			///
+			/// [`blocking_recv_cancellable`]: Self::blocking_recv_cancellable
+			pub fn blocking_recv(&self) -> RecvResult<T> {
+				/* Safety: function does not unwind */
+				unsafe { self.blocking_recv_cancellable(|| false) }
+			}
+
+			/// Count the number of items in the channel. Under contention, this is may
+			/// report a higher count than actual
 			#[must_use]
 			pub fn len(&self) -> usize {
 				self.channel.len()
 			}
 
+			/// Returns `true` if the channel is empty
 			#[must_use]
 			pub fn is_empty(&self) -> bool {
 				self.len() == 0
 			}
 
+			/// Close the channel, preventing any future messages from being sent
+			///
+			/// Continue calling [`recv`] or [`try_recv`] to exhaust any remaining
+			/// messages in the channel
+			///
+			/// [`recv`]: Receiver::recv
+			/// [`try_recv`]: Receiver::try_recv
 			pub fn close(&self) {
 				self.channel.close_send();
 			}
@@ -332,6 +410,7 @@ macro_rules! channel_impl {
 			}
 		}
 
+		#[doc = concat!("The sender of a `", $name, "` channel")]
 		pub struct Sender<T> {
 			channel: Arc<$channel<T>>
 		}
@@ -344,13 +423,19 @@ macro_rules! channel_impl {
 				Self { channel }
 			}
 
+			/// Attempt to send a value to the channel without suspending
 			pub fn try_send(&self, value: T) -> SendResult<T> {
+				if self.is_closed() {
+					return Err(SendError::Closed(value));
+				}
+
 				match self.channel.try_send(value) {
 					Ok(()) => Ok(()),
 					Err(value) => Err(SendError::new(value, self.channel.is_send_closed()))
 				}
 			}
 
+			/// Send a value, suspending if the channel is currently full
 			pub async fn send(&self, mut value: T) -> SendResult<T> {
 				let mut backoff = Backoff::new();
 
@@ -362,7 +447,8 @@ macro_rules! channel_impl {
 						Err(SendError::Full(v)) => value = v
 					}
 
-					if backoff.is_completed() {
+					#[allow(clippy::arithmetic_side_effects)]
+					if backoff.is_completed() || !acquire_budget(backoff.step() as u32 + 1).await {
 						self.channel.send_wait().await;
 
 						backoff.reset();
@@ -372,21 +458,75 @@ macro_rules! channel_impl {
 				}
 			}
 
+			/// Send a value synchronously, suspending the current thread if the channel
+			/// is currently full. Do **not** call this function from a thread that is
+			/// driving async tasks
+			///
+			/// `should_cancel` is a function that is called when the thread gets
+			/// interrupted. If it returns `true`, the operation is signalled to be
+			/// cancelled
+			///
+			/// # Safety
+			/// `should_cancel` must never unwind
+			pub unsafe fn blocking_send_cancellable<C>(
+				&self, mut value: T, should_cancel: C
+			) -> SendResult<T>
+			where
+				C: Fn() -> bool
+			{
+				let mut backoff = Backoff::new();
+
+				loop {
+					match self.try_send(value) {
+						Ok(()) => return Ok(()),
+						Err(err @ SendError::Closed(_)) => return Err(err),
+						result if should_cancel() => return result,
+						Err(SendError::Full(v)) => value = v
+					}
+
+					if backoff.is_completed() {
+						/* Safety: guaranteed by caller */
+						unsafe { self.channel.blocking_send_wait(&should_cancel) };
+
+						backoff.reset();
+					} else {
+						backoff.snooze();
+					}
+				}
+			}
+
+			/// A non-cancellable version of [`blocking_send_cancellable`]. Do **not**
+			/// call this function from a thread that is driving async tasks
+			///
+			/// [`blocking_send_cancellable`]: Self::blocking_send_cancellable
+			pub fn blocking_send(&self, value: T) -> SendResult<T> {
+				/* Safety: function does not unwind */
+				unsafe { self.blocking_send_cancellable(value, || false) }
+			}
+
+			/// The remaining space available in the channel for sends. Under
+			/// contention, this may report a higher count than actual
 			#[must_use]
 			pub fn spare_capacity(&self) -> usize {
 				self.channel.spare_capacity()
 			}
 
+			/// Returns `true` if the channel is full
 			#[must_use]
 			pub fn is_full(&self) -> bool {
 				self.spare_capacity() == 0
 			}
 
+			/// Returns `true` if the channel is closed
 			#[must_use]
 			pub fn is_closed(&self) -> bool {
 				self.channel.is_send_closed()
 			}
 
+			/// Wait for the channel to be closed. This is useful to stop an in progress
+			/// computation if the receivers no longer needs the value
+			///
+			/// This can return `false` if the current task is interrupted
 			pub async fn closed(&mut self) -> bool {
 				let mut closed;
 
@@ -414,6 +554,8 @@ macro_rules! channel_impl {
 			}
 		}
 
+		/// Create a bounded channel with a capacity of `size`. See [the module
+		/// documentation](`self`) for more information
 		#[must_use]
 		pub fn bounded<T>(size: usize) -> (Sender<T>, Receiver<T>) {
 			let channel = Arc::new($channel::new(size));

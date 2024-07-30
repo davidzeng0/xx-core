@@ -1,3 +1,45 @@
+//! A multi-producer, multi-consumer broadcast. Each sent value is seen by all
+//! consumers.
+//!
+//! Create a channel using the [`channel()`] function, which returns a
+//! [`Sender`] and [`Receiver`] pair used to send and receive the value,
+//! respectively.
+//!
+//! If the senders send faster than any single receiver can receive, that
+//! receiver becomes lagged. A [`RecvError::Lagged`] error is returned with the
+//! number of messages dropped. The receiver will start receiving from the
+//! oldest message that is still in the channel.
+//!
+//! # Example
+//!
+//! ```
+//! let (tx, rx) = mpsc::bounded(4);
+//! let rx2 = tx.subscribe();
+//!
+//! spawn(async move {
+//! 	assert_eq!(rx.recv().await, "hello");
+//! 	assert_eq!(rx.recv().await, "world");
+//! })
+//! .await;
+//!
+//! spawn(async move {
+//! 	assert_eq!(rx2.recv().await, "hello");
+//! 	assert_eq!(rx2.recv().await, "world");
+//! })
+//! .await;
+//!
+//! tx.send("hello").await;
+//! tx.send("world").await;
+//! ```
+//!
+//! When all [`Sender`]s have been dropped and after the remaining messages in
+//! the channel have been received, further calls to [`Receiver::recv`] will
+//! return [`RecvError::Closed`]
+//!
+//! When all [`Receiver`]s have been dropped, further calls to [`Sender::send`]
+//! will return a [`SendError`]. A receiver can be subscribed, reopening
+//! the channel.
+
 use std::mem::replace;
 
 use super::*;
@@ -88,19 +130,25 @@ unsafe impl<T: Send> Send for Channel<T> {}
 /* Safety: T is send */
 unsafe impl<T: Send> Sync for Channel<T> {}
 
+/// The error returned from a call to `recv`
 #[errors]
 pub enum RecvError {
+	/// The channel is currently empty. Note that async `recv`s can return this
+	/// variant if the current task gets interrupted
 	#[display("Channel empty")]
 	#[kind = ErrorKind::WouldBlock]
 	Empty,
 
+	/// The channel is closed
 	#[display("Channel closed")]
 	Closed,
 
+	/// The receiver lagged and lost some messages
 	#[display("Channel lagged by {}", f0)]
 	Lagged(usize)
 }
 
+/// The error returned from a call to `send`
 #[errors(?Debug + ?Display)]
 #[fmt("Channel closed")]
 pub struct SendError<T>(pub T);
@@ -108,6 +156,7 @@ pub struct SendError<T>(pub T);
 type RecvResult<T> = result::Result<T, RecvError>;
 type SendResult<T> = result::Result<(), SendError<T>>;
 
+/// The receivers for a broadcast channel
 pub struct Receiver<T> {
 	channel: Arc<Channel<T>>,
 	pos: usize
@@ -123,15 +172,18 @@ impl<T: Clone> Receiver<T> {
 		Self { channel, pos: tail }
 	}
 
+	/// Create a new receiver that will receive messages sent after this call
 	#[must_use]
 	pub fn resubscribe(&self) -> Self {
 		Self::new(self.channel.clone())
 	}
 
+	/// Reset the current receiver to receive messages sent after this call
 	pub fn synchronize(&mut self) {
 		self.pos = self.channel.tail.load(Ordering::SeqCst);
 	}
 
+	/// Attempt to receive a value in the channel without suspending
 	#[allow(clippy::missing_panics_doc, clippy::comparison_chain)]
 	pub fn try_recv(&mut self) -> RecvResult<T> {
 		let mask = self.channel.mask();
@@ -187,6 +239,7 @@ impl<T: Clone> Receiver<T> {
 		}
 	}
 
+	/// Receive a value, suspending if the channel is currently empty
 	pub async fn recv(&mut self) -> RecvResult<T> {
 		let mut backoff = Backoff::new();
 
@@ -197,7 +250,8 @@ impl<T: Clone> Receiver<T> {
 				return result;
 			}
 
-			if backoff.is_completed() {
+			#[allow(clippy::arithmetic_side_effects)]
+			if backoff.is_completed() || !acquire_budget(backoff.step() as u32 + 1).await {
 				let should_block = || self.channel.tail.load(Ordering::SeqCst) == self.pos;
 				let _ = self.channel.rx_waiters.wait(should_block).await;
 
@@ -207,6 +261,55 @@ impl<T: Clone> Receiver<T> {
 			}
 		}
 	}
+
+	/// Receive a value synchronously, suspending the current thread if the
+	/// channel is currently empty. Do **not** call this function from a thread
+	/// that is driving async tasks
+	///
+	/// `should_cancel` is a function that is called when the thread gets
+	/// interrupted. If it returns `true`, the operation is signalled to be
+	/// cancelled
+	///
+	/// # Safety
+	/// `should_cancel` must never unwind
+	pub unsafe fn blocking_recv_cancellable<C>(&mut self, should_cancel: C) -> RecvResult<T>
+	where
+		C: Fn() -> bool
+	{
+		let mut backoff = Backoff::new();
+
+		loop {
+			let result = self.try_recv();
+
+			if !matches!(result, Err(RecvError::Empty)) || should_cancel() {
+				return result;
+			}
+
+			if backoff.is_completed() {
+				let should_block = || self.channel.tail.load(Ordering::SeqCst) == self.pos;
+
+				/* Safety: guaranteed by caller */
+				let _ = unsafe {
+					self.channel
+						.rx_waiters
+						.blocking_wait(should_block, &should_cancel)
+				};
+
+				backoff.reset();
+			} else {
+				backoff.snooze();
+			}
+		}
+	}
+
+	/// A non-cancellable version of [`blocking_recv_cancellable`]. Do **not**
+	/// call this function from a thread that is driving async tasks
+	///
+	/// [`blocking_recv_cancellable`]: Self::blocking_recv_cancellable
+	pub fn blocking_recv(&mut self) -> RecvResult<T> {
+		/* Safety: function does not unwind */
+		unsafe { self.blocking_recv_cancellable(|| false) }
+	}
 }
 
 impl<T> Drop for Receiver<T> {
@@ -215,6 +318,7 @@ impl<T> Drop for Receiver<T> {
 	}
 }
 
+/// The sender for a broadcast channel
 pub struct Sender<T> {
 	channel: Arc<Channel<T>>
 }
@@ -227,6 +331,8 @@ impl<T> Sender<T> {
 		Self { channel }
 	}
 
+	/// Send a value to the channel. If the channel is closed, the return value
+	/// is an `Err(value)`
 	#[allow(clippy::missing_panics_doc, clippy::unwrap_used)]
 	pub fn send(&self, value: T) -> SendResult<T> {
 		let mask = self.channel.mask();
@@ -261,6 +367,7 @@ impl<T> Sender<T> {
 		Ok(())
 	}
 
+	/// Create a new [`Receiver`] that receives messages sent after this call
 	#[must_use]
 	pub fn subscribe(&self) -> Receiver<T>
 	where
@@ -284,6 +391,8 @@ impl<T> Drop for Sender<T> {
 	}
 }
 
+/// Create a broadcast channel with a capacity of `size`. See [the module
+/// documentation](`self`) for more information
 #[must_use]
 pub fn channel<T: Clone>(size: usize) -> (Sender<T>, Receiver<T>) {
 	let channel = Arc::new(Channel::new(size));

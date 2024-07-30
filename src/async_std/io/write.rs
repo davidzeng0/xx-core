@@ -1,3 +1,5 @@
+//! Traits, helpers, and type definitions for writing to I/O
+
 use super::*;
 
 #[asynchronous]

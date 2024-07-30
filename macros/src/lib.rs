@@ -212,6 +212,13 @@ declare_attribute_macro! {
 	/// #[syscall_define(OPEN)]
 	/// pub fn open(filename: &CStr, flags: u32, mode: u32) -> OsResult<OwnedFd>;
 	/// ```
+	///
+	/// The macro defines two functions. One with the original signature,
+	/// and a raw, unsafe version with less constraints
+	///
+	/// ```
+	/// pub unsafe fn open_raw(filename: Ptr<CStr>, flags: u32, mode: u32) -> OsResult<OwnedFd>;
+	/// ```
 	pub fn syscall_define(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 		syscall::syscall_define(attr, item)
 	}

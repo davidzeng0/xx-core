@@ -1,3 +1,5 @@
+//! Contains the [`BufReader`] implementation
+
 use std::ops::Range;
 
 use super::*;

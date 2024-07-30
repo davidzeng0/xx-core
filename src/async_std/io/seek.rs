@@ -1,3 +1,5 @@
+//! Contains traits and utilities for seeking a stream
+
 use super::*;
 
 /// The async equivalent of [`std::io::Seek`]

@@ -1,3 +1,5 @@
+//! Implementations of common async fundamentals, tools, and utilities
+
 use crate::coroutines::*;
 use crate::error::*;
 

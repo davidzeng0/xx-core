@@ -20,6 +20,7 @@ pub mod epoll;
 pub mod error;
 pub mod eventfd;
 pub mod fcntl;
+pub mod futex;
 pub mod inet;
 pub mod io_uring;
 pub mod iovec;

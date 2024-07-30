@@ -1,3 +1,5 @@
+//! Traits, helpers, and type definitions for reading from I/O
+
 use memchr::memchr;
 
 use super::*;
@@ -531,6 +533,7 @@ macro_rules! bufread_wrapper {
 
 pub use bufread_wrapper;
 
+/// Utility trait for converting a [`BufRead`] instance to a [`Lines`]
 pub trait IntoLines: BufReadSealed {
 	/// Returns an iterator over the lines of this reader
 	///
@@ -545,13 +548,12 @@ pub trait IntoLines: BufReadSealed {
 
 impl<T: BufReadSealed> IntoLines for T {}
 
-pub struct Lines<R> {
-	reader: R
-}
+/// An iterator over the lines of an instance of [`BufRead`]
+pub struct Lines<R>(R);
 
 impl<R: BufRead> Lines<R> {
 	pub const fn new(reader: R) -> Self {
-		Self { reader }
+		Self(reader)
 	}
 }
 
@@ -561,7 +563,7 @@ impl<R: BufRead> AsyncIterator for Lines<R> {
 
 	async fn next(&mut self) -> Option<Self::Item> {
 		let mut line = String::new();
-		let read = self.reader.read_line(&mut line).await.transpose()?;
+		let read = self.0.read_line(&mut line).await.transpose()?;
 
 		Some(read.map(|_| line))
 	}

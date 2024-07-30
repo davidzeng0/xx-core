@@ -1,3 +1,5 @@
+//! Contains traits for splitting a stream into read and write halves
+
 use super::*;
 
 /// Splits a stream into a borrowed read half and a write half.

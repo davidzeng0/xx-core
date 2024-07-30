@@ -1,9 +1,13 @@
+//! Traits, helpers, and type definitions for reading and writing typed data to
+//! and from I/O
+
 use std::fmt::{self, Arguments};
 use std::mem::size_of;
 use std::ops::BitAnd;
 
 use super::*;
 use crate::io::typed::*;
+pub use crate::io::typed::{FromBytes, IntoBytes};
 use crate::macros::{macro_each, paste};
 
 #[asynchronous]

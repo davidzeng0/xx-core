@@ -130,6 +130,20 @@ impl<T> AtomicWaiter<T> {
 		block_on_thread_safe(unsafe { self.suspend(should_block) }).await
 	}
 
+	/// # Safety
+	/// `should_block` and `should_cancel` must never unwind
+	pub unsafe fn blocking_wait<F, C>(&self, should_block: F, should_cancel: C) -> WaitResult<T>
+	where
+		F: FnOnce() -> bool,
+		C: Fn() -> bool
+	{
+		/* Safety: guaranteed by caller */
+		let suspend = unsafe { self.suspend(should_block) };
+
+		/* Safety: guaranteed by caller */
+		unsafe { block_on_sync(suspend, should_cancel) }
+	}
+
 	fn wake_internal(&self, new_waiter: ReqPtr<WaitResult<T>>, value: T) -> bool {
 		let prev = self.set_waiter(new_waiter);
 
@@ -256,6 +270,34 @@ impl<T: Clone> RawWaitList<T> {
 
 		/* Safety: waiter is new, pinned, and lives until it completes */
 		let result = block_on(unsafe { self.suspend(&mut waiter) }).await;
+
+		#[allow(clippy::arithmetic_side_effects)]
+		self.count.update(|count| count - 1);
+
+		result.map(join)
+	}
+
+	/// # Safety
+	/// `should_cancel` must never unwind
+	pub unsafe fn blocking_wait<C>(&self, should_cancel: C) -> WaitResult<T>
+	where
+		C: Fn() -> bool
+	{
+		if self.closed.get() {
+			return Err(WaitError::Closed);
+		}
+
+		/* we don't really care if it overflows */
+		#[allow(clippy::arithmetic_side_effects)]
+		self.count.update(|count| count + 1);
+
+		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
+
+		/* Safety: guaranteed by caller */
+		let suspend = unsafe { self.suspend(&mut waiter) };
+
+		/* Safety: guaranteed by caller */
+		let result = unsafe { block_on_sync(suspend, should_cancel) };
 
 		#[allow(clippy::arithmetic_side_effects)]
 		self.count.update(|count| count - 1);
@@ -445,6 +487,27 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 
 		/* Safety: waiter is new, pinned, and lives until it completes */
 		let result = block_on_thread_safe(unsafe { self.suspend(&mut waiter, should_block) }).await;
+
+		drop(counter);
+
+		result.map(join)
+	}
+
+	/// # Safety
+	/// `should_cancel` must never unwind
+	pub unsafe fn blocking_wait<F, C>(&self, should_block: F, should_cancel: C) -> WaitResult<T>
+	where
+		F: FnOnce() -> bool,
+		C: Fn() -> bool
+	{
+		let counter = Counter::new(&self.count);
+		let mut waiter = Waiter { node: Node::new(), request: Ptr::null() };
+
+		/* Safety: guaranteed by caller */
+		let suspend = unsafe { self.suspend(&mut waiter, should_block) };
+
+		/* Safety: guaranteed by caller */
+		let result = unsafe { block_on_sync(suspend, should_cancel) };
 
 		drop(counter);
 

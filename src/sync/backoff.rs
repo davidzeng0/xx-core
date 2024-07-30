@@ -52,6 +52,11 @@ impl Backoff {
 	pub const fn is_completed(&self) -> bool {
 		self.step > YIELD_LIMIT
 	}
+
+	#[must_use]
+	pub const fn step(&self) -> u16 {
+		self.step
+	}
 }
 
 impl Default for Backoff {

@@ -81,7 +81,7 @@ macro_rules! impl_primitive_from {
 	};
 }
 
-macro_each!(impl_primitive_from, u32, i32, usize, isize);
+macro_each!(impl_primitive_from, u32, i32, u64, i64, usize, isize);
 
 impl From<SyscallResult> for OsResult<OwnedFd> {
 	fn from(val: SyscallResult) -> Self {

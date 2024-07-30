@@ -1,3 +1,13 @@
+//! Contains the different channel implementations
+//!
+//! See the individual modules below for more information
+//!
+//! [`oneshot`]: send a single message to another task
+//!
+//! [`mpmc`]: a highly efficient multi-producer multi-consumer queue
+//!
+//! [`channel::mpsc`]: the same as mpmc for now
+
 use super::*;
 use crate::sync::{Backoff, CachePadded};
 

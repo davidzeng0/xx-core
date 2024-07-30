@@ -1,5 +1,6 @@
 #![warn(unsafe_code)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+//! The async equivalent of [`std::io`]
 
 use std::io::{IoSlice, IoSliceMut, SeekFrom};
 use std::mem::{take, transmute};
