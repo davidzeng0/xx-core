@@ -76,7 +76,6 @@ define_struct! {
 	}
 }
 
-#[allow(clippy::module_name_repetitions)]
 pub fn epoll_create(_size: u32) -> OsResult<OwnedFd> {
 	epoll_create1(BitFlags::default())
 }
@@ -89,7 +88,6 @@ pub fn epoll_ctl(
 	epfd: BorrowedFd<'_>, op: ControlOp, fd: BorrowedFd<'_>, event: &mut Event
 ) -> OsResult<()>;
 
-#[allow(clippy::module_name_repetitions)]
 pub fn epoll_wait(fd: BorrowedFd<'_>, events: &mut [Event], timeout: i32) -> OsResult<u32> {
 	epoll_pwait(fd, events, timeout, None)
 }

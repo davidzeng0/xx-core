@@ -171,7 +171,7 @@ fn get_raw_args(
 			return Err(Error::new_spanned(&ty.pat, "Pattern not allowed here"));
 		};
 
-		let array = ty.attrs.remove_if("array", |_| true);
+		let array = ty.attrs.remove_any("array");
 		let mut pat_ty = ty.clone();
 
 		let Some(array) = array else {

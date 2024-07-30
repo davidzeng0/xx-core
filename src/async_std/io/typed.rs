@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::fmt::{self, Arguments};
 use std::mem::size_of;
 use std::ops::BitAnd;
@@ -17,12 +15,8 @@ where
 
 	length_check(bytes, read);
 
-	if read < bytes.len() {
-		check_interrupt().await?;
-
-		if read != 0 {
-			return Err(short_io_error_unless_interrupt().await);
-		}
+	if read != 0 && read < bytes.len() {
+		return Err(short_io_error_unless_interrupt().await);
 	}
 
 	Ok(read)
@@ -40,9 +34,8 @@ where
 }
 
 #[asynchronous]
-#[inline(never)]
 #[cold]
-async fn read_bytes_cold<R>(reader: &mut R, bytes: &mut [u8]) -> Result<usize>
+async fn buf_get_bytes_cold<R>(reader: &mut R, bytes: &mut [u8]) -> Result<usize>
 where
 	R: Read + ?Sized
 {
@@ -51,16 +44,14 @@ where
 
 #[asynchronous]
 #[inline(always)]
-async fn buf_load_bytes<R, const N: usize>(
-	reader: &mut R, consume: usize
-) -> Result<Option<[u8; N]>>
+#[allow(clippy::branches_sharing_code)]
+async fn buf_get_bytes<R, const N: usize>(reader: &mut R, consume: usize) -> Result<Option<[u8; N]>>
 where
 	R: BufRead + ?Sized
 {
 	let available = reader.buffer();
 
 	/* bytes variable is separated to improve optimizations */
-	#[allow(clippy::branches_sharing_code)]
 	Ok(if available.len() >= N {
 		let mut bytes = [0u8; N];
 
@@ -73,7 +64,7 @@ where
 		Some(bytes)
 	} else {
 		let mut bytes = [0u8; N];
-		let success = read_bytes_cold(reader, &mut bytes[..consume]).await? != 0;
+		let success = buf_get_bytes_cold(reader, &mut bytes[..consume]).await? != 0;
 
 		success.then_some(bytes)
 	})
@@ -84,7 +75,7 @@ async fn buf_read_bytes<R, const N: usize>(reader: &mut R) -> Result<Option<[u8;
 where
 	R: BufRead + ?Sized
 {
-	buf_load_bytes(reader, N).await
+	buf_get_bytes(reader, N).await
 }
 
 trait VInt<const N: usize>: BitAnd<Self, Output = Self> + Sized {
@@ -135,6 +126,7 @@ where
 		value & mask
 	} else {
 		let value = T::from_be_bytes(bytes);
+
 		/* BE 0ABC: ABCX -> ABCX -> zero low bits */
 		value.wrapping_shr(shift)
 	}
@@ -149,13 +141,13 @@ where
 	R: BufRead + ?Sized,
 	T: VInt<N>
 {
-	if unlikely(size == 0 || size > N) {
-		assert!(size == 0, "Invalid size ({}) for variably sized int", size);
-
+	if size == 0 {
 		return Ok(Some(T::ZERO));
 	}
 
-	buf_load_bytes(reader, size)
+	assert!(size <= N, "Invalid size ({}) for variably sized int", size);
+
+	buf_get_bytes(reader, size)
 		.await
 		.map(|c| c.map(|b| vint_from_bytes(b, size, le)))
 }
@@ -166,11 +158,11 @@ where
 	R: Read + ?Sized,
 	T: VInt<N>
 {
-	if unlikely(size == 0 || size > N) {
-		assert!(size == 0, "Invalid size ({}) for variably sized int", size);
-
+	if size == 0 {
 		return Ok(Some(T::ZERO));
 	}
+
+	assert!(size <= N, "Invalid size ({}) for variably sized int", size);
 
 	let mut bytes = [0u8; N];
 	let success = read_bytes(reader, &mut bytes[..size]).await? != 0;
@@ -181,25 +173,61 @@ where
 macro_rules! read_vint_type {
 	($type:ty, $func:ident) => {
 		paste! {
-			#[inline(always)]
+			#[doc = concat!(
+				"Read a variable length int up to `",
+				stringify!($type),
+				"::MAX` from the stream in little endian order",
+				"returning `None` if EOF and no bytes were read"
+			)]
+			/// # Cancel safety
+			///
+			/// This function is not cancel safe. Partial reads will lead to data loss
+			#[inline]
 			#[asynchronous(traitext)]
 			async fn [< try_read_vint_ $type _le >](&mut self, size: usize) -> Result<Option<$type>> {
 				[< $func >](self, size, true).await
 			}
 
-			#[inline(always)]
+			#[doc = concat!(
+				"Read a variable length int up to `",
+				stringify!($type),
+				"::MAX` from the stream in big endian order",
+				"returning `None` if EOF and no bytes were read"
+			)]
+			/// # Cancel safety
+			///
+			/// This function is not cancel safe. Partial reads will lead to data loss
+			#[inline]
 			#[asynchronous(traitext)]
 			async fn [< try_read_vint_ $type _be >](&mut self, size: usize) -> Result<Option<$type>> {
 				[< $func >](self, size, false).await
 			}
 
-			#[inline(always)]
+			#[doc = concat!(
+				"Read a variable length int up to `",
+				stringify!($type),
+				"::MAX` from the stream in little endian order",
+				"returning an error on EOF"
+			)]
+			/// # Cancel safety
+			///
+			/// This function is not cancel safe. Partial reads will lead to data loss
+			#[inline]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _le >](&mut self, size: usize) -> Result<$type> {
 				[< $func >](self, size, true).await?.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 			}
 
-			#[inline(always)]
+			#[doc = concat!(
+				"Read a variable length int up to `",
+				stringify!($type),
+				"::MAX` from the stream in big endian order",
+				"returning an error on EOF"
+			)]
+			/// # Cancel safety
+			///
+			/// This function is not cancel safe. Partial reads will lead to data loss
+			#[inline]
 			#[asynchronous(traitext)]
 			async fn [< read_vint_ $type _be >](&mut self, size: usize) -> Result<$type> {
 				[< $func >](self, size, false).await?.ok_or_else(|| ErrorKind::UnexpectedEof.into())
@@ -219,7 +247,13 @@ macro_rules! read_vint_impl {
 
 macro_rules! read_vfloat_impl {
 	() => {
-		#[inline(always)]
+		/// Read an `f32` or `f64` from the stream in little endian order, returning
+		/// `None` if EOF and no bytes were read
+		///
+		/// # Cancel safety
+		///
+		/// This function is not cancel safe. Partial reads will lead to data loss
+		#[inline]
 		#[asynchronous(traitext)]
 		async fn try_read_vfloat_le(&mut self, size: usize) -> Result<Option<f64>> {
 			if size == size_of::<f32>() {
@@ -231,7 +265,13 @@ macro_rules! read_vfloat_impl {
 			}
 		}
 
-		#[inline(always)]
+		/// Read an `f32` or `f64` from the stream in big endian order, returning
+		/// `None` if EOF and no bytes were read
+		///
+		/// # Cancel safety
+		///
+		/// This function is not cancel safe. Partial reads will lead to data loss
+		#[inline]
 		#[asynchronous(traitext)]
 		async fn try_read_vfloat_be(&mut self, size: usize) -> Result<Option<f64>> {
 			if size == size_of::<f32>() {
@@ -243,7 +283,13 @@ macro_rules! read_vfloat_impl {
 			}
 		}
 
-		#[inline(always)]
+		/// Read an `f32` or `f64` from the stream in little endian order, returning an
+		/// error on EOF
+		///
+		/// # Cancel safety
+		///
+		/// This function is not cancel safe. Partial reads will lead to data loss
+		#[inline]
 		#[asynchronous(traitext)]
 		async fn read_vfloat_le(&mut self, size: usize) -> Result<f64> {
 			self.try_read_vfloat_le(size)
@@ -251,7 +297,13 @@ macro_rules! read_vfloat_impl {
 				.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 		}
 
-		#[inline(always)]
+		/// Read an `f32` or `f64` from the stream in big endian order, returning an
+		/// error on EOF
+		///
+		/// # Cancel safety
+		///
+		/// This function is not cancel safe. Partial reads will lead to data loss
+		#[inline]
 		#[asynchronous(traitext)]
 		async fn read_vfloat_be(&mut self, size: usize) -> Result<f64> {
 			self.try_read_vfloat_be(size)
@@ -262,16 +314,36 @@ macro_rules! read_vfloat_impl {
 }
 
 macro_rules! read_num_type_endian {
-	($type: ty, $endian_type: ty, $endian: ident) => {
+	($type: ty, $endian_type: ty, $endian: ident, $endian_doc: literal) => {
 		paste! {
+			#[doc = concat!(
+				"Read a [`",
+				stringify!($type),
+				"`] from the stream",
+				$endian_doc,
+				", returning `None` if EOF and no bytes were read"
+			)]
+			/// # Cancel Safety
+			///
+			/// This function is not cancel safe. Partial reads will lead to data loss
 			#[asynchronous(traitext)]
-			#[inline(always)]
+			#[inline]
 			async fn [<try_read_ $endian_type>](&mut self) -> Result<Option<$type>> {
 				self.try_read_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>().await.map(|c| c.map(|t| t.0))
 			}
 
+			#[doc = concat!(
+				"Read a [`",
+				stringify!($type),
+				"`] from the stream",
+				$endian_doc,
+				", returning an error on EOF"
+			)]
+			/// # Cancel safety
+			///
+			/// This function is not cancel safe. Partial reads will lead to data loss
 			#[asynchronous(traitext)]
-			#[inline(always)]
+			#[inline]
 			async fn [<read_ $endian_type>](&mut self) -> Result<$type> {
 				self.[<try_read_ $endian_type>]().await?.ok_or_else(|| ErrorKind::UnexpectedEof.into())
 			}
@@ -282,8 +354,8 @@ macro_rules! read_num_type_endian {
 macro_rules! read_num_type {
 	($type:ty) => {
 		paste! {
-			read_num_type_endian!($type, [<$type _le>], le);
-			read_num_type_endian!($type, [<$type _be>], be);
+			read_num_type_endian!($type, [<$type _le>], le, " in little endian order");
+			read_num_type_endian!($type, [<$type _be>], be, " in big endian order");
 		}
 	};
 }
@@ -299,8 +371,8 @@ macro_rules! read_int {
 
 macro_rules! read_num_impl {
 	($vint_func:ident) => {
-		read_num_type_endian!(i8, i8, le);
-		read_num_type_endian!(u8, u8, le);
+		read_num_type_endian!(i8, i8, le, "");
+		read_num_type_endian!(u8, u8, le, "");
 		macro_each!(read_int, 16, 32, 64, 128);
 		macro_each!(read_num_type, f32, f64);
 		read_vfloat_impl!();
@@ -308,10 +380,15 @@ macro_rules! read_num_impl {
 	};
 }
 
+/// Extension trait for reading typed data from a stream
 pub trait ReadTyped: ReadSealed {
 	read_num_impl!(read_vint);
 
-	/// Read a type, returning None if EOF and no bytes were read
+	/// Read a type, returning `None` if EOF and no bytes were read
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Partial reads will lead to data loss
 	#[asynchronous(traitext)]
 	async fn try_read_type<T, const N: usize>(&mut self) -> Result<Option<T>>
 	where
@@ -321,6 +398,10 @@ pub trait ReadTyped: ReadSealed {
 	}
 
 	/// Read a type, returning an error on EOF
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Partial reads will lead to data loss
 	#[asynchronous(traitext)]
 	async fn read_type<T, const N: usize>(&mut self) -> Result<T>
 	where
@@ -334,10 +415,16 @@ pub trait ReadTyped: ReadSealed {
 
 impl<T: Read> ReadTyped for T {}
 
+/// Extension trait for reading typed data from a stream. A [`BufRead`]
+/// implementation allows for more efficient reads of small types
 pub trait BufReadTyped: BufReadSealed {
 	read_num_impl!(read_vint_fast);
 
-	/// Read a type, returning None if EOF and no bytes were read
+	/// Read a type, returning `None` if EOF and no bytes were read
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Partial reads will lead to data loss
 	#[asynchronous(traitext)]
 	async fn try_read_type<T, const N: usize>(&mut self) -> Result<Option<T>>
 	where
@@ -347,6 +434,10 @@ pub trait BufReadTyped: BufReadSealed {
 	}
 
 	/// Read a type, returning an error on EOF
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Partial reads will lead to data loss
 	#[asynchronous(traitext)]
 	async fn read_type<T, const N: usize>(&mut self) -> Result<T>
 	where
@@ -414,8 +505,21 @@ impl<W: Write> fmt::Write for FmtAdapter<'_, W> {
 }
 
 macro_rules! write_num_type_endian {
-	($type: ty, $endian_type: ident, $endian: ident) => {
+	($type: ty, $endian_type: ident, $endian: ident, $endian_doc: literal) => {
 		paste! {
+			#[doc = concat!(
+				"Write a [`",
+				stringify!($type),
+				"`] to the stream",
+				$endian_doc
+			)]
+			///
+			/// Returns the number of bytes written
+			///
+			/// # Cancel Safety
+			///
+			/// This function is cancel safe. Once the interrupt has been cleared,
+			/// resume by writing the remaining bytes for the type
 			#[asynchronous(traitext)]
 			async fn [<write_ $endian_type>](&mut self, val: $type) -> Result<usize> {
 				self.write_type::<[<$type $endian>], { [<$type $endian>]::BYTES }>([<$type $endian>](val)).await
@@ -427,8 +531,8 @@ macro_rules! write_num_type_endian {
 macro_rules! write_num_type {
 	($type:ty) => {
 		paste! {
-			write_num_type_endian!($type, [<$type _le>], le);
-			write_num_type_endian!($type, [<$type _be>], be);
+			write_num_type_endian!($type, [<$type _le>], le, " in little endian order");
+			write_num_type_endian!($type, [<$type _be>], be, " in big endian order");
 		}
 	};
 }
@@ -442,14 +546,21 @@ macro_rules! write_int {
 	};
 }
 
+/// Extension trait for writing typed data from a stream
 pub trait WriteTyped: WriteSealed {
-	write_num_type_endian!(i8, i8, le);
-	write_num_type_endian!(u8, u8, le);
+	write_num_type_endian!(i8, i8, le, "");
+	write_num_type_endian!(u8, u8, le, "");
 	macro_each!(write_int, 16, 32, 64, 128);
 	macro_each!(write_num_type, f32, f64);
 
+	/// Writes format arguments to the stream
+	///
 	/// Returns the number of bytes written, or error if the data could not be
 	/// fully written
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe.
 	#[asynchronous(traitext)]
 	async fn write_fmt(&mut self, args: Arguments<'_>) -> Result<usize>
 	where
@@ -464,18 +575,34 @@ pub trait WriteTyped: WriteSealed {
 
 	/// Attempts to write the entire string, returning the number of bytes
 	/// written which may be short if interrupted or eof
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe. Once the interrupt has been cleared,
+	/// resume by writing the remaining bytes of the string
 	#[asynchronous(traitext)]
 	async fn try_write_string(&mut self, buf: &str) -> Result<usize> {
 		self.try_write_all(buf.as_bytes()).await
 	}
 
-	/// Same as above but returns error on partial writes
+	/// Same as [`try_write_string`] but returns error on partial
+	/// writes
+	///
+	/// This function is not cancel safe. Data is lost on interrupt, since an
+	/// error is returned.
+	///
+	/// [`try_write_string`]: WriteTyped::try_write_string
 	#[asynchronous(traitext)]
 	async fn write_string(&mut self, buf: &str) -> Result<usize> {
 		self.write_all(buf.as_bytes()).await
 	}
 
 	/// Attemps to write an entire char, returning error on partial writes
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe. Once the interrupt has been cleared,
+	/// resume by writing the remaining bytes of the char
 	#[asynchronous(traitext)]
 	async fn write_char(&mut self, ch: char) -> Result<usize> {
 		let mut buf = [0u8; 4];
@@ -485,6 +612,11 @@ pub trait WriteTyped: WriteSealed {
 
 	/// Attempts to write an entire type, returning the number of bytes written
 	/// which may be short if interrupted or eof
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Data is lost on interrupt, since an
+	/// error is returned.
 	#[asynchronous(traitext)]
 	async fn write_type<T, const N: usize>(&mut self, val: T) -> Result<usize>
 	where

@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::marker::PhantomData;
 
 pub struct Closure<Capture, Args, Output> {
@@ -21,7 +19,6 @@ impl<Capture, Args, Output> Closure<Capture, Args, Output> {
 pub struct OpaqueClosure<F, Args, Output>(F, PhantomData<(Args, Output)>);
 
 impl<F: FnOnce(Args) -> Output, Args, Output> OpaqueClosure<F, Args, Output> {
-	#[inline(always)]
 	pub const fn new(func: F) -> Self {
 		Self(func, PhantomData)
 	}

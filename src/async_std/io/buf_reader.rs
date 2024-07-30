@@ -54,7 +54,6 @@ macro_rules! impl_bufread {
 				Ok(read)
 			}
 
-			#[cold]
 			async fn fill_buf(&mut self) -> Result<usize> {
 				let read = self.fill_buf_range(0..self.data.len()).await?;
 
@@ -65,10 +64,28 @@ macro_rules! impl_bufread {
 				Ok(read)
 			}
 
+			#[cold]
+			async fn read_cold(&mut self, buf: &mut [u8]) -> Result<usize> {
+				if buf.len() >= self.capacity() {
+					let read = self.reader.read(buf).await?;
+
+					#[cfg(feature = "tracing")]
+					crate::trace!(target: &*self, "## read(buf = &mut [u8; {}]) = Direct({})", buf.len(), read);
+
+					return Ok(read);
+				}
+
+				Ok(if self.fill_buf().await? != 0 {
+					self.read_into(buf)
+				} else {
+					0
+				})
+			}
+
 			/// Shift unconsumed bytes to the beginning to make space for calls to
-			/// [`fill`], without discarding any unconsumed data
+			/// [`fill`] without discarding any unconsumed data
 			///
-			/// [`fill`]: BufReader::fill
+			/// [`fill`]: BufRead::fill
 			pub fn move_data_to_beginning(&mut self) {
 				if self.buffered.start == 0 {
 					return;
@@ -84,7 +101,7 @@ macro_rules! impl_bufread {
 				}
 			}
 
-			/// The current position in the buffer
+			/// The current position into the internal buffer
 			pub const fn position(&self) -> usize {
 				self.buffered.start
 			}
@@ -98,20 +115,7 @@ macro_rules! impl_bufread {
 					return Ok(self.read_into(buf));
 				}
 
-				if buf.len() >= self.capacity() {
-					let read = self.reader.read(buf).await?;
-
-					#[cfg(feature = "tracing")]
-					crate::trace!(target: &*self, "## read(buf = &mut [u8; {}]) = Direct({})", buf.len(), read);
-
-					return Ok(read);
-				}
-
-				Ok(if self.fill_buf().await? != 0 {
-					self.read_into(buf)
-				} else {
-					0
-				})
+				self.read_cold(buf).await
 			}
 		}
 
@@ -136,7 +140,8 @@ macro_rules! impl_bufread {
 
 					if $buffered!(self.buffered).is_empty() {
 						/* try not to discard existing data if read returns EOF, assuming the read
-						* impl doesn't write junk even when returning zero */
+						 * impl doesn't write junk even when returning zero
+						 */
 						start = 0;
 					} else {
 						self.move_data_to_beginning();
@@ -174,8 +179,6 @@ macro_rules! impl_bufread {
 				unsafe { self.data.get_unchecked(self.buffered.clone()) }
 			}
 
-			/// # Panics
-			/// See [`BufRead::consume`]
 			#[allow(clippy::arithmetic_side_effects)]
 			fn consume(&mut self, count: usize) {
 				assert!(count <= self.buffer().len());
@@ -183,8 +186,6 @@ macro_rules! impl_bufread {
 				self.buffered.start += count;
 			}
 
-			/// # Panics
-			/// See [`BufRead::unconsume`]
 			fn unconsume(&mut self, count: usize) {
 				self.buffered.start = self
 					.buffered
@@ -336,7 +337,7 @@ impl<R: ?Sized> BufReader<R> {
 	/// Creates a new `BufReader<R>` from parts
 	///
 	/// # Panics
-	/// If `pos` > `buf.len()`
+	/// If `pos > buf.len()`
 	pub fn from_parts(reader: R, mut buf: Vec<u8>, pos: usize) -> Self
 	where
 		R: Sized
@@ -356,7 +357,7 @@ impl<R: ?Sized> BufReader<R> {
 
 	/// Unwraps this `BufReader<R>`, returning the underlying reader
 	///
-	/// Any leftover data in the internal buffer is lost. Therefore, a following
+	/// Any leftover data in the internal buffer is lost. A subsequent
 	/// read from the underlying reader may lead to data loss
 	pub fn into_inner(self) -> R
 	where
@@ -377,8 +378,8 @@ impl<R: ?Sized> BufReader<R> {
 
 	/// Unwraps this `BufReader<R>`, returning its parts
 	///
-	/// The `Vec<u8>` contains the buffered data,
-	/// and the `usize` is the position to start reading
+	/// The `Vec<u8>` contains the buffered data, and the `usize` is the
+	/// position to start reading from
 	pub fn into_parts(self) -> (R, Vec<u8>, usize)
 	where
 		R: Sized

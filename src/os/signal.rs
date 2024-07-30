@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::os::unix::thread::RawPthread;
 
 use super::error::result_from_libc;

@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::*;
 
 /// The async equivalent of [`std::iter::Iterator`]

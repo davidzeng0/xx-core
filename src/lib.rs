@@ -47,5 +47,3 @@ pub extern crate lazy_static;
 pub extern crate memchr;
 #[cfg(feature = "num-traits")]
 pub extern crate num_traits;
-#[cfg(feature = "static_assertions")]
-pub extern crate static_assertions;

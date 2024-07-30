@@ -1,4 +1,4 @@
-#![allow(clippy::multiple_unsafe_ops_per_block, clippy::module_name_repetitions)]
+#![allow(clippy::multiple_unsafe_ops_per_block)]
 
 use std::result;
 

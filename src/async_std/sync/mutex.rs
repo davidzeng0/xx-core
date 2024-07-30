@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::fmt;
 use std::hint::spin_loop;
 use std::ops::{Deref, DerefMut};

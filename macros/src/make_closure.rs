@@ -190,9 +190,11 @@ pub fn make_explicit_closure(
 	if let Some(block) = &mut func.block {
 		ReplaceSelf.visit_block_mut(block);
 
-		let cls = quote_spanned! { block.span() =>
+		let inline = func.attrs.remove_any("inline");
+		let cls = quote_spanned! { block.span() => {
+			#inline
 			| #destruct: #types, #args | -> #return_type #block
-		};
+		}};
 
 		**block = parse_quote! {{
 			#closure_type::new(
@@ -201,8 +203,6 @@ pub fn make_explicit_closure(
 				#cls
 			)
 		}};
-
-		func.attrs.push(parse_quote! { #[inline(always)] });
 	}
 
 	Ok(closure_return_type)
@@ -248,15 +248,17 @@ pub fn make_opaque_closure(
 	};
 
 	if let Some(block) = &mut func.block {
-		let mut closure = quote! { move | #args | -> #return_type #block };
+		let inline = func.attrs.remove_any("inline");
+		let mut closure = quote! {{
+			#inline
+			move | #args | -> #return_type #block
+		}};
 
 		if let Some(wrap) = trait_impl_wrap {
 			closure = quote! { #wrap::new(#closure) }
 		}
 
 		**block = parse_quote! {{ #closure }};
-
-		func.attrs.push(parse_quote! { #[inline(always)] });
 	}
 
 	func.sig.output = parse_quote! { -> #closure_return_type #addl_lifetimes };

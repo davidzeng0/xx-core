@@ -28,7 +28,7 @@ macro_rules! async_fn {
 			impl<F, T, Args, Output> [< AsyncFn $($kind)? >] <Args> for F
 			where
 				F: [< Fn $($kind)? >] (Args) -> T,
-				T: for<'a> Task<Output<'a> = Output>
+				T: for<'ctx> Task<Output<'ctx> = Output>
 			{
 				type Output = Output;
 

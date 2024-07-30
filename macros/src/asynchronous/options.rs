@@ -34,7 +34,6 @@ impl AsyncKind {
 pub enum Lang {
 	GetContext,
 	TaskWrap,
-	TaskClosure,
 	AsyncClosure,
 	Task
 }

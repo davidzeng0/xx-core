@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::mem::transmute;
 use std::sync::atomic;
 

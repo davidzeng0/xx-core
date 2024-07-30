@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::cmp;
 use std::fmt::{self, Debug, Formatter, Result};
 use std::num::NonZeroUsize;

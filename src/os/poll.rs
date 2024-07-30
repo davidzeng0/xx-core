@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::signal::SignalMask;
 use super::time::TimeSpec;
 use super::*;

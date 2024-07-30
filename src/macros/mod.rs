@@ -61,3 +61,14 @@ macro_rules! require_unsafe {
 }
 
 pub use require_unsafe;
+
+#[macro_export]
+macro_rules! const_assert {
+	($expr:expr $(, $($args:tt)*)?) => {
+		const _: () = {
+			assert!($expr $(, $($args)*)?)
+		};
+	};
+}
+
+pub use const_assert;

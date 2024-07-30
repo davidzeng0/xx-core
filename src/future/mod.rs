@@ -14,22 +14,13 @@ pub use block_on::*;
 pub type ReqPtr<T> = Ptr<Request<T>>;
 pub type Complete<T> = unsafe fn(ReqPtr<T>, Ptr<()>, T);
 
-/// A pointer of a [`Request`] will be passed to a [`Future`] when
-/// [`Future::run`] is called
-///
-/// When the [`Future`] completes, the [`Request`]'s callback will be
-/// executed with the result
-///
-/// The pointer may be used as the key for [`Cancel::run`],
-/// which will cancel at least one Future with the same key
-///
-/// Each request pointer should be unique, as it may be possible that
-/// only one future can be started for each request
-///
-/// The lifetime of the request must last until the callback is executed
+/// A request contains the information required to inform the caller that a
+/// future has completed.
 pub struct Request<T> {
-	/// The user data to be passed back.
+	/// The user data to be passed back in the callback.
 	pub arg: Ptr<()>,
+
+	/// The callback to run when the future completes.
 	pub callback: Complete<T>
 }
 
@@ -41,10 +32,16 @@ impl<T> Clone for Request<T> {
 
 impl<T> Copy for Request<T> {}
 
-/* Safety: request may only be completed once */
+/// Safety: changing the values of a request after starting a future is
+/// discouraged and can result in undefined behavior.
+///
+/// See [`Future`] for more information
 unsafe impl<T> Send for Request<T> {}
 
-/* Safety: request may only be completed once */
+/// Safety: changing the values of a request after starting a future is
+/// discouraged and can result in undefined behavior.
+///
+/// See [`Future`] for more information
 unsafe impl<T> Sync for Request<T> {}
 
 impl<T> Request<T> {
@@ -55,9 +52,15 @@ impl<T> Request<T> {
 		unsafe { Self::new(Ptr::null(), no_op) }
 	}
 
+	/// Create a new request with a user pointer and a callback
+	///
+	/// The callback is called once when the future completes.
+	///
+	/// The callback may be executed from another thread. See documentation for
+	/// the specific future for more information.
+	///
 	/// # Safety
-	/// `callback` must not unwind, and its safety requirements must be
-	/// identical to `Request::complete`
+	/// `callback` must not unwind
 	pub const unsafe fn new(arg: Ptr<()>, callback: Complete<T>) -> Self {
 		Self { arg, callback }
 	}
@@ -113,7 +116,7 @@ pub unsafe trait Cancel {
 }
 
 #[must_use]
-pub enum Progress<Output, C: Cancel> {
+pub enum Progress<Output, C> {
 	/// The operation is pending
 	/// The callback on the request will be called when it is complete
 	Pending(C),
@@ -136,6 +139,13 @@ pub enum Progress<Output, C: Cancel> {
 /// called. Otherwise, a [`Cancel`] token is returned to allow the caller to
 /// request the operation be cancelled.
 ///
+/// Each request pointer should be unique, as it may be possible that
+/// only one future can be started for each request. Using the same request
+/// pointer for two in progress futures is unspecified behavior.
+///
+/// Some implementations may use the pointer as the key for [`Cancel::run`],
+/// which will cancel at least one future with the same key
+///
 /// # Safety
 /// Any pointers and references passed to the future by the caller must only
 /// live while the operation is active. Once the implementation executes the
@@ -143,8 +153,8 @@ pub enum Progress<Output, C: Cancel> {
 ///
 ///
 /// If [`Future::run`] panics, the future is considered completed, implementers
-/// must no longer use any pointers or references, and the callback must not be
-/// called
+/// must no longer use any pointers or references from the caller, and the
+/// callback must not be called
 ///
 /// If the future can be constructed with raw pointers and integers in safe
 /// code, the constructor must be marked as unsafe, as safe blocking

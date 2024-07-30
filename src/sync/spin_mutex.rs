@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::fmt::{Debug, Formatter, Result};
 use std::ops::{Deref, DerefMut};
 use std::result;

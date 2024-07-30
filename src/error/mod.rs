@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::backtrace::Backtrace;
 use std::ffi::{FromBytesWithNulError, NulError};
 use std::fmt::{self, Debug, Display, Formatter};

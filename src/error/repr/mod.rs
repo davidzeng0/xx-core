@@ -7,9 +7,9 @@ use std::fmt::{self, Debug, Display, Formatter};
 use std::marker::PhantomData;
 use std::mem::{forget, transmute, ManuallyDrop, MaybeUninit};
 
-use static_assertions::const_assert;
-
+use crate::macros::const_assert;
 use crate::pointer::*;
+
 mod context;
 mod custom;
 mod dynamic;

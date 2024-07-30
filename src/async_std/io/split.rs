@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::*;
 
 /// Splits a stream into a borrowed read half and a write half.

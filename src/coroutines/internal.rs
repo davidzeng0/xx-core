@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use super::*;
 
 #[doc(hidden)]
-#[inline(always)]
 pub fn as_task<T, Output>(task: T) -> impl for<'ctx> Task<Output<'ctx> = Output>
 where
 	T: for<'ctx> Task<Output<'ctx> = Output>
@@ -12,7 +11,6 @@ where
 }
 
 #[cfg(not(any(doc, feature = "xx-doc")))]
-#[doc(hidden)]
 #[inline(always)]
 pub fn unsafe_stub_do_not_use<T>(context: &Context, task: T) -> T::Output<'_>
 where
@@ -28,11 +26,6 @@ where
 #[asynchronous]
 #[lang = "task_wrap"]
 pub struct OpaqueTask<F, Output>(F, PhantomData<Output>);
-
-#[doc(hidden)]
-#[asynchronous]
-#[lang = "task_closure"]
-pub struct OpaqueClosure<F, Output>(F, PhantomData<Output>);
 
 #[doc(hidden)]
 #[asynchronous]

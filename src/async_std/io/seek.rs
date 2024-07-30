@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::*;
 
 /// The async equivalent of [`std::io::Seek`]
@@ -11,6 +9,10 @@ pub trait Seek {
 	/// new position from the start of the stream
 	///
 	/// See also [`std::io::Seek::seek`]
+	///
+	/// # Cancel safety
+	///
+	/// The cancel safety of this function depends on the implementation.
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64>;
 
 	/// Returns true if the `Seek` implementation has an efficient
@@ -24,6 +26,10 @@ pub trait Seek {
 	/// Get the length of the stream in bytes
 	///
 	/// See also [`std::io::Seek::stream_len`]
+	///
+	/// # Cancel safety
+	///
+	/// The cancel safety of this function depends on the implementation.
 	async fn stream_len(&mut self) -> Result<u64> {
 		let old_pos = self.stream_position().await?;
 		let len = self.seek(SeekFrom::End(0)).await?;
@@ -46,13 +52,23 @@ pub trait Seek {
 	/// Get the current position in the stream in bytes
 	///
 	/// See also [`std::io::Seek::stream_position`]
+	///
+	/// # Cancel safety
+	///
+	/// The cancel safety of this function depends on the implementation.
 	async fn stream_position(&mut self) -> Result<u64> {
 		self.seek(SeekFrom::Current(0)).await
 	}
 
 	/// Rewinds the stream to the beginning
 	///
-	/// This is a convenience method, equivalent to `seek(SeekFrom::Start(0))``
+	/// This is a convenience method, equivalent to `seek(SeekFrom::Start(0))`
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn rewind(&mut self) -> Result<()> {
 		self.seek(SeekFrom::Start(0)).await?;
 
@@ -60,6 +76,15 @@ pub trait Seek {
 	}
 
 	/// Rewind `amount` bytes on the stream
+	///
+	/// On interrupt, the amount rewinded can be calculated as the difference in
+	/// the stream position.
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn rewind_amount(&mut self, amount: u64) -> Result<u64> {
 		if let Ok(amount) = i64::try_from(amount) {
 			/* amount is positive */
@@ -76,6 +101,15 @@ pub trait Seek {
 	}
 
 	/// Skips `amount` bytes from the stream
+	///
+	/// On interrupt, the amount skipped can be calculated as the difference in
+	/// the stream position.
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn skip_amount(&mut self, amount: u64) -> Result<u64> {
 		if let Ok(amount) = i64::try_from(amount) {
 			return self.seek(SeekFrom::Current(amount)).await;
@@ -99,6 +133,11 @@ pub trait Seek {
 	}
 }
 
+/// Implement [`Seek`] for a wrapper type.
+///
+/// See also [`wrapper_functions`]
+///
+/// [`wrapper_functions`]: crate::macros::wrapper_functions
 #[macro_export]
 macro_rules! seek_wrapper {
 	{

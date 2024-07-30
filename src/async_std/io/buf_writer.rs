@@ -25,7 +25,7 @@ impl<W> BufWriter<W> {
 	/// Creates a new `BufWriter<W>` from parts
 	///
 	/// # Panics
-	/// If `pos` > `buf.len()`
+	/// If `pos > buf.len()`
 	pub fn from_parts(writer: W, mut buf: Vec<u8>, pos: usize) -> Self {
 		let len = buf.len();
 
@@ -42,15 +42,15 @@ impl<W> BufWriter<W> {
 
 	/// Unwraps this `BufWriter<W>`, returning the underlying writer
 	///
-	/// Any leftover data in the internal buffer is lost
+	/// Any unflushed data in the internal buffer is lost
 	pub fn into_inner(self) -> W {
 		self.writer
 	}
 
 	/// Unwraps this `BufWriter<W>`, returning its parts
 	///
-	/// The `Vec<u8>` contains the buffered data,
-	/// and the `usize` is the position to start flushing
+	/// The `Vec<u8>` contains the buffered data, and the `usize` is the
+	/// position to start flushing from
 	pub fn into_parts(self) -> (W, Vec<u8>, usize) {
 		let mut buf = self.data.into_vec();
 
@@ -108,7 +108,14 @@ impl<W: Write + ?Sized> BufWriter<W> {
 		Ok(())
 	}
 
-	pub async fn write_from_once<R>(&mut self, reader: &mut R) -> Result<usize>
+	/// Reads some data from the reader `R` and appends it to the internal
+	/// buffer, possibly flushing it downstream
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe. Once the interrupt is cleared, call this
+	/// function again to continue piping data.
+	pub async fn pipe_from_once<R>(&mut self, reader: &mut R) -> Result<usize>
 	where
 		R: Read + ?Sized
 	{
@@ -125,7 +132,15 @@ impl<W: Write + ?Sized> BufWriter<W> {
 		Ok(read)
 	}
 
-	pub async fn write_from<R>(&mut self, reader: &mut R) -> Result<usize>
+	/// Repeatedly reads data from the reader `R` until EOF. The
+	/// data is appended to the internal buffer, possibly flushing it
+	/// downstream
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe. Once the interrupt is cleared, call this
+	/// function again to continue piping data.
+	pub async fn pipe_from<R>(&mut self, reader: &mut R) -> Result<usize>
 	where
 		R: Read + ?Sized
 	{
@@ -133,7 +148,7 @@ impl<W: Write + ?Sized> BufWriter<W> {
 
 		loop {
 			#[allow(clippy::arithmetic_side_effects)]
-			match self.write_from_once(reader).await {
+			match self.pipe_from_once(reader).await {
 				Ok(0) => break,
 				Ok(n) => total += n,
 				Err(err) if err.is_interrupted() => break,
@@ -167,10 +182,13 @@ impl<W: Write + ?Sized> Write for BufWriter<W> {
 		})
 	}
 
-	/// Flush buffer to stream
+	/// Flush any buffered data downstream
 	///
-	/// On interrupt, this function should be called again
-	/// to finish flushing
+	/// # Cancel safety
+	///
+	/// This function is cancel safe if the underlying [`Write::write`]
+	/// implementation is cancel safe. Once the interrupt has been cleared, call
+	/// this function again to finish flushing all data.
 	async fn flush(&mut self) -> Result<()> {
 		self.flush_buf().await?;
 		self.writer.flush().await

@@ -6,7 +6,6 @@ use std::rc::Rc;
 use super::*;
 use crate::cell::UnsafeCell;
 
-#[allow(clippy::module_name_repetitions)]
 pub type SpawnResult<T> = MaybePanic<T>;
 
 enum SpawnData<E, T: for<'ctx> Task<Output<'ctx> = Output>, Output> {

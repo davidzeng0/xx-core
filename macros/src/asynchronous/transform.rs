@@ -68,16 +68,17 @@ impl TransformAsync {
 	fn transform_async(&mut self, inner: &mut ExprAsync) -> Expr {
 		self.visit_closure(|this| this.visit_expr_async_mut(inner));
 
-		let (attrs, capture, block) = (&inner.attrs, &inner.capture, &inner.block);
+		let (mut attrs, capture, block) = (take(&mut inner.attrs), &inner.capture, &inner.block);
+		let inline = attrs.remove_any("inline");
 		let context = Context::new();
 
 		parse_quote! {
 			#(#attrs)*
 			::xx_core::coroutines::internal::as_task(
-				::xx_core::coroutines::internal::OpaqueClosure::new(
-					#capture
-					|#context| #block
-				)
+				::xx_core::coroutines::internal::OpaqueTask::new({
+					#inline
+					#capture |#context| #block
+				})
 			)
 		}
 	}
@@ -138,7 +139,17 @@ impl TransformAsync {
 
 		self.visit_closure(|this| this.visit_expr_mut(body));
 
-		let attrs = take(&mut closure.attrs);
+		let mut attrs = take(&mut closure.attrs);
+		let inline = attrs.remove_any("inline");
+
+		let closure = if let Some(inline) = inline {
+			quote! {{
+				#inline
+				#closure
+			}}
+		} else {
+			closure.to_token_stream()
+		};
 
 		parse_quote_spanned! { span =>
 			#(#attrs)*
@@ -213,7 +224,6 @@ fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
 				use ::xx_core::coroutines::{Context, Task};
 
 				impl<F: FnOnce(&Context) -> Output, Output> XXInternalAsyncSupportWrap<F, Output> {
-					#[inline(always)]
 					pub const fn #new(func: F) -> Self {
 						Self(func, PhantomData)
 					}
@@ -224,6 +234,7 @@ fn task_impl(attrs: &[Attribute], ident: &Ident) -> TokenStream {
 					type Output<'ctx> = Output;
 
 					#(#attrs)*
+					#[inline]
 					unsafe fn #run(self, context: &Context) -> Output {
 						self.0(context)
 					}
@@ -250,7 +261,6 @@ fn lending_task_impl(lt: &Lifetime, ident: &Ident, output: &Type) -> TokenStream
 			use ::xx_core::coroutines::{Context, Task};
 
 			impl<F: FnOnce(&Context) -> #ret> XXInternalAsyncSupportWrap<F> {
-				#[inline(always)]
 				pub const fn #new(func: F) -> Self {
 					Self(func)
 				}
@@ -259,7 +269,7 @@ fn lending_task_impl(lt: &Lifetime, ident: &Ident, output: &Type) -> TokenStream
 			impl<F: FnOnce(&Context) -> #ret> Task for XXInternalAsyncSupportWrap<F> {
 				type Output<#lt> = #output;
 
-				#[inline(always)]
+				#[inline]
 				unsafe fn #run(self, context: #context) -> #ret {
 					self.0(context)
 				}
@@ -354,11 +364,12 @@ pub fn transform_sync(func: &mut Function<'_>) -> Result<()> {
 	modify_traits(func)
 }
 
-fn remove_attrs(attrs: &mut Vec<Attribute>, targets: &[&str]) -> Vec<Attribute> {
+fn get_run_attrs(attrs: &mut Vec<Attribute>) -> Vec<Attribute> {
+	let targets = ["must_use", "cold"];
 	let mut removed = Vec::new();
 
 	for target in targets {
-		while let Some(attr) = attrs.remove_if(target, |_| true) {
+		while let Some(attr) = attrs.remove_any(target) {
 			removed.push(attr);
 		}
 	}
@@ -433,7 +444,7 @@ pub fn transform_async(mut attrs: AttributeArgs, func: &mut Function<'_>) -> Res
 	attrs.parse_attrs(func.attrs)?;
 
 	let closure_type = attrs.async_kind.0.closure_type();
-	let func_attrs = remove_attrs(func.attrs, &["inline", "must_use", "cold"]);
+	let func_attrs = get_run_attrs(func.attrs);
 
 	let mut cx_lt = get_cx_lifetime(&mut func.sig.generics)?;
 

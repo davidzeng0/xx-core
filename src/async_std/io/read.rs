@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use memchr::memchr;
 
 use super::*;
@@ -7,7 +5,14 @@ use crate::coroutines::ops::AsyncFnOnce;
 
 /// Appends to `buf` by calling `read` with the string's buffer
 ///
-/// Resets the buffer if the bytes are not valid UTF-8 or on panic
+/// The buffer's length is untouched if an unwind occurs or the additional bytes
+/// are not valid utf-8
+///
+/// # Cancel safety
+///
+/// This function is not cancel safe. An interrupt may stop reading at a
+/// character boundary, in which case the byte sequence would not be valid
+/// utf-8. The buffer is then truncated leading to data loss.
 #[asynchronous]
 pub async fn append_to_string<F>(buf: &mut String, read: F) -> Result<Option<usize>>
 where
@@ -78,13 +83,25 @@ pub trait Read {
 	/// Returns zero if the `buf` is empty, or if the stream reached EOF
 	///
 	/// See also [`std::io::Read::read`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
-	/// Read until the buffer is filled, an I/O error, an interrupt, or an EOF
+	/// Read until the buffer is filled, an I/O error, an interrupt, or EOF
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
 	///
 	/// See also [`std::io::Read::read_exact`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn try_read_fully(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
@@ -108,10 +125,15 @@ pub trait Read {
 	/// Same as [`try_read_fully`], except returns an [`UnexpectedEof`] error
 	/// on partial reads
 	///
-	/// Returns the number of bytes read, which is the same as
+	/// Returns the number of bytes read, which should be the same as
 	/// `buf.len()`
 	///
 	/// See also [`std::io::Read::read_exact`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Data is lost on interrupt, since an
+	/// error is returned.
 	///
 	/// [`try_read_fully`]: Read::try_read_fully
 	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
@@ -129,11 +151,16 @@ pub trait Read {
 		Ok(read)
 	}
 
-	/// Reads until an EOF, I/O error, or interrupt
+	/// Reads until EOF, an I/O error, or an interrupt
 	///
 	/// On interrupted, returns the number of bytes read if it is not zero
 	///
 	/// See also [`std::io::Read::read_to_end`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe. Once the interrupt is cleared, call this
+	/// function again to resume the operation.
 	async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
 		let start_len = buf.len();
 		let mut len = buf.len();
@@ -190,14 +217,18 @@ pub trait Read {
 		check_interrupt_if_zero(len - start_len).await
 	}
 
-	/// Reads until EOF, I/O error, or interrupt
+	/// Reads until EOF, an I/O error, or an interrupt
 	///
 	/// On interrupt, returns the number of bytes read if it is not zero
 	///
-	/// Interrupts may cause the read operation to stop in the middle of a
-	/// character, in which case an invalid utf8 error may be returned
-	///
 	/// See also [`std::io::Read::read_to_string`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Interrupts may cause the read
+	/// operation to stop in the middle of a character, in which case an
+	/// invalid utf-8 error may be returned and the buffer truncated to its
+	/// original length.
 	async fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
 		append_to_string(buf, |vec: &mut Vec<u8>| async move {
 			self.read_to_end(vec).await.map(Some)
@@ -220,6 +251,12 @@ pub trait Read {
 	///
 	/// See also [`std::io::Read::read_vectored`]
 	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
+	///
 	/// [`read`]: Read::read
 	async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
 		match bufs.iter_mut().find(|b| !b.is_empty()) {
@@ -229,9 +266,13 @@ pub trait Read {
 	}
 
 	/// Like [`read_vectored`], except that it keeps reading until all the
-	/// buffers are filled
+	/// buffers are filled, or EOF
 	///
-	/// Returns on EOF
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	///
 	/// [`read_vectored`]: Read::read_vectored
 	async fn try_read_fully_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
@@ -241,8 +282,13 @@ pub trait Read {
 	/// Same as [`try_read_fully_vectored`], except returns an [`UnexpectedEof`]
 	/// error on partial reads
 	///
-	/// Returns the number of bytes read, which is the same as
-	/// the length of all the buffers
+	/// Returns the number of bytes read, which should be the same as the length
+	/// of all the buffers
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. This function is not cancel safe. Data
+	/// is lost on interrupt, since an error is returned.
 	///
 	/// [`try_read_fully_vectored`]: Read::try_read_fully_vectored
 	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
@@ -257,6 +303,11 @@ pub trait Read {
 	}
 }
 
+/// Implement [`Read`] for a wrapper type.
+///
+/// See also [`wrapper_functions`]
+///
+/// [`wrapper_functions`]: crate::macros::wrapper_functions
 #[macro_export]
 macro_rules! read_wrapper {
 	{
@@ -308,7 +359,14 @@ pub trait BufRead: Read {
 	/// Returns the number of additional bytes filled, which can be zero
 	async fn fill_amount(&mut self, amount: usize) -> Result<usize>;
 
-	/// Calls [`fill_amount`] with the [`capacity`]
+	/// Fill any remaining space in the internal buffer. Equivalent to calling
+	/// [`fill_amount`] with the [`capacity`].
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	///
 	/// [`fill_amount`]: BufRead::fill_amount
 	/// [`capacity`]: BufRead::capacity
@@ -316,13 +374,17 @@ pub trait BufRead: Read {
 		self.fill_amount(self.capacity()).await
 	}
 
-	/// Reads all bytes into `buf` until the delimiter `byte`, or EOF
+	/// Reads all bytes into `buf` until the delimiter `byte`, an interrupt, or
+	/// EOF. The ending `byte` is included in the `buf`.
 	///
-	/// The `byte` is included in the `buf`
-	/// Returns the number of bytes read
+	/// Returns the number of bytes read, or `None` if EOF is reached
 	///
-	/// On interrupted, the read bytes can be calculated using the difference in
-	/// length of `buf` and can be called again with a new slice
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation. The number of bytes read at the interrupt can
+	/// be calculated using the difference in length of `buf`
 	async fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<Option<usize>> {
 		let start_len = buf.len();
 
@@ -358,15 +420,18 @@ pub trait BufRead: Read {
 	}
 
 	/// Reads all bytes into `buf` until a newline (0xA byte) or EOF, and strips
-	/// the line ending, if any
-	///
-	/// On interrupt, this function cannot be called again because it may stop
-	/// reading in the middle of a utf8 character, in which case it may return
-	/// an invalid utf8 error
+	/// the line ending, or `None` if EOF is reached.
 	///
 	/// Returns the number of bytes read, if any
 	///
 	/// See also [`read_until`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe.  On interrupt, this function cannot be
+	/// called again because it may stop reading in the middle of a utf-8
+	/// character, in which case it may return an invalid utf-8 error and the
+	/// buf is truncated to its original length
 	///
 	/// [`read_until`]: BufRead::read_until
 	async fn read_line(&mut self, buf: &mut String) -> Result<Option<usize>> {
@@ -416,20 +481,11 @@ pub trait BufRead: Read {
 	fn discard(&mut self);
 }
 
-pub trait IntoLines: BufReadSealed {
-	/// Returns an iterator over the lines of this reader
-	///
-	/// See also [`std::io::BufRead::lines`]
-	fn lines(self) -> Lines<Self>
-	where
-		Self: Sized
-	{
-		Lines::new(self)
-	}
-}
-
-impl<T: BufReadSealed> IntoLines for T {}
-
+/// Implement [`BufRead`] for a wrapper type.
+///
+/// See also [`wrapper_functions`]
+///
+/// [`wrapper_functions`]: crate::macros::wrapper_functions
 #[macro_export]
 macro_rules! bufread_wrapper {
 	{
@@ -474,6 +530,20 @@ macro_rules! bufread_wrapper {
 }
 
 pub use bufread_wrapper;
+
+pub trait IntoLines: BufReadSealed {
+	/// Returns an iterator over the lines of this reader
+	///
+	/// See also [`std::io::BufRead::lines`]
+	fn lines(self) -> Lines<Self>
+	where
+		Self: Sized
+	{
+		Lines::new(self)
+	}
+}
+
+impl<T: BufReadSealed> IntoLines for T {}
 
 pub struct Lines<R> {
 	reader: R

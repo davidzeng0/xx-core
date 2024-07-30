@@ -64,7 +64,7 @@ pub fn task_impl(
 	})
 }
 
-pub fn task_wrap_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribute]) -> TokenStream {
+pub fn task_wrap_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStream {
 	let ident = &item.ident;
 	let context = Context::new();
 	let context_ident = &context.ident;
@@ -81,7 +81,6 @@ pub fn task_wrap_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribut
 			#use_lang
 
 			impl<F: FnOnce(&Context) -> Output, Output> #ident<F, Output> {
-				#[inline(always)]
 				pub const fn new(func: F) -> Self {
 					Self(func, PhantomData)
 				}
@@ -91,7 +90,7 @@ pub fn task_wrap_impl(use_lang: TokenStream, item: ItemStruct, attrs: &[Attribut
 			impl<F: FnOnce(&Context) -> Output, Output> Task for #ident<F, Output> {
 				type Output<'ctx> = Output;
 
-				#(#attrs)*
+				#[inline]
 				unsafe fn run(self, #context) -> Output {
 					self.0(#context_ident)
 				}
@@ -113,40 +112,39 @@ pub fn async_closure_impl(use_lang: TokenStream, item: ItemStruct) -> TokenStrea
 			#use_lang
 
 			impl<F, const T: usize> #ident<F, T> {
-				#[inline(always)]
 				pub const fn new(func: F) -> Self {
 					Self(func)
 				}
 			}
 
+			#[asynchronous(traitext)]
 			impl<F: FnOnce(Args, &Context) -> Output, Args, Output> AsyncFnOnce<Args>
 				for #ident<F, 0> {
 				type Output = Output;
 
-				#[inline(always)]
-				#[asynchronous(traitext)]
+				#[inline]
 				async fn call_once(self, args: Args) -> Output {
 					self.0(args, get_context().await)
 				}
 			}
 
+			#[asynchronous(traitfn)]
 			impl<F: FnMut(Args, &Context) -> Output, Args, Output> AsyncFnMut<Args>
 				for #ident<F, 1> {
 				type Output = Output;
 
-				#[inline(always)]
-				#[asynchronous(traitfn)]
+				#[inline]
 				async fn call_mut(&mut self, args: Args) -> Output {
 					self.0(args, get_context().await)
 				}
 			}
 
+			#[asynchronous(traitfn)]
 			impl<F: Fn(Args, &Context) -> Output, Args, Output> AsyncFn<Args>
 				for #ident<F, 2> {
 				type Output = Output;
 
-				#[inline(always)]
-				#[asynchronous(traitfn)]
+				#[inline]
 				async fn call(&self, args: Args) -> Output {
 					self.0(args, get_context().await)
 				}

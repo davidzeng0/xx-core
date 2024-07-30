@@ -1,8 +1,4 @@
-#![allow(
-	clippy::multiple_unsafe_ops_per_block,
-	clippy::module_name_repetitions,
-	unreachable_pub
-)]
+#![allow(clippy::multiple_unsafe_ops_per_block, unreachable_pub)]
 
 use std::mem::replace;
 

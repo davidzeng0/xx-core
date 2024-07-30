@@ -51,11 +51,8 @@ fn language_impl(mut attrs: AttributeArgs, item: AsyncItem) -> Result<TokenStrea
 		use ::xx_core::coroutines::lang;
 	};
 
-	let inline = parse_quote! { #[inline(always)] };
-
 	Ok(match (lang, item) {
-		(Lang::TaskWrap, AsyncItem::Struct(item)) => task_wrap_impl(use_lang, item, &[]),
-		(Lang::TaskClosure, AsyncItem::Struct(item)) => task_wrap_impl(use_lang, item, &[inline]),
+		(Lang::TaskWrap, AsyncItem::Struct(item)) => task_wrap_impl(use_lang, item),
 		(Lang::AsyncClosure, AsyncItem::Struct(item)) => async_closure_impl(use_lang, item),
 		(Lang::Task, AsyncItem::Trait(task)) => task_impl(attrs, use_lang, task)?,
 		_ => return Err(Error::new(span, "Invalid language item"))

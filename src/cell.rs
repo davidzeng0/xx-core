@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::cell;
 use std::ops::{Deref, DerefMut};
 

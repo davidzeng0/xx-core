@@ -27,6 +27,12 @@ pub use {buf_reader::*, buf_writer::*, read::*, seek::*, split::*, write::*};
 pub const DEFAULT_BUFFER_SIZE: usize = 0x4000;
 
 /// If `len` is zero, checks if the current async task is interrupted
+///
+/// This is useful for read and write functions where an interrupt cancelling
+/// the operation may cause it to return zero. In this case, an error should be
+/// returned instead of zero.
+///
+/// See also [`check_interrupt`]
 #[asynchronous]
 pub async fn check_interrupt_if_zero(len: usize) -> Result<usize> {
 	if len == 0 {
@@ -102,12 +108,15 @@ pub fn advance_slices_mut(bufs: &mut &mut [IoSliceMut<'_>], mut amount: usize) {
 	assert_eq!(amount, 0);
 }
 
-/// Checks that `len` <= `buf.len()`
+/// Checks that `len <= buf.len()`
+///
+/// Useful for callers of read/write functions to prevent overflow by ensuring
+/// that the underlying implementation returns valid byte counts
 ///
 /// Returns `len`
 ///
 /// # Panics
-/// if `len` > `buf.len()`
+/// if `len > buf.len()`
 #[allow(clippy::must_use_candidate)]
 pub fn length_check(buf: &[u8], len: usize) -> usize {
 	assert!(len <= buf.len());
@@ -115,9 +124,13 @@ pub fn length_check(buf: &[u8], len: usize) -> usize {
 	len
 }
 
-/// Returns [`UnexpectedEof`] unless the current task is interrupted
+/// If the current worker is interrupted, returns an [`Interrupted`] error.
+/// Otherwise, returns an [`UnexpectedEof`] error
+///
+/// See also [`check_interrupt`]
 ///
 /// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
+/// [`Interrupted`]: ErrorKind::Interrupted
 #[asynchronous]
 pub async fn short_io_error_unless_interrupt() -> Error {
 	check_interrupt()
@@ -126,8 +139,22 @@ pub async fn short_io_error_unless_interrupt() -> Error {
 		.unwrap_or_else(|| ErrorKind::UnexpectedEof.into())
 }
 
+/// Returns zero from the current function if the input buffer is empty. An
+/// optional limit can be applied, in which case the buffer is truncated to that
+/// length.
+///
+/// # Examples
+///
+/// ```
+/// fn do_read(buf: &mut [u8]) -> Result<usize> {
+/// 	read_into!(buf, 5);
+///
+/// 	assert!(matches!(buf.len(), 1..=5));
+///
+/// 	// do the read
+/// }
+/// ```
 #[macro_export]
-/// Utility macro for returning early if `buf` is empty
 macro_rules! read_into {
 	($buf:ident) => {
 		if $crate::opt::hint::unlikely($buf.is_empty()) {
@@ -149,8 +176,20 @@ macro_rules! read_into {
 
 pub use read_into;
 
+/// Returns zero from the current function if the input buffer is empty.
+///
+/// # Examples
+///
+/// ```
+/// fn do_write(buf: &mut [u8]) -> Result<usize> {
+/// 	write_from!(buf);
+///
+/// 	assert!(!buf.is_empty());
+///
+/// 	// do the write
+/// }
+/// ```
 #[macro_export]
-/// Utility macro for returning early if `buf` is empty
 macro_rules! write_from {
 	($buf:ident) => {
 		if $crate::opt::hint::unlikely($buf.is_empty()) {

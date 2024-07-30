@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use crate::macros::{macro_each, sealed_trait};
 
 sealed_trait!();

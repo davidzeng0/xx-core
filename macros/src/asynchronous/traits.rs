@@ -37,14 +37,13 @@ fn wrapper_function(func: &mut TraitItemFn, this: &TokenStream) {
 }
 
 fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream> {
-	let name = ext.ident.clone();
+	let name = ext.ident;
 
 	ext.ident = format_trait_ident(&name);
 
 	let (_, type_generics, where_clause) = ext.generics.split_for_impl();
 	let super_trait: TypeParamBound = parse_quote! { #name #type_generics };
 
-	ext.supertraits.push(super_trait.clone());
 	attrs.async_kind.0 = AsyncKind::TraitExt;
 
 	let this = quote! { <Self as #super_trait> };
@@ -67,16 +66,40 @@ fn trait_ext(mut attrs: AttributeArgs, mut ext: ItemTrait) -> Result<TokenStream
 	}
 
 	let ident = &ext.ident;
-	let mut new_generics = ext.generics.clone();
+	let sealed_ident = format_ident!("{}Sealed", name);
+	let sealed_mod = format_ident!("__private_seal_{}", name);
 
-	new_generics.params.push(parse_quote! {
+	let generics = &ext.generics;
+	let mut sealed_generics = ext.generics.clone();
+
+	sealed_generics.params.push(parse_quote! {
 		XXInternalTraitImplementer: #super_trait + ?Sized
 	});
 
-	let (new_generics, ..) = new_generics.split_for_impl();
+	ext.supertraits.push(parse_quote! {
+		#sealed_mod::#sealed_ident #type_generics
+	});
+
+	let (sealed_generics, ..) = sealed_generics.split_for_impl();
+
+	let mut ext_generics = ext.generics.clone();
+
+	ext_generics.params.push(parse_quote! {
+		XXInternalTraitImplementer: #sealed_mod::#sealed_ident #type_generics + ?Sized
+	});
+
+	let (new_generics, ..) = ext_generics.split_for_impl();
 	let not_doc_attr = not_doc_attr();
 
 	Ok(quote! {
+		#[allow(non_snake_case)]
+		mod #sealed_mod {
+			pub trait #sealed_ident #generics : super::#super_trait {}
+		}
+
+		#not_doc_attr
+		impl #sealed_generics #sealed_mod::#sealed_ident #type_generics for XXInternalTraitImplementer #where_clause {}
+
 		#[cfg(not(doc))]
 		#ext
 

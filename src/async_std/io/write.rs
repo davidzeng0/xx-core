@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::*;
 
 #[asynchronous]
@@ -37,9 +35,21 @@ pub trait Write {
 	/// Returns zero if `buf` is empty, or if the stream reached EOF
 	///
 	/// See also [`std::io::Write::write`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
 	/// Flush (if any) buffered data
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn flush(&mut self) -> Result<()> {
 		Ok(())
 	}
@@ -50,6 +60,12 @@ pub trait Write {
 	/// On interrupted, returns the number of bytes written if it is not zero
 	///
 	/// See also [`std::io::Write::write_all`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
 	async fn try_write_all(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
@@ -70,10 +86,16 @@ pub trait Write {
 		check_interrupt_if_zero(wrote).await
 	}
 
-	/// Same as [`Write::try_write_all`], except it returns an [`UnexpectedEof`]
+	/// Same as [`try_write_all`], except it returns an [`UnexpectedEof`]
 	/// on partial writes
 	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. Data is lost on interrupt, since an
+	/// error is returned.
+	///
 	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
+	/// [`try_write_all`]: Write::try_write_all
 	async fn write_all(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
@@ -89,16 +111,26 @@ pub trait Write {
 	}
 
 	/// Returns `true` if this `Write` implementation has an efficient
-	/// [`Write::write_vectored`] implementation
+	/// [`write_vectored`] implementation
 	///
 	/// See also [`std::io::Write::is_write_vectored`]
+	///
+	/// [`write_vectored`]: Write::write_vectored
 	fn is_write_vectored(&self) -> bool {
 		false
 	}
 
-	/// Like [`Write::write`], except that it writes from a slice of buffers
+	/// Like [`write`], except that it writes from a slice of buffers
 	///
 	/// See also [`std::io::Write::write_vectored`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
+	///
+	/// [`write`]: Write::write
 	async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
 		match bufs.iter().find(|b| !b.is_empty()) {
 			Some(buf) => self.write(&buf[..]).await,
@@ -111,6 +143,12 @@ pub trait Write {
 	///
 	/// Returns on EOF
 	///
+	/// # Cancel safety
+	///
+	/// This function is usually cancel safe, however that depends on the exact
+	/// implementation. Once the interrupt is cleared, call this function again
+	/// to resume the operation.
+	///
 	/// [`write_vectored`]: Write::write_vectored
 	async fn try_write_all_vectored(&mut self, bufs: &mut [IoSlice<'_>]) -> Result<usize> {
 		Ok(default_write_vectored(self, bufs).await?.0)
@@ -121,6 +159,11 @@ pub trait Write {
 	///
 	/// Returns the number of bytes written, which is the same as
 	/// the length of all the buffers
+	///
+	/// # Cancel safety
+	///
+	/// This function is not cancel safe. This function is not cancel safe. Data
+	/// is lost on interrupt, since an error is returned.
 	///
 	/// [`try_write_all_vectored`]: Write::try_write_all_vectored
 	/// [`UnexpectedEof`]: ErrorKind::UnexpectedEof
@@ -135,6 +178,11 @@ pub trait Write {
 	}
 }
 
+/// Implement [`Write`] for a wrapper type.
+///
+/// See also [`wrapper_functions`]
+///
+/// [`wrapper_functions`]: crate::macros::wrapper_functions
 #[macro_export]
 macro_rules! write_wrapper {
 	{

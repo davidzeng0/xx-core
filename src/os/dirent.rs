@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::error::*;
 use super::fcntl::OpenFlag;
 use super::stat::{Statx, *};

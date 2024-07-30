@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use crate::error::*;
 use crate::macros::{import_sysdeps, macro_each, syscall_impl};
 

@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::fcntl::OpenFlag;
 use super::inet::Address;
 use super::iovec::{self, IoVec, IoVecMut};

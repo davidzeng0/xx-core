@@ -3,11 +3,10 @@
 use std::any::TypeId;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use static_assertions::const_assert;
-
 use super::*;
 use crate::cell::Cell;
 use crate::impls::OptionExt;
+use crate::macros::const_assert;
 
 /// The environment for an async worker
 ///
@@ -208,8 +207,8 @@ impl Context {
 	///
 	/// # Safety
 	/// See [`scoped`]
-	#[inline(always)]
 	#[cfg(not(any(doc, feature = "xx-doc")))]
+	#[inline(always)]
 	pub(super) unsafe fn run<T>(&self, task: T) -> T::Output<'_>
 	where
 		T: Task

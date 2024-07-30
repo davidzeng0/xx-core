@@ -12,7 +12,6 @@ memchr = { version = "2.7.4", optional = true }
 num-derive = { version = "0.4.2", optional = true }
 num-traits = { version = "0.2.19", optional = true }
 lazy_static = { version = "1.5.0", optional = true }
-static_assertions = { version = "1.1.0", optional = true }
 xx-macro-support = { git = "https://github.com/davidzeng0/xx-macro-support.git", optional = true }
 xx-macros = { git = "https://github.com/davidzeng0/xx-macros.git", optional = true }
 xx-core-macros = { path = "macros", optional = true }
@@ -20,8 +19,8 @@ xx-core-macros = { path = "macros", optional = true }
 [features]
 async_std = ["io", "coroutines", "container", "sync", "memchr"]
 container = ["opt", "pointer", "cell"]
-coroutines = ["fiber", "future", "log", "impls", "cell", "log", "static_assertions"]
-error = ["pointer", "static_assertions"]
+coroutines = ["fiber", "future", "log", "impls", "cell", "log"]
+error = ["pointer"]
 fiber = ["os", "opt", "pointer", "log", "impls"]
 future = ["closure", "pointer", "error", "impls"]
 impls = ["macros", "runtime"]
@@ -41,7 +40,6 @@ enumflags2 = ["dep:enumflags2"]
 lazy_static = ["dep:lazy_static"]
 memchr = ["dep:memchr"]
 num-traits = ["dep:num-traits"]
-static_assertions = ["dep:static_assertions"]
 
 default = [
 	"async_std",
@@ -117,7 +115,6 @@ lossy_float_literal = "warn"
 manual_clamp = "warn"
 manual_string_new = "warn"
 manual_assert = "warn"
-module_name_repetitions = "warn"
 map_unwrap_or = "warn"
 match_wildcard_for_single_variants = "warn"
 missing_const_for_fn = "warn"
@@ -176,3 +173,4 @@ option_option = "warn"
 todo = "warn"
 unused_async = "warn"
 wildcard_imports = "warn"
+tabs_in_doc_comments = "allow"

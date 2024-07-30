@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use crate::macros::{panic_nounwind, sealed_trait, unreachable_unchecked};
 
 sealed_trait!();
