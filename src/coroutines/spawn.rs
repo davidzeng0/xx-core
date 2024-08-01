@@ -282,6 +282,7 @@ impl<Output> Pin for Spawn<Output> {
 	}
 }
 
+/// A handle for joining with a [`fn@spawn`]ed async task
 pub struct JoinHandle<Output> {
 	task: Rc<Spawn<Output>>
 }
@@ -371,7 +372,7 @@ impl<Output> Task for JoinHandle<Output> {
 
 /// Spawn a new async task
 ///
-/// Returns a join handle which may be used to get the result from the task
+/// Returns a [`JoinHandle`] which may be used to get the result from the task
 ///
 /// # Safety
 /// The cloned `env` and `task` must outlive the spawned fiber

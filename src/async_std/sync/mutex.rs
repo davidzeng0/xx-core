@@ -276,14 +276,21 @@ impl<T: ?Sized> Mutex<T> {
 		}
 	}
 
+	/// Returns `true` if the mutex is poisoned
+	///
+	/// See also [`std::sync::Mutex::is_poisoned`]
 	pub fn is_poisoned(&self) -> bool {
 		self.poison.get()
 	}
 
+	/// Clear the poisoned state from this mutex
+	///
+	/// See also [`std::sync::Mutex::clear_poison`]
 	pub fn clear_poison(&self) {
 		self.poison.clear();
 	}
 
+	/// Consumes this mutex, returning the underlying data
 	pub fn into_inner(self) -> LockResult<T>
 	where
 		T: Sized
@@ -291,6 +298,9 @@ impl<T: ?Sized> Mutex<T> {
 		self.poison.map(self.value.into_inner()).map_err(Into::into)
 	}
 
+	/// Returns a mutable reference to the underlying data
+	///
+	/// See also [`std::sync::Mutex::get_mut`]
 	pub fn get_mut(&mut self) -> LockResult<&mut T> {
 		self.poison.map(self.value.get_mut()).map_err(Into::into)
 	}

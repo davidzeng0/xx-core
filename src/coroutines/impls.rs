@@ -62,11 +62,11 @@ macro_rules! map_fn {
 				#[cfg(not(any(doc, feature = "xx-doc")))]
 				#[allow(unused_mut)]
 				#[asynchronous(sync)]
-				fn [< map $($call)? >] <F>(
+				fn [< map $($call)? >] <F, Output>(
 					mut self, mut map: F
-				) -> impl [< AsyncFn $($kind)? >] <Args, Output = F::Output>
+				) -> impl [< AsyncFn $($kind)? >](Args) -> Output
 				where
-					F: [< AsyncFn $($kind)? >] <Self::Output>
+					F: [< AsyncFn $($kind)? >](Self::Output) -> Output
 				{
 					move |args: Args| async move {
 						map. [< call $($call)? >] (
@@ -90,7 +90,7 @@ macro_rules! map_fn {
 				#[asynchronous(sync)]
 				fn [< map $($call)? _sync >] <F, Output>(
 					mut self, mut map: F
-				) -> impl [< AsyncFn $($kind)? >] <Args, Output = Output>
+				) -> impl [< AsyncFn $($kind)? >](Args) -> Output
 				where
 					F: [< Fn $($kind)? >](Self::Output) -> Output
 				{

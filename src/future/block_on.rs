@@ -112,7 +112,7 @@ impl<Resume, Output> Pin for Waiter<Resume, Output> {
 	}
 }
 
-/// Block on a future
+/// Block on a future, waiting for it to complete
 ///
 /// `block` is called with the future's cancel handle when the future is in
 /// progress
@@ -121,13 +121,13 @@ impl<Resume, Output> Pin for Waiter<Resume, Output> {
 /// to signal to the `block`ing function that it should return
 ///
 /// # Safety
-/// `block` must block until the future finishes. it is safe to unwind after
+/// `block` must block until the future finishes. It is safe to unwind after
 /// the future finishes, but may result in a memory leak
 ///
 /// `resume` must never unwind
 ///
-/// `resume` may be called from another thread. The specifics are implementation
-/// specific
+/// `resume` may be called from another thread. The specifics depend on the
+/// future implementation
 pub unsafe fn block_on<Block, Resume, F>(block: Block, resume: Resume, future: F) -> F::Output
 where
 	Block: FnOnce(F::Cancel),
@@ -221,8 +221,8 @@ where
 }
 
 /// Block the current thread while waiting for a future to complete. The future
-/// must be completed from another thread, and the current thread is
-/// unable to make any progress while waiting
+/// must be completed from another thread, as the current thread is unable to
+/// make any progress while waiting
 ///
 /// `should_cancel` is a function that is called when the thread gets
 /// interrupted. If it returns `true`, the future is signalled to be cancelled

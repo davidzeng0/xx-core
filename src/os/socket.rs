@@ -544,7 +544,9 @@ pub unsafe fn accept4(
 	flags: BitFlags<SocketFlag>
 ) -> OsResult<OwnedFd>;
 
-pub fn accept_storage<A>(socket: BorrowedFd<'_>, addr: &mut A) -> OsResult<(OwnedFd, i32)> {
+/// # Safety
+/// `addr` must be valid for stores of socket addresses
+pub unsafe fn accept_storage<A>(socket: BorrowedFd<'_>, addr: &mut A) -> OsResult<(OwnedFd, i32)> {
 	let mut buf = ExtraBufMut::from(addr);
 
 	/* Safety: buf is from a valid reference */
@@ -594,6 +596,8 @@ pub unsafe fn recvfrom(
 
 /// # Safety
 /// `buf`, and `len` must be valid
+///
+/// `addr` must be valid for stores of socket addresses
 pub unsafe fn recvfrom_arbitrary<A>(
 	socket: BorrowedFd<'_>, buf: MutRawBuf<'_>, flags: BitFlags<MessageFlag>, addr: &mut A
 ) -> OsResult<(usize, i32)> {
@@ -741,6 +745,8 @@ pub unsafe fn getpeername(
 
 /// # Safety
 /// `func` must be a valid getaddr function
+///
+/// `addr` must be valid for stores of socket addresses
 unsafe fn get_addr<A>(
 	func: unsafe fn(BorrowedFd<'_>, &mut ExtraBufMut<'_>) -> OsResult<()>, socket: BorrowedFd<'_>,
 	addr: &mut A
@@ -753,12 +759,16 @@ unsafe fn get_addr<A>(
 	Ok(buf.len)
 }
 
-pub fn get_sock_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> OsResult<i32> {
+/// # Safety
+/// `addr` must be valid for stores of socket addresses
+pub unsafe fn get_sock_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> OsResult<i32> {
 	/* Safety: getsockname is valid */
 	unsafe { get_addr(getsockname, socket, addr) }
 }
 
-pub fn get_peer_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> OsResult<i32> {
+/// # Safety
+/// `addr` must be valid for stores of socket addresses
+pub unsafe fn get_peer_name<A>(socket: BorrowedFd<'_>, addr: &mut A) -> OsResult<i32> {
 	/* Safety: getsockname is valid */
 	unsafe { get_addr(getpeername, socket, addr) }
 }

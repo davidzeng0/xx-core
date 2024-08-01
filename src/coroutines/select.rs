@@ -4,6 +4,7 @@ use std::result;
 
 use super::*;
 
+/// The result of a call to [`fn@select`] or [`select_future`]
 #[derive(Debug)]
 pub enum Select<O1, O2> {
 	First(O1, Option<O2>),
@@ -77,8 +78,8 @@ where
 /// Races two tasks A and B and waits
 /// for one of them to finish and cancelling the other
 ///
-/// Returns `Select::First` if the first task completed first
-/// or `Select::Second` if the second task completed first
+/// Returns [`Select::First`] if the first task completed first
+/// or [`Select::Second`] if the second task completed first
 ///
 /// If both tasks are started successfully, the second parameter
 /// in `Select` will contain the result from the second task

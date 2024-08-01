@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering::*;
 
 use super::*;
 use crate::cell::Cell;
-use crate::container::zero_alloc::linked_list::*;
+use crate::container::intrusive::linked_list::*;
 use crate::coroutines::{self, block_on};
 use crate::future::*;
 use crate::runtime::{catch_unwind_safe, join, MaybePanic};
@@ -250,7 +250,7 @@ impl<T: Clone> RawWaitList<T> {
 		 * extension, it's not actually UB if the node's pointers get changed
 		 * as long as we don't call `Cell::get_mut`
 		 */
-		unsafe { self.list.append(&waiter.node) };
+		unsafe { self.list.append(ptr!(&waiter.node)) };
 
 		Progress::Pending(cancel(ptr!(waiter)))
 	}
@@ -306,7 +306,8 @@ impl<T: Clone> RawWaitList<T> {
 	}
 
 	pub fn wake_one(&self, value: T) -> bool {
-		let Some(node) = self.list.pop_front() else {
+		/* Safety: list is pinned */
+		let Some(node) = (unsafe { self.list.pop_front() }) else {
 			return false;
 		};
 
@@ -327,7 +328,8 @@ impl<T: Clone> RawWaitList<T> {
 		 */
 		unsafe { self.list.move_elements(&list) };
 
-		while let Some(node) = list.pop_front() {
+		/* Safety: list is pinned */
+		while let Some(node) = unsafe { list.pop_front() } {
 			/*
 			 * Safety: complete the future
 			 */
@@ -471,7 +473,7 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		forget(empty);
 
 		/* Safety: guaranteed by caller */
-		unsafe { list.append(&waiter.node) };
+		unsafe { list.append(ptr!(&waiter.node)) };
 
 		Progress::Pending(cancel(self, ptr!(waiter)))
 	}
@@ -519,7 +521,8 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 			return false;
 		}
 
-		let Some(node) = self.list.lock().pop_front() else {
+		/* Safety: list is pinned */
+		let Some(node) = (unsafe { self.list.lock().pop_front() }) else {
 			return false;
 		};
 
@@ -537,7 +540,8 @@ impl<T: Clone> ThreadSafeWaitList<T> {
 		let count = self.count.load(Relaxed);
 		let list = self.list.lock();
 
-		while let Some(node) = list.pop_front() {
+		/* Safety: list is pinned */
+		while let Some(node) = unsafe { list.pop_front() } {
 			/*
 			 * Safety: complete the future
 			 */

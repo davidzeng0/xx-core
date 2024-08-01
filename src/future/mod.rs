@@ -1,3 +1,5 @@
+//! The building blocks of any asynchronous operation
+
 use crate::error::*;
 pub use crate::macros::future;
 use crate::pointer::*;
@@ -115,6 +117,7 @@ pub unsafe trait Cancel {
 	unsafe fn run(self) -> Result<()>;
 }
 
+/// The state of the operation after a call to [`Future::run`].
 #[must_use]
 pub enum Progress<Output, C> {
 	/// The operation is pending
@@ -126,8 +129,8 @@ pub enum Progress<Output, C> {
 	Done(Output)
 }
 
-/// A [`Future`] is a primitive for a computation that may not be available
-/// immediately.
+/// A [`Future`] is a primitive for an asynchronous operation. (Not to be
+/// confused with [`std::future::Future`])
 ///
 /// When a future is created, it contains all the necessary information to
 /// perform an operation.

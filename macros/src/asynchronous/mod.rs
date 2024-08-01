@@ -7,11 +7,13 @@ mod lang;
 mod options;
 mod traits;
 mod transform;
+mod visit;
 
 use self::lang::*;
 use self::options::*;
 use self::traits::*;
 use self::transform::*;
+use self::visit::*;
 
 #[derive(Clone)]
 pub enum AsyncItem {

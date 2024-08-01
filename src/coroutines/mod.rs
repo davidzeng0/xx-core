@@ -13,18 +13,22 @@ mod lang {}
 
 pub mod branch;
 pub mod context;
+pub mod environment;
 pub mod executor;
 pub mod impls;
 pub mod join;
 pub mod ops;
 pub mod select;
 pub mod spawn;
+pub mod wake;
 pub mod worker;
 
 pub mod internal;
 
 #[doc(inline)]
-pub use {context::*, executor::*, join::*, select::*, spawn::*, worker::*};
+pub use {
+	context::*, environment::*, executor::*, join::*, select::*, spawn::*, wake::*, worker::*
+};
 
 use self::branch::*;
 use self::ops::*;

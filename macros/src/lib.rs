@@ -57,6 +57,8 @@ declare_proc_macro! {
 	///
 	/// ```
 	/// let item = select! {
+	/// 	get_env();
+	///
 	/// 	item = channel.recv() => {
 	/// 		println!("{}", item);
 	///
@@ -80,10 +82,12 @@ declare_proc_macro! {
 	/// Join multiple async tasks, waiting for all of them to complete
 	///
 	/// ```
-	/// let (a, b) = select!(
+	/// let (a, b) = join! {
+	/// 	get_env();
+	///
 	/// 	load_file("a.txt"),
 	/// 	load_file("b.txt")
-	/// )
+	/// }
 	/// .await;
 	/// ```
 	pub fn join(item: TokenStream) -> Result<TokenStream> {

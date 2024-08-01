@@ -1,1 +1,3 @@
-pub mod zero_alloc;
+//! Data structures.
+
+pub mod intrusive;

@@ -63,7 +63,8 @@ pub fn advance_slices(bufs: &mut &mut [IoSlice<'_>], mut amount: usize) {
 
 			#[allow(unsafe_code)]
 			/* Safety: this mimics the IoSliceMut::advance function, no lifetimes are
-			 * violated here */
+			 * violated here
+			 */
 			(*buf = IoSlice::new(unsafe { transmute(left) }));
 			amount = 0;
 

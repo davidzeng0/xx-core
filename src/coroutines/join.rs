@@ -5,6 +5,7 @@ use std::result;
 use super::*;
 use crate::impls::OptionExt;
 
+/// The result of a call to [`fn@join`] or [`join_future`]
 #[derive(Debug)]
 pub struct Join<O1, O2>(pub O1, pub O2);
 

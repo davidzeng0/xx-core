@@ -4,67 +4,10 @@ use std::any::TypeId;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use super::*;
-use crate::cell::Cell;
+use crate::cell::*;
+use crate::closure::*;
 use crate::impls::OptionExt;
 use crate::macros::const_assert;
-
-/// The environment for an async worker
-///
-/// # Safety
-/// implementations must obey the contracts for implementing the functions
-pub unsafe trait Environment: 'static {
-	/// Gets the context associated with the worker
-	///
-	/// This function must never unwind, and must return the same context every
-	/// time
-	fn context(&self) -> &Context;
-
-	/// Gets the context associated with the worker
-	///
-	/// This function must never unwind, and must return the same context as
-	/// `Environment::context`
-	fn context_mut(&mut self) -> &mut Context;
-
-	/// Returns the Environment that owns the Context
-	///
-	/// This function must never unwind
-	///
-	/// # Safety
-	/// the context must be the one contained in this env
-	unsafe fn from_context(context: &Context) -> &Self;
-
-	/// Creates a new environment for a new worker
-	///
-	/// # Safety
-	/// the environment and the contained context must be alive while it's
-	/// executing this function is unsafe so that Context::run doesn't need
-	/// these guarantees
-	unsafe fn clone(&self) -> Self;
-
-	/// Returns the executor
-	///
-	/// The executor must be a valid pointer
-	/// This function must never unwind
-	fn executor(&self) -> Ptr<Executor>;
-
-	/// Manually suspend the worker
-	///
-	/// # Safety
-	/// See Worker::suspend
-	unsafe fn suspend(&self) {
-		/* Safety: guaranteed by caller */
-		unsafe { self.context().suspend() };
-	}
-
-	/// Manually resume the worker
-	///
-	/// # Safety
-	/// See Worker::resume
-	unsafe fn resume(&self) {
-		/* Safety: guaranteed by caller */
-		unsafe { self.context().resume() };
-	}
-}
 
 fn type_for<E>() -> u32
 where
@@ -83,87 +26,6 @@ where
 	(hasher.finish() as u32)
 }
 
-#[derive(Clone, Copy)]
-struct Canceller(MutPtr<()>, unsafe fn(MutPtr<()>) -> Result<()>);
-
-impl Canceller {
-	/// # Safety
-	/// the future must be running
-	/// `arg` must be a pointer to `Option<C>`
-	unsafe fn run_cancel<C>(arg: MutPtr<()>) -> Result<()>
-	where
-		C: Cancel
-	{
-		/* Safety: guaranteed by caller */
-		unsafe {
-			let cancel = ptr!(arg.cast::<Option<C>>()=>take());
-
-			cancel
-				.expect_unchecked("Fatal error: cancel is missing")
-				.run()
-		}
-	}
-
-	const fn new<C: Cancel>(cancel: MutPtr<Option<C>>) -> Self {
-		Self(cancel.cast(), Self::run_cancel::<C>)
-	}
-
-	/// # Safety
-	/// See `Cancel::run`
-	unsafe fn call(self) -> Result<()> {
-		let Self(arg, callback) = self;
-
-		/* Safety: guaranteed by caller */
-		unsafe { callback(arg) }
-	}
-}
-
-#[derive(Clone, Copy)]
-pub struct WakerVTable {
-	prepare: unsafe fn(Ptr<()>),
-	wake: unsafe fn(Ptr<()>, ReqPtr<()>)
-}
-
-impl WakerVTable {
-	/// # Safety
-	/// `prepare` must never unwind
-	/// `wake` is thread safe and must never unwind
-	#[must_use]
-	pub const unsafe fn new(
-		prepare: unsafe fn(Ptr<()>), wake: unsafe fn(Ptr<()>, ReqPtr<()>)
-	) -> Self {
-		Self { prepare, wake }
-	}
-}
-
-#[allow(missing_copy_implementations)]
-pub struct Waker {
-	ptr: Ptr<()>,
-	vtable: &'static WakerVTable
-}
-
-impl Waker {
-	#[must_use]
-	pub const fn new(ptr: Ptr<()>, vtable: &'static WakerVTable) -> Self {
-		Self { ptr, vtable }
-	}
-
-	/// # Safety
-	/// TBD
-	pub unsafe fn prepare(&self) {
-		/* Safety: guaranteed by caller */
-		unsafe { (self.vtable.prepare)(self.ptr) };
-	}
-
-	/// # Safety
-	/// Must have already called `prepare`
-	/// Must only call once when it is ready to wake the task
-	pub unsafe fn wake(&self, request: ReqPtr<()>) {
-		/* Safety: guaranteed by caller */
-		unsafe { (self.vtable.wake)(self.ptr, request) }
-	}
-}
-
 /// # Safety
 /// the worker must belong to this thread
 unsafe fn wake(_: ReqPtr<()>, arg: Ptr<()>, _: ()) {
@@ -173,11 +35,13 @@ unsafe fn wake(_: ReqPtr<()>, arg: Ptr<()>, _: ()) {
 	unsafe { ptr!(worker=>resume()) };
 }
 
+type Canceller = DynFnOnce<'static, (), Result<()>>;
+
 struct Data {
 	budget: Cell<u16>,
 	guards: Cell<u32>,
 	interrupted: Cell<bool>,
-	cancel: Cell<Option<Canceller>>
+	cancel: UnsafeCell<Option<Canceller>>
 }
 
 impl Data {
@@ -189,7 +53,7 @@ impl Data {
 			budget: Cell::new(DEFAULT_BUDGET as u16),
 			guards: Cell::new(0),
 			interrupted: Cell::new(false),
-			cancel: Cell::new(None)
+			cancel: UnsafeCell::new(None)
 		}
 	}
 }
@@ -219,14 +83,14 @@ impl Context {
 
 	/// # Safety
 	/// same as Worker::suspend
-	unsafe fn suspend(&self) {
+	pub(super) unsafe fn suspend(&self) {
 		/* Safety: guaranteed by caller */
 		unsafe { ptr!(self.worker=>suspend()) };
 	}
 
 	/// # Safety
 	/// same as Worker::resume
-	unsafe fn resume(&self) {
+	pub(super) unsafe fn resume(&self) {
 		/* Safety: guaranteed by caller */
 		unsafe { ptr!(self.worker=>resume()) };
 	}
@@ -241,27 +105,30 @@ impl Context {
 	where
 		F: Future
 	{
-		let block = move |cancel| {
-			/* avoid allocations by storing on the stack */
-			let mut cancel = Some(cancel);
-			let canceller = Canceller::new(ptr!(&mut cancel));
+		let block = move |cancel: F::Cancel| {
+			/* Safety: the cancel is set to None when the future completes */
+			let mut canceller = FnCallOnce::new(move |()| unsafe { cancel.run() });
 
-			#[allow(clippy::cast_possible_truncation)]
-			self.data.budget.set(DEFAULT_BUDGET as u16);
-			self.data.cancel.set(Some(canceller));
+			/* Safety: exclusive access */
+			unsafe { ptr!(*self.data.cancel) = Some(canceller.as_ptr()) };
 
 			if thread_safe {
 				/* Safety: waker is Some as checked below */
 				let waker = unsafe { self.waker.as_ref().unwrap_unchecked() };
 
-				/* Safety: prepare for wake */
+				/* Safety: valid ptr */
 				unsafe { waker.prepare() };
 			}
 
-			/* Safety: context is valid while executing */
-			unsafe { self.suspend() };
+			#[allow(clippy::cast_possible_truncation)]
+			self.data.budget.set(DEFAULT_BUDGET as u16);
 
-			self.data.cancel.set(None);
+			/* Safety: context is valid while executing */
+			unsafe {
+				self.suspend();
+
+				ptr!(*self.data.cancel) = None;
+			}
 		};
 
 		if thread_safe {
@@ -353,7 +220,8 @@ impl Context {
 				break;
 			}
 
-			let Some(canceller) = this.data.cancel.take() else {
+			/* Safety: exclusive access */
+			let Some(canceller) = (unsafe { ptr!(this.data.cancel=>take()) }) else {
 				break;
 			};
 
@@ -361,10 +229,8 @@ impl Context {
 			 * is awaiting itself
 			 *
 			 * the context may no longer be valid after this call
-			 *
-			 * Safety: guaranteed by caller
 			 */
-			return unsafe { canceller.call() };
+			return canceller.call_once(());
 		}
 
 		if !interrupted {

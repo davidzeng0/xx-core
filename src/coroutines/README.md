@@ -4,7 +4,7 @@ Statistics from AMD Zen 3 5800x CPU
 
 ### Motivation
 
-Using fibers addresses two major slowdowns of rust's default async implementation
+Efficiency is a primary focus of all xx_* libraries. Using fibers addresses two major slowdowns of rust's default async implementation
 
 ### Polling based, rather than callback based
 In order to resume a future N function calls deep, it has to be resumed from the root future. Each layer of function call introduces around 1-2ns of overhead in order to reach the future that can actually do work.
