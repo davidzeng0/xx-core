@@ -2,7 +2,7 @@
 
 ![](https://github.com/davidzeng0/xx-core/actions/workflows/build.yml/badge.svg?event=push)
 
-`msrv: 1.80.0 stable`
+`msrv: 1.81.0 stable`
 
 Core modules.
 
@@ -20,4 +20,4 @@ Core modules.
 	- Logging
 	- Error handling
 	- Optimization hints
-	- Pointers, Cells
+	- Pointers, cells, unsafe convenience

@@ -36,6 +36,8 @@ use self::ops::*;
 /// The budget for async tasks
 pub const DEFAULT_BUDGET: u32 = 128;
 
+/// A task represents an asynchronous computation obtained by use of `async`.
+///
 /// An async task is a value that might not have finished computing yet. This
 /// kind of "asynchronous value" makes it possible for a thread to continue
 /// doing useful work while it waits for the value to become available

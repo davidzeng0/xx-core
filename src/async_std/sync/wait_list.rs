@@ -1,4 +1,4 @@
-#![allow(unreachable_pub)]
+#![allow(unreachable_pub, dead_code)]
 
 use std::marker::PhantomData;
 use std::sync::atomic::Ordering::*;

@@ -4,8 +4,8 @@ use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit_mut::*;
-use xx_macro_support::*;
 use xx_macros::*;
+use xx_proc_macros::*;
 
 mod asynchronous;
 mod duration;

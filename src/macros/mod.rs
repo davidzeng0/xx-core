@@ -1,10 +1,9 @@
 #[doc(inline)]
 pub use xx_core_macros::*;
 #[doc(inline)]
-pub use xx_macro_support::macros::*;
-pub use xx_macro_support::paste::paste;
+pub use xx_macros::macros::*;
 #[doc(inline)]
-pub use xx_macros::*;
+pub use xx_proc_macros::*;
 
 #[cfg(feature = "runtime")]
 pub mod runtime;
