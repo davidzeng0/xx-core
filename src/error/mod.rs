@@ -1,5 +1,5 @@
 use std::backtrace::Backtrace;
-use std::ffi::{FromBytesWithNulError, NulError};
+use std::ffi::{FromBytesWithNulError, FromVecWithNulError, NulError};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
@@ -265,6 +265,12 @@ impl From<NulError> for Error {
 
 impl From<FromBytesWithNulError> for Error {
 	fn from(_: FromBytesWithNulError) -> Self {
+		common::INVALID_CSTR.into()
+	}
+}
+
+impl From<FromVecWithNulError> for Error {
+	fn from(_: FromVecWithNulError) -> Self {
 		common::INVALID_CSTR.into()
 	}
 }
